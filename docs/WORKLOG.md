@@ -9,9 +9,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 | Field | Value |
 | --- | --- |
 | **Active phase** | Phase 0: Bootstrap. The code is done; waiting on two external checks |
-| **Last completed** | P0.1–P0.7. CI is green (runs #1 and #2) |
+| **Last completed** | P0.1–P0.8: bootstrap plus public-repo readiness (license, release pipeline, security and contributing docs) |
 | **Next task** | Owner runs docs/DEVELOPMENT.md §3 locally and reports their OS. Then P1.1 (schema v1) |
-| **Blockers** | The owner's local verification run (P0 exit criterion) and the owner's OS answer |
+| **Blockers** | Owner: (1) local verification run and OS; (2) set the repository About text; (3) enable private vulnerability reporting. First release `v0.1.0` after Phase 0 merges to `main` |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-25 |
 
@@ -53,6 +53,59 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-25: Public-repo readiness (P0.8)
+
+- **Phase / task:** P0.8 (added at the owner's request: releases, packages, description, license)
+- **Author:** Claude Code (cloud session)
+- **Goal:** Make the public repository complete: license, release artifacts and packages, and community files.
+
+**Done**
+- Owner decisions: **Apache-2.0**, and **binaries plus a GHCR image** per release.
+- `LICENSE` is the canonical Apache-2.0 text (SHA-256 `cfc7749b…d30`). Added `NOTICE` ("The Shipyard Authors").
+- `.goreleaser.yaml` (GoReleaser v2.18.2):
+  - CLI for Linux, macOS, and Windows on amd64 and arm64.
+  - `shipyard-server` for Linux amd64 and arm64, bundling `deploy/`.
+  - `checksums.txt`.
+  - `dockers_v2` image `ghcr.io/hami9/shipyard`, on distroless `static-debian13:nonroot` pinned by digest, with OCI labels (source, license).
+- `.github/workflows/release.yml`: runs on a `v*` tag.
+  - Lint and test, then release notes from CHANGELOG.
+  - QEMU and buildx, a GHCR login, and GoReleaser.
+  - `actions/attest@v4` over `checksums.txt`.
+- CI now also validates the GoReleaser config.
+- `scripts/release-notes.sh`: fails if CHANGELOG has no section for the tag.
+- `scripts/check-go-version.sh`: fails the build unless Go matches go.mod's toolchain.
+- `SECURITY.md` (private reporting, scope aligned with the trust model), `CONTRIBUTING.md`, `CHANGELOG.md` (Keep a Changelog), and `docs/RELEASING.md` (steps, version plan `v0.1.0`…`v1.0.0`).
+- README: badges, Install, Security, and License sections.
+- CLAUDE.md: a changelog rule, and agents never tag or release unless the owner asks.
+
+**Changed files** (commits)
+- `7230bbb` License · `3dfcede` Release pipeline · `343d549` Community files
+
+**Decisions**
+- Release notes come from CHANGELOG.md rather than commit messages. The 1–2 word commit subjects are too terse for users.
+- The image has no ENTRYPOINT (CMD `shipyard help`). The supported production install stays systemd. The image is for the CLI and for evaluation.
+- GoReleaser is pinned to exactly v2.18.2 (in the workflow and the Makefile) for reproducible releases.
+
+**Verification**
+- `make release-check`: 1 configuration file validated, with no deprecation warnings.
+- `make release-snapshot` (local, nothing published): 8 archives plus checksums. amd64 and arm64 images were built.
+  - `sha256sum -c` OK.
+  - The server archive contains the binaries and `deploy/`.
+  - The image runs as `nonroot:nonroot` with source and license labels.
+  - `shipyard-api version` inside the image works.
+- **Bug found and fixed:** the first snapshot built binaries with **go1.27.1**. GoReleaser v2.18.2 requires Go 1.27.1, and `go run` passed its toolchain to the builds. The fix installs GoReleaser as a binary and adds the toolchain guard hook. After the fix, `go version` on the binaries shows go1.26.8. The guard was tested negatively: with `GOTOOLCHAIN=go1.27.1` the release fails with "building with go1.27.1 but go.mod pins go1.26.8".
+- `scripts/release-notes.sh`: fails on a missing section (exit 1) and extracts the right section from a sample changelog.
+- `make lint test`: clean, 8 packages ok. All YAML files parse.
+- Not run: the real tag-triggered release (no tag was pushed, per the owner's release process).
+
+**Problems / surprises**
+- GitHub gives new GHCR packages **private** visibility, so the owner must make the package public after the first release `[GHCR]`.
+- The repository About text (description, topics) cannot be set from this session. The owner sets it in the GitHub UI.
+
+**Next**
+- Owner: local run (docs/DEVELOPMENT.md §3) and OS; About text; enable private vulnerability reporting.
+- Then close Phase 0, merge to `main`, cut `v0.1.0` (docs/RELEASING.md), and start P1.1.
 
 ### 2026-09-25: Phase 0 bootstrap (P0.1–P0.7)
 
