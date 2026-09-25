@@ -33,7 +33,7 @@ A disk-usage alarm fires at 80% of the Docker data root filesystem.
 | PostgreSQL | `pg_dump -Fc` | Off-host location A | Nightly, 14 dailies + 8 weeklies |
 | KEK files | Copy of `/etc/shipyard/kek/` | Off-host location B, **separate from A** | On every change |
 | Caddy data dir | Tarball | Off-host location A | Nightly |
-| Shipyard config | `/etc/shipyard/*.toml` (non-secret) | Off-host location A | On change |
+| Shipyard config | `/etc/shipyard/shipyard.env` (contains the DB password; encrypt the copy) | Off-host location A | On change |
 
 Images are not backed up in the MVP. After a restore, active apps are rebuilt from their recorded SHAs, and rollback history before the restore becomes unavailable until an optional registry exists (post-MVP).
 

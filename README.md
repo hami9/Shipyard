@@ -2,7 +2,7 @@
 
 A self-hosted deployment platform for a single VPS. Point it at a GitHub repository that has a Dockerfile, and it builds, health-checks, and serves the app over HTTPS. You also get deployment history and one-command rollback.
 
-> **Status:** design complete, implementation not started (Phase 0). See the [roadmap](docs/ROADMAP.md).
+> **Status:** Phase 0 (bootstrap) in progress. The binaries build, the migrations run, and `/healthz` and `/readyz` work. See the [roadmap](docs/ROADMAP.md) and [local development](docs/DEVELOPMENT.md).
 >
 > **Trust model:** Shipyard is for trusted operators and trusted repositories. It is **not** a sandbox for untrusted tenants ([ADR-0007](docs/adr/0007-mvp-trust-model.md)).
 
@@ -31,6 +31,7 @@ A failed build or health check never touches the release that is currently servi
 | [docs/adr/](docs/adr/) | Architecture decision records |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan with exit criteria |
 | [docs/WORKLOG.md](docs/WORKLOG.md) | Session-by-session work log and current status |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, testing, and troubleshooting |
 | [CLAUDE.md](CLAUDE.md) | Instructions for AI coding agents (system prompt) |
 
 ## Stack

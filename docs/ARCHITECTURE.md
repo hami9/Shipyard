@@ -38,7 +38,7 @@ Shipyard's MVP is software for **trusted operators deploying trusted repositorie
 | Component | Baseline | Evidence |
 | --- | --- | --- |
 | Host OS | Linux with systemd and cgroup v2, e.g. Ubuntu 24.04 LTS or Debian 12+ | Design choice |
-| Go | 1.26+ (1.27 is current; a release is supported until two newer majors ship) | `[GO-REL]` |
+| Go | 1.26+ (1.27 is current; a release is supported until two newer majors ship). The toolchain is pinned to go1.26.8 until staticcheck supports 1.27 | `[GO-REL][STATICCHECK]` |
 | PostgreSQL | 18 (17 acceptable), latest minor release | `[PG-VERSIONS]` |
 | Docker Engine | 29.x with the containerd image store; API ≥ 1.44 | `[DK-29][DK-CONTAINERD]` |
 | Docker Go SDK | `github.com/moby/moby/client` (the `github.com/docker/docker` module is deprecated) | `[DK-29]` |

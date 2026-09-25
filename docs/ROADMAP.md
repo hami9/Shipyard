@@ -42,20 +42,20 @@ flowchart LR
 | 4 GitHub integration | P4 | Adds the ancestry check, catch-up for missed deliveries, and the 25 MB cap (R4, R7). |
 | 5 Hardening and UI | P5 + P6 | The UI is split into a parallel track so it cannot block the MVP. |
 
-## P0: Bootstrap
+## P0: Bootstrap `[~]`
 
 **Goal:** an empty but fully wired project, so every later task is only "add code and tests".
 
-- [ ] **P0.1** Run `go mod init`. Add `cmd/shipyard`, `cmd/shipyard-api`, and `cmd/shipyard-worker` with `--version` and graceful shutdown (ADR-0001).
-- [ ] **P0.2** `Makefile`: `build`, `test` (`-race`), `lint` (gofmt, vet, staticcheck), `test-integration`, `dev-up/down`, `migrate`.
-- [ ] **P0.3** CI workflow: lint and unit tests on every push. A separate integration job runs with a PostgreSQL 18 service and Docker.
-- [ ] **P0.4** `internal/config` (a file plus env overrides, validated at startup) and a `log/slog` JSON logger with request and operation IDs.
-- [ ] **P0.5** `deploy/` skeleton:
+- [x] **P0.1** Run `go mod init`. Add `cmd/shipyard`, `cmd/shipyard-api`, and `cmd/shipyard-worker` with `--version` and graceful shutdown (ADR-0001).
+- [x] **P0.2** `Makefile`: `build`, `test` (`-race`), `lint` (gofmt, vet, staticcheck), `test-integration`, `dev-up/down`, `migrate`.
+- [~] **P0.3** CI workflow (`.github/workflows/ci.yml`, written; first green run pending): lint and unit tests on every push. A separate integration job runs with a PostgreSQL 18 service and Docker.
+- [x] **P0.4** `internal/config` (environment variables only, validated at startup, supplied by systemd `EnvironmentFile=`) and a `log/slog` JSON logger with request and operation IDs.
+- [x] **P0.5** `deploy/` skeleton:
   - systemd units for the API and worker (separate users),
   - `daemon.json` (`local` log driver, `live-restore`),
   - a Caddy bootstrap config with the admin Unix socket.
-- [ ] **P0.6** Dev environment: PostgreSQL 18 via compose, bound to `127.0.0.1` only, with `make dev-up`.
-- [ ] **P0.7** Choose the migration tool (goose or golang-migrate, recorded in the WORKLOG), add the first migration, and wire up `make migrate`.
+- [x] **P0.6** Dev environment: PostgreSQL 18 via compose, bound to `127.0.0.1` only, with `make dev-up`.
+- [x] **P0.7** Migration tool: an in-house forward-only runner (`internal/store`, embedded SQL plus pgx, one transaction per run, advisory-lock serialized). Add the first migration and wire up `make migrate`.
 
 **Exit criteria**
 
@@ -236,6 +236,7 @@ The UI is never required for a deploy (ARCHITECTURE §1).
 | Builder has unrestricted egress | A malicious Dockerfile can exfiltrate or abuse the network | Trusted-repositories model (ADR-0007). Egress control evaluated in P5.1 | P5 |
 | Losing the KEK | All secrets become unrecoverable | Separate off-host KEK backup and a restore drill | P3 |
 | Let's Encrypt rate limits during tests | Certificates blocked for up to 7 days | Staging CA in development and CI, DNS preflight, Caddy data backup | P2 |
+| Owner's local machine uses Docker Desktop (macOS or Windows) | Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` | Test on Linux, on WSL2 with native Docker Engine, or in a Linux VM (docs/DEVELOPMENT.md) | P1 |
 | Disk exhaustion (images, cache, logs) | Deploys and apps fail | `local` log driver, retention job, disk alerts | P0, P3, P5 |
 | Vendor behavior drift (Docker, Caddy, GitHub) | Wrong assumptions in code | Re-verify `SOURCES.md` at each phase start | All |
 | Scope creep into the UI before the core loop is proven | Delayed MVP | UI is a parallel track and optional for 1.0 | P6 |

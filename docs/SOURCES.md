@@ -43,6 +43,18 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | `DK-BX-CONTAINER` | [Docker container build driver](https://docs.docker.com/build/builders/drivers/docker-container/) | `--driver-opt` accepts `memory`, `memory-swap`, `cpu-quota`, `cpu-period`, `cpu-shares`, `cpuset-cpus`, and `network`. Results are **not** loaded into the image store unless you pass `--load` or set `default-load=true`. |
 | `DK-BX-BUILD` | [`docker buildx build` reference](https://docs.docker.com/reference/cli/docker/buildx/build/) | `--resource` limits `RUN` steps. `--network default\|none\|host`. `--secret`. `--metadata-file` records `containerimage.digest` and `containerimage.config.digest`. |
 | `DK-BUILD-SECRETS` | [Build secrets](https://docs.docker.com/build/building/secrets/) | Build args and environment variables are inappropriate for secrets because they persist in the final image. Use secret or SSH mounts. |
+| `DK-DESKTOP-NET` | [Docker Desktop networking how-tos](https://docs.docker.com/desktop/features/networking/networking-how-tos/) | On Docker Desktop, "the Docker `bridge` network is not reachable from the host", so the host cannot reach container IPs. Local testing of health probes needs native Docker Engine on Linux or WSL2. (Verified 2026-09-25) |
+| `PG-IMAGE` | [Official postgres image docs](https://github.com/docker-library/docs/blob/master/postgres/content.md) | For PostgreSQL 18+ images, `PGDATA` is `/var/lib/postgresql/18/docker` and the `VOLUME` is `/var/lib/postgresql`. `POSTGRES_PASSWORD` is required. (Verified 2026-09-25) |
+
+## Tooling
+
+| Tag | Source | What it supports |
+| --- | --- | --- |
+| `GH-ACTIONS-PG` | [PostgreSQL service containers](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers) | Service container with a `pg_isready` health check. Jobs on the runner connect through `localhost` and the mapped port. |
+| `SETUP-GO` | [actions/setup-go README](https://github.com/actions/setup-go) | `go-version-file: go.mod` uses the `toolchain` directive when present, otherwise `go`. The `v7` major tag exists (checked with `git ls-remote`, 2026-09-25). |
+| `STATICCHECK` | [staticcheck releases](https://staticcheck.dev/changes/) | 2026.2.1 (module `honnef.co/go/tools` v0.8.1) requires Go ≥ 1.26. It could not analyze Go 1.27.1's standard library when tested on 2026-09-25, so the toolchain is pinned to go1.26.8. |
+| `SYSTEMD-EXEC` | [systemd.exec(5)](https://man7.org/linux/man-pages/man5/systemd.exec.5.html) | `NoNewPrivileges=`, `ProtectSystem=strict`, `ProtectHome=`, `PrivateTmp=`, `RuntimeDirectory=`/`RuntimeDirectoryMode=`, `StateDirectory=`, `SupplementaryGroups=`. |
+| `CADDY-CONV` | [Caddy conventions: network addresses](https://caddyserver.com/docs/conventions) | Unix socket addresses (`unix//path`) accept a permission suffix `\|0220`. The default is `0200`. |
 
 ## Caddy and ACME
 

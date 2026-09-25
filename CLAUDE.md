@@ -58,10 +58,10 @@ Source evidence for each invariant is in [docs/SOURCES.md](docs/SOURCES.md) and 
 
 | Area | Choice |
 | --- | --- |
-| Language | Go ≥ 1.26 (keep `go.mod` on a supported release) |
+| Language | Go ≥ 1.26. `go.mod` pins `toolchain go1.26.8` until staticcheck supports Go 1.27 |
 | HTTP | `net/http` `ServeMux` with method and wildcard patterns. No router framework. |
 | Logging | `log/slog`, JSON in production, with `request_id`, `operation_id`, `app`, and `deployment_id` fields |
-| Database | PostgreSQL 18 via `pgx/v5`. Forward-only SQL migrations in `migrations/`. |
+| Database | PostgreSQL 18 via `pgx/v5`. Forward-only SQL migrations in `migrations/`, applied by the in-house runner (`shipyard-api migrate`). |
 | Docker | Engine 29.x through `github.com/moby/moby/client`. **Not** the deprecated `github.com/docker/docker`. |
 | Builds | `docker buildx` with a dedicated `docker-container` builder named `shipyard` |
 | Edge | Caddy v2, JSON config through `POST /load` on the admin Unix socket |
@@ -91,15 +91,16 @@ Add a dependency only when the standard library is clearly insufficient. Record 
 
 ## 6. Commands
 
-These are the planned targets, which Phase 0 creates. Until then, say which command you would have run.
+Run `make help` for the full list. Setup and local testing are covered in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
-make build              # build all binaries into ./bin
-make test               # unit tests (go test ./... -race)
-make lint               # gofmt check, go vet, staticcheck
-make test-integration   # needs Docker + PostgreSQL (go test -tags integration ./...)
-make dev-up / dev-down  # local PostgreSQL (+ Caddy) for development
+make build              # static binaries into ./bin
+make test               # unit tests (go test -race ./...)
+make lint               # gofmt check, go vet, staticcheck (incl. integration files)
+make test-integration   # needs PostgreSQL: make dev-up first
+make dev-up / dev-down  # local PostgreSQL 18 on 127.0.0.1:54320
 make migrate            # apply migrations to $SHIPYARD_DATABASE_URL
+make run-api / run-worker
 ```
 
 A task is not done while `make lint test` fails. Run `make test-integration` for anything touching `store`, `runtime`, `routing`, `build`, or `source`.
