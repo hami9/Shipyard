@@ -1,0 +1,113 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Release build: see docs/RELEASING.md. Validate with `make release-check`.
+version: 2
+project_name: shipyard
+
+before:
+  hooks:
+    - ./scripts/check-go-version.sh
+
+builds:
+  - id: cli
+    main: ./cmd/shipyard
+    binary: shipyard
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: &ldflags
+      - -s -w
+      - -X github.com/hami9/shipyard/internal/buildinfo.version=v{{ .Version }}
+      - -X github.com/hami9/shipyard/internal/buildinfo.commit={{ .FullCommit }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+  # The API and the worker run only on the Linux host (ADR-0001).
+  - id: api
+    main: ./cmd/shipyard-api
+    binary: shipyard-api
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: *ldflags
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+  - id: worker
+    main: ./cmd/shipyard-worker
+    binary: shipyard-worker
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: *ldflags
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: cli
+    ids: [cli]
+    name_template: "shipyard_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, NOTICE, README.md, CHANGELOG.md]
+
+  - id: server
+    ids: [api, worker]
+    name_template: "shipyard-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - CHANGELOG.md
+      - src: deploy/systemd/*
+        dst: deploy/systemd
+      - src: deploy/docker/*
+        dst: deploy/docker
+      - src: deploy/caddy/*
+        dst: deploy/caddy
+      - deploy/shipyard.env.example
+      - deploy/README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+dockers_v2:
+  - id: shipyard
+    ids: [cli, api, worker]
+    dockerfile: deploy/image/Dockerfile
+    images: ["ghcr.io/hami9/shipyard"]
+    tags:
+      - "v{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    labels:
+      org.opencontainers.image.title: shipyard
+      org.opencontainers.image.description: "Self-hosted deployment platform for a single VPS (CLI, API and worker binaries)"
+      org.opencontainers.image.source: https://github.com/hami9/Shipyard
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.version: "v{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+    platforms: [linux/amd64, linux/arm64]
+
+changelog:
+  # Release notes come from CHANGELOG.md (scripts/release-notes.sh).
+  disable: true
+
+release:
+  prerelease: auto
+  footer: |
+    ## Verify this release
+
+    ```bash
+    sha256sum --ignore-missing -c checksums.txt
+    gh attestation verify <archive> --repo hami9/Shipyard
+    ```
+
+    Container image: `ghcr.io/hami9/shipyard:v{{ .Version }}` (linux/amd64, linux/arm64).
+    The supported production install is systemd. See `deploy/README.md` in the server archive.
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"

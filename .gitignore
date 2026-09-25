@@ -34,3 +34,6 @@ go.work.sum
 .vscode/
 *.swp
 .DS_Store
+
+# Release output (GoReleaser)
+/dist/

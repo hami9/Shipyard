@@ -19,6 +19,12 @@ jobs:
       - run: make lint
       - run: make test
       - run: make build
+      - name: Validate release config
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: check
 
   integration:
     name: Integration tests (PostgreSQL 18)

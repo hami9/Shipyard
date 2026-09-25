@@ -13,12 +13,17 @@ LDFLAGS := -s -w -X $(PKG)/internal/buildinfo.version=$(VERSION) -X $(PKG)/inter
 # staticcheck 2026.2.1. It cannot yet analyze Go 1.27, hence the go1.26 toolchain pin in go.mod.
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
 
+# GoReleaser is installed as a binary, not `go run`, because it needs a newer Go
+# than go.mod pins and `go run` would pass that toolchain on to the release build.
+GORELEASER_VERSION := v2.18.2
+GORELEASER         := $(BIN_DIR)/tools/goreleaser
+
 # Local development database (deploy/dev/compose.yaml). Dev-only credentials.
 DEV_COMPOSE                ?= docker compose -f deploy/dev/compose.yaml
 SHIPYARD_DATABASE_URL      ?= postgres://shipyard:shipyard@127.0.0.1:54320/shipyard?sslmode=disable
 SHIPYARD_TEST_DATABASE_URL ?= postgres://shipyard:shipyard@127.0.0.1:54320/postgres?sslmode=disable
 
-.PHONY: help build test lint fmt test-integration dev-up dev-down dev-reset migrate run-api run-worker clean
+.PHONY: help build test lint fmt test-integration dev-up dev-down dev-reset migrate run-api run-worker release-check release-snapshot clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -60,5 +65,14 @@ run-api: ## Run the API against the dev database (127.0.0.1:8080)
 run-worker: ## Run the worker against the dev database
 	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-worker run
 
-clean: ## Remove build output
-	rm -rf $(BIN_DIR)
+$(GORELEASER):
+	GOBIN=$(CURDIR)/$(BIN_DIR)/tools $(GO) install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+
+release-check: $(GORELEASER) ## Validate .goreleaser.yaml
+	$(GORELEASER) check
+
+release-snapshot: $(GORELEASER) ## Build release archives and images locally into ./dist (nothing is published)
+	env -u GOTOOLCHAIN $(GORELEASER) release --snapshot --clean
+
+clean: ## Remove build and release output
+	rm -rf $(BIN_DIR) dist
