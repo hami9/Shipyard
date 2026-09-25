@@ -48,7 +48,7 @@ flowchart LR
 
 - [x] **P0.1** Run `go mod init`. Add `cmd/shipyard`, `cmd/shipyard-api`, and `cmd/shipyard-worker` with `--version` and graceful shutdown (ADR-0001).
 - [x] **P0.2** `Makefile`: `build`, `test` (`-race`), `lint` (gofmt, vet, staticcheck), `test-integration`, `dev-up/down`, `migrate`.
-- [~] **P0.3** CI workflow (`.github/workflows/ci.yml`, written; first green run pending): lint and unit tests on every push. A separate integration job runs with a PostgreSQL 18 service and Docker.
+- [x] **P0.3** CI workflow (`.github/workflows/ci.yml`, green since run #1): lint and unit tests on every push. A separate integration job runs with a PostgreSQL 18 service and Docker.
 - [x] **P0.4** `internal/config` (environment variables only, validated at startup, supplied by systemd `EnvironmentFile=`) and a `log/slog` JSON logger with request and operation IDs.
 - [x] **P0.5** `deploy/` skeleton:
   - systemd units for the API and worker (separate users),

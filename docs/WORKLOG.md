@@ -9,9 +9,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 | Field | Value |
 | --- | --- |
 | **Active phase** | Phase 0: Bootstrap. The code is done; waiting on two external checks |
-| **Last completed** | P0.1, P0.2, P0.4, P0.5, P0.6, P0.7 (P0.3 CI is written; its first green run is pending) |
+| **Last completed** | P0.1–P0.7. CI is green (runs #1 and #2) |
 | **Next task** | Owner runs docs/DEVELOPMENT.md §3 locally and reports their OS. Then P1.1 (schema v1) |
-| **Blockers** | (1) The owner's local verification run. (2) The first GitHub Actions run of `ci.yml`, which had not registered right after the push |
+| **Blockers** | The owner's local verification run (P0 exit criterion) and the owner's OS answer |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-25 |
 
@@ -106,7 +106,8 @@ Copy this block to the top of the entries section.
   - A `0.0.0.0` listen address is refused with exit 1.
   - The API and worker exit 0 on SIGTERM.
 - `systemd-analyze verify`: no syntax errors (it only reported that the binaries are not installed).
-- Not run: GitHub Actions (no run registered right after the push), and the owner's local run.
+- GitHub Actions: [run #1](https://github.com/hami9/Shipyard/actions/runs/36199600490) (`93108e9`) and [run #2](https://github.com/hami9/Shipyard/actions/runs/36199667568) (`c70dc39`) both **success**, covering both jobs (lint/unit/build and integration on PostgreSQL 18).
+- Not run yet: the owner's local run.
 
 **Problems / surprises**
 - Docker in the cloud container defaults to `json-file` logging, which confirms that the `daemon.json` change is needed `[DK-LOG]`.
@@ -114,7 +115,7 @@ Copy this block to the top of the entries section.
 
 **Next**
 - Owner: follow `docs/DEVELOPMENT.md` §3 and send back the output and their OS.
-- Agent: confirm the CI run is green, tick P0.3, close Phase 0, and start P1.1 (schema v1 migration `0002_schema_v1.sql` plus store tests).
+- Agent: once the owner's run passes, close Phase 0 and start P1.1 (schema v1 migration `0002_schema_v1.sql` plus store tests).
 
 ### 2026-09-25: Architecture review, agent instructions, roadmap
 
