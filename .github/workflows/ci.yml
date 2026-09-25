@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    name: Lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: make lint
+      - run: make test
+      - run: make build
+
+  integration:
+    name: Integration tests (PostgreSQL 18)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: shipyard
+          POSTGRES_PASSWORD: shipyard
+          POSTGRES_DB: shipyard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shipyard -d shipyard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHIPYARD_TEST_DATABASE_URL: postgres://shipyard:shipyard@localhost:5432/postgres?sslmode=disable
+      SHIPYARD_DATABASE_URL: postgres://shipyard:shipyard@localhost:5432/shipyard?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: make test-integration
+      - name: Migrations apply cleanly and are idempotent
+        run: make migrate && make migrate
