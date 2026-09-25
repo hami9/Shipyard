@@ -1,0 +1,5 @@
+{
+  "admin": {
+    "listen": "unix//run/caddy-admin/admin.sock|0220"
+  }
+}

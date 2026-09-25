@@ -1,0 +1,28 @@
+# Shipyard API: unprivileged, no Docker access (ADR-0001).
+[Unit]
+Description=Shipyard API
+Documentation=https://github.com/hami9/shipyard/blob/main/docs/ARCHITECTURE.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shipyard-api
+Group=shipyard
+EnvironmentFile=/etc/shipyard/shipyard.env
+# Caddy reaches the API through this socket; the bind mount into the Caddy container is wired in P2.8.
+Environment=SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock
+# Run `shipyard-api migrate` explicitly during install and upgrade, after a backup.
+ExecStart=/usr/local/bin/shipyard-api serve
+Restart=on-failure
+RestartSec=2s
+
+RuntimeDirectory=shipyard-api
+RuntimeDirectoryMode=0750
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

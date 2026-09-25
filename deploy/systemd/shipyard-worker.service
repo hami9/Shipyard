@@ -1,0 +1,28 @@
+# Shipyard worker: the only process with Docker access. Membership in the
+# docker group is root-equivalent [DK-POSTINSTALL] (ADR-0001, ADR-0007).
+[Unit]
+Description=Shipyard deployment worker
+Documentation=https://github.com/hami9/shipyard/blob/main/docs/ARCHITECTURE.md
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=shipyard-worker
+Group=shipyard
+SupplementaryGroups=docker
+EnvironmentFile=/etc/shipyard/shipyard.env
+ExecStart=/usr/local/bin/shipyard-worker run
+Restart=on-failure
+RestartSec=2s
+
+# Per-operation git workspaces live under /var/lib/shipyard-worker.
+StateDirectory=shipyard-worker
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

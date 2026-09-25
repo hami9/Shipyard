@@ -1,0 +1,25 @@
+# Local development services. Never use these settings in production:
+# the password is public and the data is disposable (`make dev-reset`).
+name: shipyard-dev
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: shipyard
+      POSTGRES_PASSWORD: shipyard
+      POSTGRES_DB: shipyard
+    ports:
+      # Loopback only. Docker-published ports bypass ufw [DK-FW].
+      - "127.0.0.1:54320:5432"
+    volumes:
+      # PostgreSQL 18+ images declare the volume at /var/lib/postgresql.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shipyard -d shipyard"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:
