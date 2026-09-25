@@ -1,0 +1,36 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Go workspace files (local only)
+go.work
+go.work.sum
+
+# Local environment and secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+/secrets/
+/kek/
+
+# Local runtime data
+/data/
+/tmp/
+*.log
+
+# Web UI (Phase 6)
+/web/node_modules/
+/web/dist/
+/web/.vite/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
