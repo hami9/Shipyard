@@ -2,7 +2,7 @@
 
 > A self-hosted deployment platform for applications on a single VPS.
 
-**Status:** Revised proposal, v2 (2026-09-25) · **Scope:** MVP and near-term evolution
+**Status:** Accepted, v2 (2026-09-25) · **Scope:** MVP and near-term evolution
 **Supersedes:** [v1](archive/ARCHITECTURE-v1.md) · **What changed and why:** [architecture-review.md](architecture-review.md) · **Evidence:** [SOURCES.md](SOURCES.md) · **Plan:** [ROADMAP.md](ROADMAP.md)
 
 Tags in square brackets, such as `[DK-LOG]`, refer to entries in [SOURCES.md](SOURCES.md). A claim about external behavior without a tag is a design choice, not a vendor fact.
@@ -353,9 +353,9 @@ The phased plan, with exit criteria, lives in [ROADMAP.md](ROADMAP.md). It diffe
 
 ## 10. Design decisions
 
-The five open questions from v1 now have proposed defaults, each recorded as an ADR and pending the owner's acceptance:
+The five open questions from v1 are resolved. Each answer is recorded in an ADR the owner accepted on 2026-09-25:
 
-| Question (v1 §10) | Proposed default | ADR |
+| Question (v1 §10) | Decision | ADR |
 | --- | --- | --- |
 | One administrator or several users? | Single admin for the MVP. The schema keeps `owner_id` and scopes for later RBAC. | [ADR-0007](adr/0007-mvp-trust-model.md) |
 | Which build path, and how is it isolated? | Dockerfile only, built on a dedicated resource-limited BuildKit builder with no credentials. Egress limits in Phase 5. | [ADR-0004](adr/0004-image-build-and-identity.md) |

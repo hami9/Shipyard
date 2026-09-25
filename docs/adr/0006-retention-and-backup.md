@@ -1,7 +1,8 @@
 # ADR-0006: Retention defaults and backup/restore procedure
 
-- **Status:** Proposed
-- **Date:** 2026-09-25
+- **Status:** Accepted
+- **Date:** 2026-09-25 (proposed and accepted)
+- **Deciders:** Project owner
 - **Sources:** `DK-LOG`, `DK-LOG-LOCAL`, `CADDY-HTTPS`, `LE-LIMITS`, `OWASP-CRYPTO`, `PG-VERSIONS`
 
 ## Context

@@ -1,7 +1,8 @@
 # ADR-0005: Envelope encryption for app configuration
 
-- **Status:** Proposed
-- **Date:** 2026-09-25
+- **Status:** Accepted
+- **Date:** 2026-09-25 (proposed and accepted)
+- **Deciders:** Project owner
 - **Sources:** `OWASP-CRYPTO`, `GO-GCM`, `DK-BUILD-SECRETS`
 
 ## Context

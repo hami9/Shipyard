@@ -104,6 +104,13 @@ make migrate            # apply migrations to $SHIPYARD_DATABASE_URL
 
 A task is not done while `make lint test` fails. Run `make test-integration` for anything touching `store`, `runtime`, `routing`, `build`, or `source`.
 
+**Where tests run.**
+
+- **Cloud agent sessions** run `make lint test` and the PostgreSQL integration tests when a local PostgreSQL is available.
+- **The owner's local computer** runs anything that needs Docker, BuildKit, Caddy, or real networking. That covers most of `runtime`, `build`, `routing`, and `test/e2e`.
+- For local runs, the agent writes the exact commands in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) or in its reply. The owner pastes back the output, and the agent records it in the WORKLOG.
+- Never mark a Docker- or Caddy-dependent task done until the owner's local run has passed.
+
 ## 7. Git conventions
 
 - **Commit subject: 1–2 words**, imperative or noun phrase, no trailing period. Examples: `Webhook verify`, `Queue lease`, `Roadmap`.

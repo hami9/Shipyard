@@ -1,7 +1,8 @@
 # ADR-0001: Go codebase, API and worker as separate processes
 
-- **Status:** Proposed
-- **Date:** 2026-09-25
+- **Status:** Accepted
+- **Date:** 2026-09-25 (proposed and accepted)
+- **Deciders:** Project owner
 - **Sources:** `GO-REL`, `GO-ROUTING`, `DK-29`, `DK-POSTINSTALL`
 
 ## Context

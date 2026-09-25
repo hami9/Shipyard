@@ -8,10 +8,10 @@ An ADR records one significant decision: its context, the choice made, and its c
 
 | ADR | Title | Status |
 | --- | --- | --- |
-| [0001](0001-go-two-process-monolith.md) | Go codebase, API and worker as separate processes | Proposed |
-| [0002](0002-postgresql-operation-queue.md) | PostgreSQL as the durable operation queue | Proposed |
-| [0003](0003-caddy-routing-via-admin-socket.md) | Caddy routing via full-config load on a Unix admin socket | Proposed |
-| [0004](0004-image-build-and-identity.md) | Dedicated BuildKit builder; image ID as release identity | Proposed |
-| [0005](0005-secrets-envelope-encryption.md) | Envelope encryption for app configuration | Proposed |
-| [0006](0006-retention-and-backup.md) | Retention defaults and backup/restore procedure | Proposed |
-| [0007](0007-mvp-trust-model.md) | MVP trust model: single admin, trusted repositories | Proposed |
+| [0001](0001-go-two-process-monolith.md) | Go codebase, API and worker as separate processes | Accepted |
+| [0002](0002-postgresql-operation-queue.md) | PostgreSQL as the durable operation queue | Accepted |
+| [0003](0003-caddy-routing-via-admin-socket.md) | Caddy routing via full-config load on a Unix admin socket | Accepted |
+| [0004](0004-image-build-and-identity.md) | Dedicated BuildKit builder; image ID as release identity | Accepted |
+| [0005](0005-secrets-envelope-encryption.md) | Envelope encryption for app configuration | Accepted |
+| [0006](0006-retention-and-backup.md) | Retention defaults and backup/restore procedure | Accepted |
+| [0007](0007-mvp-trust-model.md) | MVP trust model: single admin, trusted repositories | Accepted |

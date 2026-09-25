@@ -8,10 +8,10 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 0: Bootstrap (not started) |
+| **Active phase** | Phase 0: Bootstrap (in progress) |
 | **Last completed** | Architecture v2, sources, ADRs, roadmap, agent instructions |
 | **Next task** | P0.1: initialize the Go module and the `cmd/` skeleton (see ROADMAP) |
-| **Blockers** | ADR-0001 to ADR-0007 are `Proposed`; the owner must accept or amend them |
+| **Blockers** | None. ADR-0001 to ADR-0007 were accepted by the owner on 2026-09-25 |
 | **Open risks** | Builder egress is unrestricted until Phase 5, and the MVP trust model is documented, not enforced |
 | **Last updated** | 2026-09-25 |
 

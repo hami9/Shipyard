@@ -1,7 +1,8 @@
 # ADR-0003: Caddy routing via full-config load on a Unix admin socket
 
-- **Status:** Proposed
-- **Date:** 2026-09-25
+- **Status:** Accepted
+- **Date:** 2026-09-25 (proposed and accepted)
+- **Deciders:** Project owner
 - **Sources:** `CADDY-API`, `CADDY-OPTIONS`, `CADDY-HTTPS`, `CADDY-RP`, `LE-LIMITS`, `DK-FW`, `DK-BRIDGE`
 
 ## Context

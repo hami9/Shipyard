@@ -1,7 +1,8 @@
 # ADR-0007: MVP trust model, a single admin and trusted repositories
 
-- **Status:** Proposed
-- **Date:** 2026-09-25
+- **Status:** Accepted
+- **Date:** 2026-09-25 (proposed and accepted)
+- **Deciders:** Project owner
 - **Sources:** `DK-SEC`, `DK-POSTINSTALL`, `DK-ROOTLESS`, `GH-FORKS`
 
 ## Context

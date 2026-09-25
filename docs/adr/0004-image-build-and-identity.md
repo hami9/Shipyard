@@ -1,7 +1,8 @@
 # ADR-0004: Dedicated BuildKit builder; image ID as release identity
 
-- **Status:** Proposed
-- **Date:** 2026-09-25
+- **Status:** Accepted
+- **Date:** 2026-09-25 (proposed and accepted)
+- **Deciders:** Project owner
 - **Sources:** `DK-BUILDKIT`, `DK-BX-CONTAINER`, `DK-BX-BUILD`, `DK-BUILD-SECRETS`, `DK-29`, `DK-CONTAINERD`, `GH-FORKS`
 
 ## Context
