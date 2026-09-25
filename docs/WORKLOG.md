@@ -10,8 +10,8 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 | --- | --- |
 | **Active phase** | Phase 0: Bootstrap. The code is done; waiting on two external checks |
 | **Last completed** | P0.1–P0.8: bootstrap plus public-repo readiness (license, release pipeline, security and contributing docs) |
-| **Next task** | Owner runs docs/DEVELOPMENT.md §3 locally and reports their OS. Then P1.1 (schema v1) |
-| **Blockers** | Owner: (1) local verification run and OS; (2) set the repository About text; (3) enable private vulnerability reporting. First release `v0.1.0` after Phase 0 merges to `main` |
+| **Next task** | Owner sets up WSL2 (docs/DEVELOPMENT.md §2), then runs §3 and sends the output. Then P1.1 (schema v1) |
+| **Blockers** | Owner: (1) WSL2 setup and local verification run; (2) set the repository About text; (3) enable private vulnerability reporting. First release `v0.1.0` after Phase 0 merges to `main` |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-25 |
 
@@ -53,6 +53,40 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-25: Owner platform, WSL2 guide
+
+- **Phase / task:** P0 (exit criterion: local verification)
+- **Author:** Claude Code (cloud session)
+- **Goal:** Tailor local testing to the owner's machine: **Windows with WSL2**, and no Docker installed yet.
+
+**Done**
+- `docs/DEVELOPMENT.md` §2 is now a WSL2 guide, sourced step by step:
+  - WSL version check, systemd check,
+  - Docker Engine from Docker's apt repository (not Docker Desktop),
+  - Go 1.26.8 from the official tarball with its SHA-256,
+  - sanity checks, including a host-to-container-IP probe.
+- 4 new source tags: `DK-INSTALL-UBUNTU`, `MS-WSL-SYSTEMD`, `MS-WSL-FS`, `GO-INSTALL`.
+- CLAUDE.md: a rule to create files with the editor tools, never shell heredocs (see below).
+
+**Decisions**
+- Docker Engine runs natively inside WSL2 Ubuntu, and Docker Desktop is excluded. Its bridge network is unreachable from the host `[DK-DESKTOP-NET]`, which would break Phase 1 health probes.
+
+**Verification**
+- CI [run #4](https://github.com/hami9/Shipyard/actions/runs/36200413332) on `d4c3a5a`: **success**, including the new GoReleaser config check.
+- The probe from §2.5 was run on native Docker Engine in the cloud container: `HTTP 200` from the container's bridge IP (172.17.0.2).
+- The go1.26.8 tarball checksum in the guide matches `go.dev/dl/?mode=json`, and `sha256sum -c` passed.
+- Not run: the guide itself on WSL2 (the owner will).
+
+**Problems / surprises**
+- **Incident (cloud container only):** a shell heredoc used to insert the Markdown section contained its own `EOF` line. That ended the outer heredoc early, and bash executed the rest of the section as commands.
+  - Effects: Docker packages were upgraded mid-run, `/usr/local/go` was replaced with go1.26.8, and a PATH line was added to `~/.profile`.
+  - There was no effect on the repository (`git status` clean), GitHub, or the owner's machine.
+  - Cleaned up: the profile line was reverted, the mismatched dockerd was stopped, and the dev PostgreSQL was removed.
+  - Prevention: the CLAUDE.md rule above.
+
+**Next**
+- Owner: DEVELOPMENT.md §2 (setup) and §3 (verification). Send back §2.5, `make lint`, `make test`, `make test-integration`, and the two curl outputs.
 
 ### 2026-09-25: Public-repo readiness (P0.8)
 

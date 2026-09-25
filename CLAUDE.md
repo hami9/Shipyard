@@ -17,6 +17,7 @@ The MVP targets **trusted operators and trusted repositories**. It is not a mult
 2. **Pick one task.** Take the first unchecked item of the active phase unless the owner says otherwise. State it in one line before starting.
 3. **Plan small.** Deliver one vertical slice per commit: code, test, and docs together. If the task needs more than about 400 changed lines, split it and add the sub-tasks to the roadmap.
 4. **Implement and verify.** Run the checks in §6. Never claim something works without running it. Paste the actual results into the work log.
+   - Create and edit files with the editor tools, never through shell heredocs. A nested `EOF` inside the content ends the heredoc early, and the shell then executes the rest of the file.
 5. **Record.**
    - Tick the roadmap item.
    - Add a WORKLOG entry at the top (template inside the file) and update `Current status`.
