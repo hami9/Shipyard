@@ -1,5 +1,9 @@
 # Shipyard
 
+[![CI](https://github.com/hami9/Shipyard/actions/workflows/ci.yml/badge.svg)](https://github.com/hami9/Shipyard/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hami9/Shipyard?include_prereleases&sort=semver)](https://github.com/hami9/Shipyard/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 A self-hosted deployment platform for a single VPS. Point it at a GitHub repository that has a Dockerfile, and it builds, health-checks, and serves the app over HTTPS. You also get deployment history and one-command rollback.
 
 > **Status:** Phase 0 (bootstrap) in progress. The binaries build, the migrations run, and `/healthz` and `/readyz` work. See the [roadmap](docs/ROADMAP.md) and [local development](docs/DEVELOPMENT.md).
@@ -21,6 +25,16 @@ git push ──► webhook (HMAC-verified) ──► PostgreSQL (operation queue
 
 A failed build or health check never touches the release that is currently serving. Rollback restarts a retained image and its original configuration. It never rebuilds.
 
+## Install
+
+> There is no release yet. `v0.1.0` ships when Phase 0 closes ([version plan](docs/RELEASING.md#version-plan)).
+
+- **Binaries:** download from [Releases](https://github.com/hami9/Shipyard/releases). The CLI is available for Linux, macOS, and Windows. `shipyard-server` (API and worker, with systemd units) is available for Linux amd64 and arm64. Verify downloads with `checksums.txt` and `gh attestation verify`.
+- **Container image:** `ghcr.io/hami9/shipyard:<version>` (linux/amd64, linux/arm64), for the CLI and for evaluation.
+- **From source:** see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+The supported production setup is the two systemd services in [deploy/](deploy/README.md). A full installer arrives in Phase 5.
+
 ## Documentation
 
 | Doc | Purpose |
@@ -32,11 +46,17 @@ A failed build or health check never touches the release that is currently servi
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan with exit criteria |
 | [docs/WORKLOG.md](docs/WORKLOG.md) | Session-by-session work log and current status |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, testing, and troubleshooting |
+| [docs/RELEASING.md](docs/RELEASING.md) | Release process, artifacts, and version plan |
+| [CHANGELOG.md](CHANGELOG.md) | Notable changes per release |
 | [CLAUDE.md](CLAUDE.md) | Instructions for AI coding agents (system prompt) |
 
 ## Stack
 
 Go · PostgreSQL 18 · Docker Engine 29 (BuildKit) · Caddy v2 · optional React UI
+
+## Security
+
+Report vulnerabilities privately. See [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
@@ -44,3 +64,9 @@ Go · PostgreSQL 18 · Docker Engine 29 (BuildKit) · Caddy v2 · optional React
 2. Pick the next unchecked task in the active phase of the [roadmap](docs/ROADMAP.md).
 3. Add a [work log](docs/WORKLOG.md) entry for every session.
 4. Commit subjects are 1–2 words. Branch names are 1–3 words, in kebab-case.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License
+
+[Apache License 2.0](LICENSE). Copyright 2026 The Shipyard Authors.

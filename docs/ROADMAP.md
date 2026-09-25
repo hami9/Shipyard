@@ -23,7 +23,7 @@ flowchart LR
 
 | Phase | Theme | Est. | Cumulative | Demo at exit |
 | --- | --- | --- | --- | --- |
-| **P0** | Bootstrap: repo, tooling, CI, dev env | ~1 wk | 1 wk | `make lint test test-integration` green in CI |
+| **P0** | Bootstrap: repo, tooling, CI, dev env, release pipeline → `v0.1.0` | ~1 wk | 1 wk | `make lint test test-integration` green in CI |
 | **P1** | Foundation: first manual deploy | 3–4 wk | 4–5 wk | CLI deploys a public repo at a pinned SHA into a hardened, healthy container |
 | **P2** | Safe releases: HTTPS and traffic switching | 2–3 wk | 6–8 wk | App on HTTPS. A broken deploy never interrupts the serving release |
 | **P3** | Recovery: rollback, reconciler, retention, backup | 2–3 wk | 8–11 wk | Rollback, kill mid-deploy and recover, restore onto a fresh host |
@@ -56,6 +56,9 @@ flowchart LR
   - a Caddy bootstrap config with the admin Unix socket.
 - [x] **P0.6** Dev environment: PostgreSQL 18 via compose, bound to `127.0.0.1` only, with `make dev-up`.
 - [x] **P0.7** Migration tool: an in-house forward-only runner (`internal/store`, embedded SQL plus pgx, one transaction per run, advisory-lock serialized). Add the first migration and wire up `make migrate`.
+- [x] **P0.8** Public-repository readiness:
+  - Apache-2.0 `LICENSE` and `NOTICE`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`.
+  - A release pipeline (GoReleaser: binaries, checksums, provenance, a GHCR image) and [docs/RELEASING.md](RELEASING.md).
 
 **Exit criteria**
 

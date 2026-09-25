@@ -119,6 +119,8 @@ A task is not done while `make lint test` fails. Run `make test-integration` for
 - **Branch names: 1–3 words**, kebab-case, e.g. `webhook-hmac`, `caddy-routing`, `phase1-queue`. A harness-assigned branch name takes precedence when one is given.
 - One logical change per commit. Never commit secrets, `.env` files, keys, or generated binaries.
 - Do not rewrite pushed history on shared branches. Do not open pull requests unless asked.
+- **Changelog:** every user-visible change adds a line under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog).
+- **Releases** are tags `vX.Y.Z` cut by the owner. Follow [docs/RELEASING.md](docs/RELEASING.md). Never create, move, or delete a tag or GitHub Release without the owner's explicit request.
 
 ## 8. Definition of done
 
@@ -126,6 +128,7 @@ A task is not done while `make lint test` fails. Run `make test-integration` for
 - Lint, unit, and (where relevant) integration tests pass, with the output recorded in the WORKLOG.
 - The docs are updated: ARCHITECTURE if behavior changed, an ADR if a decision was made, and the roadmap item is ticked.
 - New external facts have a tagged entry in `docs/SOURCES.md` with a verification date.
+- User-visible changes are listed under `## [Unreleased]` in `CHANGELOG.md`.
 
 ## 9. Verifying external facts
 
