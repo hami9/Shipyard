@@ -286,7 +286,7 @@ The reconciler runs at worker start and then every 60 s by default.
 **Secrets** `[OWASP-CRYPTO][GO-GCM]`
 
 - Use envelope encryption. Each value gets a random DEK and is encrypted with AES-256-GCM (`cipher.NewGCMWithRandomNonce`), with AAD `(app_id, key, value_id)`. The DEK is wrapped by a KEK that carries a `kek_id`.
-- Keep the KEK in a root-owned `0600` file or a systemd credential, **never in PostgreSQL** and never in the same backup as the database.
+- Keep the KEK in a root-owned file readable only by the `shipyard` group (`0640`, shared by the API and worker users) or in a systemd credential. It is **never in PostgreSQL** and never in the same backup as the database.
 - Document and test rotation and recovery before production (ADR-0005).
 
 **Host firewall** `[DK-FW]`
