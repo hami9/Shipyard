@@ -49,6 +49,7 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | `MS-WSL-FS` | [Working across file systems (WSL)](https://learn.microsoft.com/en-us/windows/wsl/filesystems) | Store project files in the Linux file system (`/home/<user>/…`), not `/mnt/c`, for performance. (Verified 2026-09-25) |
 | `GO-INSTALL` | [Go: download and install](https://go.dev/doc/install) | The Linux tarball install into `/usr/local/go` plus PATH. Never untar over an existing tree. The go1.26.8 linux-amd64 SHA-256 comes from `go.dev/dl/?mode=json`. (Verified 2026-09-25) |
 | `PG-IMAGE` | [Official postgres image docs](https://github.com/docker-library/docs/blob/master/postgres/content.md) | For PostgreSQL 18+ images, `PGDATA` is `/var/lib/postgresql/18/docker` and the `VOLUME` is `/var/lib/postgresql`. `POSTGRES_PASSWORD` is required. (Verified 2026-09-25) |
+| `DK-RESOURCES` | [Resource constraints](https://docs.docker.com/engine/containers/resource_constraints/) | `--memory` has a minimum of `6m`. `--cpus` accepts fractional values such as `1.5`. (Verified 2026-09-26) |
 | `PG-IMAGE-INIT` | [postgres image `docker-entrypoint.sh`](https://github.com/docker-library/postgres/blob/master/18/bookworm/docker-entrypoint.sh) | On first start, `docker_temp_server_start` runs a temporary server with `listen_addresses=''` (Unix socket only) for init, then restarts it. A socket-based `pg_isready` can pass before the real server accepts TCP, so the dev healthcheck probes `127.0.0.1`. (Verified 2026-09-26) |
 | `MS-WSL-CONF` | [Advanced settings configuration in WSL](https://learn.microsoft.com/en-us/windows/wsl/wsl-config) | `wsl.conf` `[network] generateResolvConf=false` stops WSL from generating `/etc/resolv.conf` so you can write your own (e.g. `nameserver 1.1.1.1`). `dnsTunneling` and `mirrored` networking are Windows 11 22H2+ only. (Verified 2026-09-26) |
 
@@ -85,6 +86,7 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | --- | --- | --- |
 | `PG-SELECT` | [SELECT … locking clause](https://www.postgresql.org/docs/current/sql-select.html) | `SKIP LOCKED` suits multiple consumers of a queue-like table and is not for general-purpose reads. |
 | `PG-LOCKS` | [Explicit locking: advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html) | Session-level advisory locks ignore transaction semantics and last until the session ends. They share the lock memory pool. |
+| `PG-UUID` | [UUID functions](https://www.postgresql.org/docs/18/functions-uuid.html) | `gen_random_uuid()` returns a version 4 (random) UUID and is in core since PostgreSQL 13. `uuidv7()` (time-ordered) is new in 18. (Verified 2026-09-26) |
 | `PG-VERSIONS` | [Versioning policy](https://www.postgresql.org/support/versioning/) | 18 is the current major (18.6), supported until 2030-11-14. 17 is supported until 2029-11-08. Run the latest minor release. |
 
 ## Go

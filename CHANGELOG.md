@@ -9,6 +9,9 @@ All notable changes to Shipyard are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **Database schema v1** (migration `0002`): users and API tokens, apps, encrypted secret values and immutable environment revisions, the operations queue and its events, deployments, routes, webhook deliveries, and audit events. The database itself enforces one running operation and one active deployment per app, unique idempotency keys and hostnames, and same-app references.
 ## [0.1.0] - 2026-09-26
 
 First release: the Phase 0 bootstrap. An empty but fully wired project; it does not deploy apps yet.

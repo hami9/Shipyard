@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation (not started). Phase 0 closed with release `v0.1.0` |
-| **Last completed** | `v0.1.0` released (tag on `3000c74`): binaries, checksums, provenance, public multi-arch GHCR image |
-| **Next task** | P1.1: schema v1 migration `0002_schema_v1.sql` plus store tests, on a new short branch from `main` |
+| **Active phase** | Phase 1: Foundation. Branch `schema-v1` |
+| **Last completed** | P1.1: schema v1 (`migrations/0002_schema_v1.sql`) with 33 constraint subtests |
+| **Next task** | P1.2: `internal/store` on pgx (typed repositories over the v1 schema) with integration tests for every constraint |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,42 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-26: P1.1 schema v1
+
+- **Phase / task:** P1.1: Schema v1
+- **Author:** Claude Code (desktop session)
+- **Goal:** Turn the ARCHITECTURE §4 data model into migration `0002` with database-enforced invariants.
+
+**Done**
+- `migrations/0002_schema_v1.sql`: 12 tables (the roadmap's 11 plus `env_revision_entries`), 2 trigger functions, and the indexes the queue needs.
+- Enforced in the database:
+  - `UNIQUE(idempotency_key)`; one running operation per app; one active deployment per app; unique lowercase `hostname`.
+  - A running operation needs a lease; `finished_at` matches terminal status; `failed` needs a reason; serving states need `image_id` and `container_id`.
+  - Composite `(app_id, id)` foreign keys, so no cross-app operation, env revision, rollback source, route target, or secret. An entry's secret must also carry the entry's key (it is in the AAD, ADR-0005).
+  - Immutability triggers on secret values, revisions, and entries; append-only operation events; audit events reject UPDATE and DELETE.
+  - Cheap path checks: `dockerfile_path` and `build_context` cannot be absolute or contain a `..` segment (the worker still resolves symlinks, ADR-0004).
+- `internal/store/schema_integration_test.go`: 33 subtests asserting SQLSTATE codes.
+
+**Changed files**
+- `migrations/0002_schema_v1.sql`, `internal/store/schema_integration_test.go`: the slice
+- `docs/ARCHITECTURE.md` §4: ID and timestamp conventions, new columns; `docs/SOURCES.md`: `PG-UUID`, `DK-RESOURCES`; `CHANGELOG.md`; `docs/ROADMAP.md`
+
+**Decisions**
+- **IDs are `uuid` via `gen_random_uuid()`**, not `uuidv7()`: `uuidv7()` needs PostgreSQL 18, while ADR-0002 still accepts 17. They are not enumerable through the API.
+- **Immutable and append-only tables have no `updated_at`**, which is a deviation from "every table has `updated_at`". ARCHITECTURE §4 is updated.
+- **Added columns** not listed in §4: `deployments.operation_id` (a deployment row exists from admission, so coalescing can mark it `cancelled`), `deployments.source_deployment_id` (rollback target), and `api_tokens.name`.
+- **`slug` is limited to 40 characters** (one DNS label) so that container and network names stay short.
+- Enumerations are `text` plus `CHECK`, so adding a value takes a one-line migration.
+
+**Verification** (WSL2, as `hami`, PostgreSQL 18 in `make dev-up`)
+- `make lint`: exit 0 (gofmt, vet, and staticcheck, including integration files). `make test`: ok.
+- `make migrate`: applied versions 1 and 2, then `applied=0`.
+- `go test -tags integration -run TestSchema ./internal/store/`: 33/33 subtests PASS. `make test-integration`: all packages ok.
+- Mutation check: after removing the running-op index, the active-deployment index, and the audit DELETE guard, exactly those 3 subtests failed.
+
+**Next**
+- P1.2: `internal/store` repositories on pgx (apps, operations, deployments, env revisions, tokens, audit) with integration tests.
 
 ### 2026-09-26: Release v0.1.0
 

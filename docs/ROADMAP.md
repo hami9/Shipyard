@@ -66,11 +66,11 @@ flowchart LR
 - `make dev-up && make migrate && make test-integration` passes locally. ✅ (owner's WSL2 machine, 2026-09-26)
 - Merged to `main` and released as [`v0.1.0`](https://github.com/hami9/Shipyard/releases/tag/v0.1.0) (2026-09-26).
 
-## P1: Foundation, the first manual deploy
+## P1: Foundation, the first manual deploy `[~]`
 
 **Goal:** `shipyard deploy` builds a public repository at an exact SHA and runs it in a hardened container that passes a health check. There is no public routing yet.
 
-- [ ] **P1.1** Schema v1:
+- [x] **P1.1** Schema v1 (`migrations/0002_schema_v1.sql`, with constraint tests in `internal/store/schema_integration_test.go`):
   - Tables: users, api_tokens, apps, secret_values, env_revisions and entries, deployments, operations, operation_events, audit_events, routes, webhook_deliveries.
   - Constraints: `UNIQUE(idempotency_key)`, the partial unique index for one running operation per app, and a unique `hostname`.
 - [ ] **P1.2** `internal/store` on pgx, with integration tests for every constraint.

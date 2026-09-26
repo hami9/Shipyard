@@ -115,16 +115,20 @@ Docker-published ports bypass ufw rules `[DK-FW]`. Only Caddy publishes ports. P
 
 ## 4. Data model
 
-The model is PostgreSQL-first. Every table has `id`, `created_at`, and `updated_at`. All timestamps are `timestamptz`.
+The model is PostgreSQL-first, implemented in [`migrations/0002_schema_v1.sql`](../migrations/0002_schema_v1.sql). All timestamps are `timestamptz`.
+
+- **IDs** are `uuid` from `gen_random_uuid()` `[PG-UUID]`. They are not enumerable through the API and work on PostgreSQL 17 and 18.
+- **Mutable tables** have `created_at` and a trigger-maintained `updated_at`. **Immutable and append-only tables** (secret values, environment revisions and their entries, operation events, audit events) have `created_at` only, and a trigger rejects `UPDATE`. Audit events also reject `DELETE`.
+- **Same-app references** use composite foreign keys on `(app_id, id)`. The database refuses a deployment that uses another app's operation, environment revision, or rollback source, and a route that points at another app's deployment.
 
 | Entity | Key fields | Constraints and notes |
 | --- | --- | --- |
 | **User** | `name`, `role` | The MVP has a single admin (ADR-0007). `owner_id` exists everywhere so that adding multiple users later needs no migration. |
-| **API token** | `user_id`, `prefix`, `sha256_hash`, `scopes[]`, `expires_at`, `last_used_at`, `revoked_at` | Tokens are `shp_` plus 32 random bytes. Only the hash is stored, and the plaintext is shown once. |
+| **API token** | `user_id`, `name`, `prefix`, `sha256_hash`, `scopes[]`, `expires_at`, `last_used_at`, `revoked_at` | Tokens are `shp_` plus 32 random bytes. Only the hash is stored, and the plaintext is shown once. |
 | **Application** | `owner_id`, `slug`, `repo_full_name`, `github_installation_id?`, `branch`, `dockerfile_path`, `build_context`, `internal_port`, `health_path`, `health_timeout`, `cpu_limit`, `memory_limit`, `stop_timeout`, `auto_deploy` | `slug` is unique and DNS-safe. `dockerfile_path` and `build_context` must stay inside the repository. |
 | **Secret value** | `app_id`, `key`, `ciphertext`, `wrapped_dek`, `kek_id` | Immutable. The AAD binds `(app_id, key, value_id)`, so ciphertexts cannot be swapped between rows. |
-| **Environment revision** | `app_id`, `number`, plus entries of `(key, secret_value_id \| plain_value)` | Immutable. Changing a key creates a new revision that reuses unchanged value rows **without decrypting them**. |
-| **Deployment** | `app_id`, `kind` (`build`/`rollback`), `source_commit_sha`, `image_id`, `build_metadata` (jsonb), `env_revision_id`, `container_id`, `status`, `failure_reason`, phase timestamps | `status` ∈ `queued, building, starting, health_checking, switching, active, superseded, failed, cancelled`. |
+| **Environment revision** | `app_id`, `number`, plus entries of `(key, secret_value_id \| plain_value)` in `env_revision_entries` | Immutable. Changing a key creates a new revision that reuses unchanged value rows **without decrypting them**. An entry's secret must have the same app and key. |
+| **Deployment** | `app_id`, `operation_id`, `kind` (`build`/`rollback`), `source_deployment_id` (rollback only), `source_commit_sha`, `image_id`, `build_metadata` (jsonb), `env_revision_id`, `container_id`, `status`, `failure_reason`, phase timestamps | `status` ∈ `queued, building, starting, health_checking, switching, active, superseded, failed, cancelled`. At most one `active` per app (partial unique index). From `health_checking` on, `image_id` and `container_id` are required. `failed` requires a `failure_reason`. |
 | **Operation** | `app_id`, `kind`, `idempotency_key`, `status`, `phase`, `payload`, `lease_owner`, `lease_expires_at`, `attempt`, `max_attempts`, `run_after`, `last_error` | `UNIQUE(idempotency_key)`, plus a partial unique index on `(app_id) WHERE status = 'running'` (one running op per app). |
 | **Operation event** | `operation_id`, `seq`, `ts`, `level`, `message` | Append-only. `seq` is the SSE `id` for `Last-Event-ID` resume `[WHATWG-SSE]`. Size-bounded and redacted. |
 | **Webhook delivery** | `delivery_id` (PK), `event`, `repository_id`, `ref`, `after_sha`, `received_at`, `outcome` | Primary key on the GitHub delivery GUID. Redeliveries reuse it `[GH-BP]`. |
