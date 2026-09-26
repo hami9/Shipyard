@@ -97,7 +97,9 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	return api.Serve(ctx, ln, api.NewHandler(log, db), cfg.ShutdownTimeout, log)
+	s := store.New(db)
+	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s})
+	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 
 func withStore(ctx context.Context, cfg config.API, fn func(*store.Store) error) error {

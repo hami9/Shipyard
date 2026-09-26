@@ -9,8 +9,8 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 | Field | Value |
 | --- | --- |
 | **Active phase** | Phase 1: Foundation. Branch `schema-v1` |
-| **Last completed** | P1.2: store core (`Store`, `InTx`, error mapping) plus users and apps repositories |
-| **Next task** | P1.3: token auth (bootstrap admin token, `shp_` tokens hashed with scopes and expiry, middleware, audit on every mutation) |
+| **Last completed** | P1.3: token auth (`shipyard-api token`, bearer middleware with scopes, audit on every mutation, `GET /v1/whoami`) |
+| **Next task** | P1.4: `internal/secrets`, envelope encryption and environment revisions (ADR-0005) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,47 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-26: P1.3 token auth
+
+- **Phase / task:** P1.3: Token auth
+- **Author:** Claude Code (desktop session)
+- **Goal:** Bootstrap the first admin token and protect every `/v1` route with scoped, expiring bearer tokens and an audit trail.
+
+**Done** (commits `17c37fb` Token command, then Auth middleware)
+- Tokens: `shp_` + 32 random bytes in unpadded base64url (47 characters). The display prefix is `shp_` plus 8 characters. Only the SHA-256 hash is stored `[GO-RAND]`.
+- `shipyard-api token create|list|revoke`:
+  - `create` makes the user if missing, prints the token alone on stdout and details on stderr, and audits `token.create` in the same transaction.
+  - `--ttl` accepts 1h–366d (default 90d).
+- Store:
+  - Tokens: `CreateToken`, `ActiveTokenByHash` (revoked, expired, and unknown are all `ErrNotFound`), `TouchToken` (at most one write per minute), `ListTokens`, `RevokeToken` (idempotent).
+  - Audit: `RecordAudit`, `AuditEvents`.
+- `internal/api`:
+  - `protect(scope, h)` wraps each route. 401 or 403 per `[RFC6750]`, same 401 for every bad token, well-formedness checked before any DB lookup, 503 without internal detail when the store is down.
+  - An audit event after every authenticated mutation (actor `token:<prefix>`, action `r.Pattern`, target path, success/failure/denied, request ID), written with `context.WithoutCancel`.
+- `GET /v1/whoami`.
+
+**Decisions**
+- **Scopes nest:** `read` ⊂ `deploy` ⊂ `admin`. `deploy` exists for CI tokens.
+- **Anonymous failures are not audited**, only logged, so unauthenticated clients cannot grow the audit table.
+- **The audit write is best-effort after the handler.** A failure is logged at ERROR and does not change the response. Writing audit in the mutation's own transaction is possible later, per use case.
+- **`api_tokens.prefix` is `UNIQUE`** (edited in unreleased `0002`), so revoke-by-prefix is unambiguous.
+- `internal/audit` (ARCHITECTURE §8) is not created yet: recording is one store call made by the middleware.
+
+**Verification** (WSL2 as `hami`)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- Unit: 6 rejection cases (challenge header and whether the DB was queried), whoami with 3 scheme spellings, scope denial plus 3 audit results, audit surviving client cancel, audit and store failures. Negative: the plaintext is never in responses or logs.
+- Integration: token lookups (active, no expiry, expired, unknown, revoked), idempotent revoke, touch throttle, unique prefix, hash, and non-empty scopes. `TestTokenCommand` bootstraps, lists, revokes, audits, and checks that the plaintext appears in no DB row.
+- E2E with the real binary on `127.0.0.1:18080`:
+  - no token → 401 `Bearer realm="shipyard"`; read token → 200 whoami; revoked → 401 `error="invalid_token"`;
+  - token in the API log: 0 occurrences; audit rows for create and revoke; API exits 0 on SIGTERM.
+
+**Problems / surprises**
+- Port 8080 inside WSL was taken by the owner's `hamicloud-keycloak` container in Docker Desktop. All WSL2 distros share one network namespace. The e2e run used 18080, and DEVELOPMENT.md §5 has a row for it.
+- WSL stops idle distros, which stops the dev PostgreSQL container. Run `make dev-up` again after a pause.
+
+**Next**
+- P1.4: `internal/secrets`. KEK file loading, per-value DEK, AES-256-GCM with AAD `app_id|key|value_id`, revision creation that reuses rows, plus store queries and the negative tests from the roadmap.
 
 ### 2026-09-26: P1.2 store core
 

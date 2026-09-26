@@ -162,6 +162,7 @@ Configuration comes only from `SHIPYARD_*` environment variables. See [deploy/sh
 | Symptom | Fix |
 | --- | --- |
 | `port is already allocated` on `make dev-up` | Something already uses 54320. Stop it, or run `make dev-up` after editing the port in `deploy/dev/compose.yaml` and the two URLs in the Makefile |
+| Requests to `127.0.0.1:8080` reach another service, or `make run-api` fails with `address already in use` | Another program uses 8080. On WSL, containers published by Docker Desktop count too, because all distros share one network. Run with `SHIPYARD_API_LISTEN=127.0.0.1:18080` |
 | `SHIPYARD_TEST_DATABASE_URL is not set` | Run the tests through `make test-integration`, or export the variable yourself |
 | `go: downloading go1.26.8` hangs | The Go proxy is unreachable. Set `GOPROXY=https://proxy.golang.org,direct` and check the network |
 | staticcheck errors mentioning Go 1.27 | You are building with a newer local toolchain. Keep `GOTOOLCHAIN=auto` so `go.mod`'s pin applies |

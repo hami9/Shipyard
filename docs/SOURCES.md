@@ -104,6 +104,7 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | Tag | Source | What it supports |
 | --- | --- | --- |
 | `OWASP-CRYPTO` | [OWASP Cryptographic Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html) | AES-256 with GCM or CCM as first preference. Store keys separately from data (not in the same DB). Envelope encryption with the KEK stored apart from DEKs. Put rotation in place before it is needed. |
+| `RFC6750` | [RFC 6750: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750#section-3) | A 401 carries `WWW-Authenticate: Bearer`. `invalid_token` (401) covers expired, revoked, and malformed tokens; `insufficient_scope` is 403. A request with no credentials gets no error code. (Verified 2026-09-26) |
 | `WHATWG-SSE` | [HTML Standard: Server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html) | `text/event-stream` (UTF-8), `Last-Event-ID` on reconnect, the `retry` field, and a comment line about every 15 s to keep proxies from closing the stream. |
 | `MDN-SSE` | [MDN: EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource) | Without HTTP/2, browsers allow 6 SSE connections per browser and domain. HTTP/2 negotiates streams (default 100). |
 | `RFC9457` | [RFC 9457: Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457.html) | `application/problem+json` error bodies. Obsoletes RFC 7807. |

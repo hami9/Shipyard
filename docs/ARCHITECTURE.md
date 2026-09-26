@@ -223,6 +223,7 @@ The reconciler runs at worker start and then every 60 s by default.
 | `shipyard app create --repo owner/repo --branch main --port 3000` | `POST /v1/apps` |
 | `shipyard deploy APP [--ref <commit-sha>]` | `POST /v1/apps/{id}/deployments` (with `Idempotency-Key`) |
 | `shipyard ps` | `GET /v1/apps` |
+| `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
 | `shipyard logs APP --follow` | `GET /v1/apps/{id}/logs` (SSE) |
 | `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (SSE, resumable) |
 | `shipyard rollback APP --to <deployment-id>` | `POST /v1/apps/{id}/rollbacks` |
@@ -243,7 +244,11 @@ The reconciler runs at worker start and then every 60 s by default.
 
 **Access**
 
-- The API and CLI require bearer tokens with scopes and expiry. Every mutation writes an audit event.
+- The API and CLI require bearer tokens with scopes and expiry `[RFC6750]`.
+  - Scopes nest: `read` (list and inspect) ⊂ `deploy` (plus deploys and rollbacks, e.g. for CI) ⊂ `admin` (everything).
+  - The first token is created on the server with `shipyard-api token create`. Tokens are revoked with `shipyard-api token revoke <prefix>`.
+  - Unknown, expired, revoked, and malformed tokens get the same 401, so a client cannot tell them apart.
+- Every authenticated mutation, whether allowed or denied, writes an audit event naming the token prefix, the route, and the path. Anonymous failures are logged only, so they cannot fill the audit table.
 - The API listens on localhost or a Unix socket and is exposed only through Caddy over TLS.
 - The webhook path is the only unauthenticated public endpoint, and it must pass HMAC verification.
 

@@ -78,16 +78,16 @@ flowchart LR
   - Database errors mapped to `ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrReference`, and `ErrImmutable`, naming the constraint but never the values.
   - Users and apps repositories.
   - Each later task adds the queries it consumes, with integration tests: tokens and audit (P1.3), secrets and revisions (P1.4), operations and events (P1.5), deployments (P1.11).
-- [ ] **P1.3** Token auth:
-  - A bootstrap admin token command.
-  - `shp_` tokens stored as a SHA-256 hash, with scopes and expiry.
-  - Middleware, plus an audit event on every mutation (ADR-0007).
+- [x] **P1.3** Token auth:
+  - A bootstrap admin token command (`shipyard-api token create|list|revoke`).
+  - `shp_` tokens stored as a SHA-256 hash, with scopes (`read` ⊂ `deploy` ⊂ `admin`) and expiry.
+  - Middleware, plus an audit event on every mutation (ADR-0007). `GET /v1/whoami`.
 - [ ] **P1.4** `internal/secrets`: envelope encryption and environment revisions (ADR-0005).
   - Negative tests: wrong AAD, wrong KEK, tampered ciphertext.
   - A test proving that a DB dump contains no plaintext.
 - [ ] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
 - [ ] **P1.6** App CRUD API: validation of slug, port, and paths (no escape from the repository), plus `application/problem+json` errors.
-- [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, and `ps`. Config holds the API URL and token.
+- [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, `ps`, and `whoami`. Config holds the API URL and token.
 - [ ] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
 - [ ] **P1.9** `internal/build`:
   - A `shipyard` buildx builder with CPU and memory caps.
