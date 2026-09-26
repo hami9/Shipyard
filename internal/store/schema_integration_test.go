@@ -20,7 +20,7 @@ const (
 	uniqueViolation   = "23505"
 	checkViolation    = "23514"
 	foreignKeyViolate = "23503"
-	restrictViolation = "23001" // shipyard_reject_change()
+	immutableRow      = "SY001" // shipyard_reject_change()
 )
 
 var (
@@ -174,7 +174,7 @@ func TestSchemaOperations(t *testing.T) {
 		op := f.operation(f.app(), "queued")
 		mustExec(t, db, `INSERT INTO operation_events (operation_id, seq, level, message) VALUES ($1, 1, 'info', 'building')`, op)
 		wantState(t, exec(t, db, `INSERT INTO operation_events (operation_id, seq, level, message) VALUES ($1, 1, 'info', 'again')`, op), uniqueViolation)
-		wantState(t, exec(t, db, `UPDATE operation_events SET message = 'x' WHERE operation_id = $1`, op), restrictViolation)
+		wantState(t, exec(t, db, `UPDATE operation_events SET message = 'x' WHERE operation_id = $1`, op), immutableRow)
 	})
 }
 
@@ -332,9 +332,9 @@ func TestSchemaSecretsAndAudit(t *testing.T) {
 		s := f.secret(a, "KEY")
 		rev := f.revision(a, 1)
 		mustExec(t, db, entry, rev, a, "KEY", s, nil)
-		wantState(t, exec(t, db, `UPDATE secret_values SET kek_id = 'kek2' WHERE id = $1`, s), restrictViolation)
-		wantState(t, exec(t, db, `UPDATE env_revisions SET number = 2 WHERE id = $1`, rev), restrictViolation)
-		wantState(t, exec(t, db, `UPDATE env_revision_entries SET key = 'KEY2' WHERE revision_id = $1`, rev), restrictViolation)
+		wantState(t, exec(t, db, `UPDATE secret_values SET kek_id = 'kek2' WHERE id = $1`, s), immutableRow)
+		wantState(t, exec(t, db, `UPDATE env_revisions SET number = 2 WHERE id = $1`, rev), immutableRow)
+		wantState(t, exec(t, db, `UPDATE env_revision_entries SET key = 'KEY2' WHERE revision_id = $1`, rev), immutableRow)
 	})
 
 	t.Run("deleting an app cascades through immutable rows", func(t *testing.T) {
@@ -360,7 +360,7 @@ func TestSchemaSecretsAndAudit(t *testing.T) {
 
 	t.Run("audit events are append-only and never deleted", func(t *testing.T) {
 		id := insertID(t, db, `INSERT INTO audit_events (actor, action, target, result) VALUES ('token:shp_abcd', 'app.create', 'web', 'success') RETURNING id::text`)
-		wantState(t, exec(t, db, `UPDATE audit_events SET result = 'denied' WHERE id = $1`, id), restrictViolation)
-		wantState(t, exec(t, db, `DELETE FROM audit_events WHERE id = $1`, id), restrictViolation)
+		wantState(t, exec(t, db, `UPDATE audit_events SET result = 'denied' WHERE id = $1`, id), immutableRow)
+		wantState(t, exec(t, db, `DELETE FROM audit_events WHERE id = $1`, id), immutableRow)
 	})
 }

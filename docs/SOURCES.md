@@ -86,6 +86,7 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | --- | --- | --- |
 | `PG-SELECT` | [SELECT … locking clause](https://www.postgresql.org/docs/current/sql-select.html) | `SKIP LOCKED` suits multiple consumers of a queue-like table and is not for general-purpose reads. |
 | `PG-LOCKS` | [Explicit locking: advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html) | Session-level advisory locks ignore transaction semantics and last until the session ends. They share the lock memory pool. |
+| `PG-RAISE` | [PL/pgSQL errors and messages](https://www.postgresql.org/docs/18/plpgsql-errors-and-messages.html) | `RAISE … USING ERRCODE` accepts any five-character SQLSTATE of digits and upper-case letters except `00000`. Avoid codes ending in `000` (category codes). (Verified 2026-09-26) |
 | `PG-UUID` | [UUID functions](https://www.postgresql.org/docs/18/functions-uuid.html) | `gen_random_uuid()` returns a version 4 (random) UUID and is in core since PostgreSQL 13. `uuidv7()` (time-ordered) is new in 18. (Verified 2026-09-26) |
 | `PG-VERSIONS` | [Versioning policy](https://www.postgresql.org/support/versioning/) | 18 is the current major (18.6), supported until 2030-11-14. 17 is supported until 2029-11-08. Run the latest minor release. |
 

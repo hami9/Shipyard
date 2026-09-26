@@ -20,11 +20,13 @@ BEGIN
 END
 $$;
 
+-- SY001 is Shipyard's own SQLSTATE [PG-RAISE]. A standard code would be
+-- ambiguous: ON DELETE RESTRICT, for example, raises 23001 restrict_violation.
 CREATE FUNCTION shipyard_reject_change() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
 	RAISE EXCEPTION '% on % is not allowed: rows are immutable', TG_OP, TG_TABLE_NAME
-		USING ERRCODE = 'restrict_violation';
+		USING ERRCODE = 'SY001';
 END
 $$;
 
@@ -59,7 +61,8 @@ CREATE INDEX api_tokens_user_id_idx ON api_tokens (user_id);
 
 CREATE TABLE apps (
 	id                     uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
-	owner_id               uuid         NOT NULL REFERENCES users ON DELETE RESTRICT,
+	-- Default NO ACTION: deleting an owner of apps fails with 23503.
+	owner_id               uuid         NOT NULL REFERENCES users,
 	-- One DNS label: used in container, network, and image names.
 	slug                   text         NOT NULL UNIQUE
 	                                    CHECK (slug ~ '^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$'),
