@@ -44,8 +44,9 @@ CREATE TABLE api_tokens (
 	id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
 	user_id      uuid        NOT NULL REFERENCES users ON DELETE CASCADE,
 	name         text        NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
-	-- Shown in listings to identify a token; never enough to authenticate.
-	prefix       text        NOT NULL CHECK (prefix ~ '^shp_[A-Za-z0-9_-]{4,16}$'),
+	-- Shown in listings and audit actors, and used to revoke a token; never
+	-- enough to authenticate.
+	prefix       text        NOT NULL UNIQUE CHECK (prefix ~ '^shp_[A-Za-z0-9_-]{4,16}$'),
 	sha256_hash  bytea       NOT NULL UNIQUE CHECK (octet_length(sha256_hash) = 32),
 	scopes       text[]      NOT NULL CHECK (cardinality(scopes) > 0),
 	expires_at   timestamptz,
