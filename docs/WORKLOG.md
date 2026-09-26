@@ -9,8 +9,8 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 | Field | Value |
 | --- | --- |
 | **Active phase** | Phase 1: Foundation. Branch `schema-v1` |
-| **Last completed** | P1.1: schema v1 (`migrations/0002_schema_v1.sql`) with 33 constraint subtests |
-| **Next task** | P1.2: `internal/store` on pgx (typed repositories over the v1 schema) with integration tests for every constraint |
+| **Last completed** | P1.2: store core (`Store`, `InTx`, error mapping) plus users and apps repositories |
+| **Next task** | P1.3: token auth (bootstrap admin token, `shp_` tokens hashed with scopes and expiry, middleware, audit on every mutation) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,39 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-26: P1.2 store core
+
+- **Phase / task:** P1.2: `internal/store` on pgx
+- **Author:** Claude Code (desktop session)
+- **Goal:** One place for transactions and database error mapping, plus the first repositories.
+
+**Done**
+- `store.New`, `(*Store).InTx`. The same query methods run on the pool or in a transaction; a nested `InTx` joins the outer one.
+- `errors.go`: SQLSTATE → `ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrReference`, `ErrImmutable`, wrapped in `*ConstraintError{Table, Constraint, Column}`. PostgreSQL's message and detail are dropped because they quote values (`Key (slug)=(…)`), so the error is safe to log.
+- `users.go`: `CreateUser`, `UserByName`. `apps.go`: `CreateApp`, `UpdateApp`, `AppByID`, `AppBySlug`, `ListApps`, `DeleteApp`. A nil `AppSettings` field keeps the DB default or the current value, so defaults live only in the migration.
+
+**Changed files**
+- `internal/store/{store,errors,users,apps}.go`, `errors_test.go`, `apps_integration_test.go`
+- `migrations/0002_schema_v1.sql`: immutability SQLSTATE and owner FK (below). `docs/SOURCES.md`: `PG-RAISE`. `docs/ROADMAP.md`
+
+**Decisions**
+- **Scope:** P1.2 is the core plus users and apps. Each later task adds the queries it consumes (CLAUDE.md §5: interfaces are declared by the consumer). The roadmap item says so.
+- **Durations** are exchanged as microseconds (`extract(epoch …)` / `$n * interval '1 microsecond'`), independent of the driver's interval mapping.
+
+**Verification** (WSL2 as `hami`, PostgreSQL 18)
+- `make lint`: exit 0. `make test`: ok, including `TestMapError` and `TestConstraintErrorOmitsValues` (negative test: the rejected value never appears in `Error()`).
+- `make dev-reset && make dev-up && make migrate`: `applied=2`, then `applied=0`.
+- `go test -race -tags integration ./internal/store/`: all pass (users, app defaults, round trip, 9 rejection cases, update/list/delete, `InTx` rollback, nested join and commit, owner delete refused). `make test-integration`: all ok.
+
+**Problems / surprises**
+- **A test caught a real bug.** `ON DELETE RESTRICT` raises `23001 restrict_violation`, the same code the immutability trigger used, so "owner still has apps" would have surfaced as "row is immutable". Fixed in `0002`:
+  - the trigger now raises Shipyard's own `SY001` `[PG-RAISE]`;
+  - `apps.owner_id` uses the default `NO ACTION` (`23503`).
+  `0002` was edited in place because it is unreleased and only on this branch. Any dev database that applied the old `0002` needs `make dev-reset`.
+
+**Next**
+- P1.3: token auth. Add `api_tokens` and `audit_events` queries to `internal/store` with integration tests.
 
 ### 2026-09-26: P1.1 schema v1
 

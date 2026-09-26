@@ -73,7 +73,11 @@ flowchart LR
 - [x] **P1.1** Schema v1 (`migrations/0002_schema_v1.sql`, with constraint tests in `internal/store/schema_integration_test.go`):
   - Tables: users, api_tokens, apps, secret_values, env_revisions and entries, deployments, operations, operation_events, audit_events, routes, webhook_deliveries.
   - Constraints: `UNIQUE(idempotency_key)`, the partial unique index for one running operation per app, and a unique `hostname`.
-- [ ] **P1.2** `internal/store` on pgx, with integration tests for every constraint.
+- [x] **P1.2** `internal/store` core on pgx:
+  - `Store` and `InTx` (a nested call joins the outer transaction).
+  - Database errors mapped to `ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrReference`, and `ErrImmutable`, naming the constraint but never the values.
+  - Users and apps repositories.
+  - Each later task adds the queries it consumes, with integration tests: tokens and audit (P1.3), secrets and revisions (P1.4), operations and events (P1.5), deployments (P1.11).
 - [ ] **P1.3** Token auth:
   - A bootstrap admin token command.
   - `shp_` tokens stored as a SHA-256 hash, with scopes and expiry.
