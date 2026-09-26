@@ -42,7 +42,7 @@ flowchart LR
 | 4 GitHub integration | P4 | Adds the ancestry check, catch-up for missed deliveries, and the 25 MB cap (R4, R7). |
 | 5 Hardening and UI | P5 + P6 | The UI is split into a parallel track so it cannot block the MVP. |
 
-## P0: Bootstrap `[~]`
+## P0: Bootstrap `[x]`
 
 **Goal:** an empty but fully wired project, so every later task is only "add code and tests".
 
@@ -64,7 +64,7 @@ flowchart LR
 
 - A fresh clone passes `make lint test`. CI is green. ✅
 - `make dev-up && make migrate && make test-integration` passes locally. ✅ (owner's WSL2 machine, 2026-09-26)
-- Merged to `main` (2026-09-26, CI green). Remaining before `[x]`: cut `v0.1.0` (owner).
+- Merged to `main` and released as [`v0.1.0`](https://github.com/hami9/Shipyard/releases/tag/v0.1.0) (2026-09-26).
 
 ## P1: Foundation, the first manual deploy
 

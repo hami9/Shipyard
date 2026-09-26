@@ -8,10 +8,10 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 0: Bootstrap. Exit criteria met and merged to `main` (`73fa9e4`, CI green); waiting on `v0.1.0` |
-| **Last completed** | P0 local verification on the owner's WSL2 machine; dev healthcheck race fixed; fast-forward merge to `main` |
-| **Next task** | Owner: cut `v0.1.0` (docs/RELEASING.md), make the GHCR package public. Agent: P1.1 (schema v1) on a new short branch from `main` |
-| **Blockers** | None for P1.1. Release waits on the owner |
+| **Active phase** | Phase 1: Foundation (not started). Phase 0 closed with release `v0.1.0` |
+| **Last completed** | `v0.1.0` released (tag on `3000c74`): binaries, checksums, provenance, public multi-arch GHCR image |
+| **Next task** | P1.1: schema v1 migration `0002_schema_v1.sql` plus store tests, on a new short branch from `main` |
+| **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
 
@@ -53,6 +53,30 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-26: Release v0.1.0
+
+- **Phase / task:** P0 close: merge and first release
+- **Author:** Claude Code (desktop session), on the owner's explicit request
+- **Goal:** Merge Phase 0 to `main` and cut `v0.1.0` per docs/RELEASING.md.
+
+**Done**
+- Fast-forward merge of `claude/shipyard-architecture-proposal-j8w56b` into `main` (`73fa9e4`).
+- `CHANGELOG.md`: `[Unreleased]` → `[0.1.0] - 2026-09-26` (`3000c74 Release v0.1.0`), annotated tag `v0.1.0` pushed.
+- WSL user `hami` added to the `docker` group (already in `sudo`); repo cloned to `/home/hami/shipyard`.
+- README: release pointer and image usage (no entrypoint; name the binary).
+
+**Verification**
+- Rehearsal in WSL as `hami`: `make release-check` ok; `make release-snapshot` ok (8 archives, checksums, amd64/arm64 images); binaries report `go1.26.8`.
+- CI on `main`: `73fa9e4` and `3000c74` both green. [Release run](https://github.com/hami9/Shipyard/actions/runs/36252517257): success.
+- Release page: not a draft or pre-release, 8 archives plus `checksums.txt`. `sha256sum -c` OK for the Linux server and Windows CLI archives; `gh attestation verify` exit 0; downloaded `shipyard.exe version` → `v0.1.0 (commit 3000c741483a, go1.26.8)`.
+- GHCR: anonymous `docker manifest inspect` works (amd64, arm64, plus attestation manifests); `shipyard`, `shipyard-api`, and `shipyard-worker` all report `v0.1.0` from the image; `:latest` resolves.
+
+**Problems / surprises**
+- The GHCR package was already publicly pullable after the first push, so the manual "make it public" step was not needed this time. Package settings could not be read here (`gh` token lacks `read:packages`).
+
+**Next**
+- P1.1: `git switch -c schema-v1 main`, then write `migrations/0002_schema_v1.sql` plus store integration tests.
 
 ### 2026-09-26: Owner local run (WSL2), repo settings
 

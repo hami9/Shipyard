@@ -27,10 +27,10 @@ A failed build or health check never touches the release that is currently servi
 
 ## Install
 
-> There is no release yet. `v0.1.0` ships when Phase 0 closes ([version plan](docs/RELEASING.md#version-plan)).
+> The latest release is [`v0.1.0`](https://github.com/hami9/Shipyard/releases/tag/v0.1.0), the Phase 0 bootstrap. It does not deploy apps yet ([version plan](docs/RELEASING.md#version-plan)).
 
 - **Binaries:** download from [Releases](https://github.com/hami9/Shipyard/releases). The CLI is available for Linux, macOS, and Windows. `shipyard-server` (API and worker, with systemd units) is available for Linux amd64 and arm64. Verify downloads with `checksums.txt` and `gh attestation verify`.
-- **Container image:** `ghcr.io/hami9/shipyard:<version>` (linux/amd64, linux/arm64), for the CLI and for evaluation.
+- **Container image:** `ghcr.io/hami9/shipyard:<version>` (linux/amd64, linux/arm64), for the CLI and for evaluation. The image has no entrypoint, so name the binary: `docker run --rm ghcr.io/hami9/shipyard:v0.1.0 shipyard version`.
 - **From source:** see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 The supported production setup is the two systemd services in [deploy/](deploy/README.md). A full installer arrives in Phase 5.
