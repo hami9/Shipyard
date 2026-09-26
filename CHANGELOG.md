@@ -9,6 +9,10 @@ All notable changes to Shipyard are recorded here.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-26
+
+First release: the Phase 0 bootstrap. An empty but fully wired project; it does not deploy apps yet.
+
 ### Added
 
 - **Project definition:** architecture v2 verified against primary sources, 7 accepted ADRs, a phased roadmap, and agent instructions (`CLAUDE.md`).
