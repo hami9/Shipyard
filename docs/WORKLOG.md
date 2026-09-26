@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 0: Bootstrap. Exit criteria met; waiting on merge to `main` and `v0.1.0` |
-| **Last completed** | P0 local verification on the owner's WSL2 machine; dev healthcheck race fixed |
-| **Next task** | Owner: merge Phase 0 to `main`, cut `v0.1.0` (docs/RELEASING.md), make the GHCR package public. Agent: P1.1 (schema v1) |
+| **Active phase** | Phase 0: Bootstrap. Exit criteria met and merged to `main` (`73fa9e4`, CI green); waiting on `v0.1.0` |
+| **Last completed** | P0 local verification on the owner's WSL2 machine; dev healthcheck race fixed; fast-forward merge to `main` |
+| **Next task** | Owner: cut `v0.1.0` (docs/RELEASING.md), make the GHCR package public. Agent: P1.1 (schema v1) on a new short branch from `main` |
 | **Blockers** | None for P1.1. Release waits on the owner |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
