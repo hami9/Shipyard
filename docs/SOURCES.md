@@ -49,6 +49,8 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | `MS-WSL-FS` | [Working across file systems (WSL)](https://learn.microsoft.com/en-us/windows/wsl/filesystems) | Store project files in the Linux file system (`/home/<user>/…`), not `/mnt/c`, for performance. (Verified 2026-09-25) |
 | `GO-INSTALL` | [Go: download and install](https://go.dev/doc/install) | The Linux tarball install into `/usr/local/go` plus PATH. Never untar over an existing tree. The go1.26.8 linux-amd64 SHA-256 comes from `go.dev/dl/?mode=json`. (Verified 2026-09-25) |
 | `PG-IMAGE` | [Official postgres image docs](https://github.com/docker-library/docs/blob/master/postgres/content.md) | For PostgreSQL 18+ images, `PGDATA` is `/var/lib/postgresql/18/docker` and the `VOLUME` is `/var/lib/postgresql`. `POSTGRES_PASSWORD` is required. (Verified 2026-09-25) |
+| `PG-IMAGE-INIT` | [postgres image `docker-entrypoint.sh`](https://github.com/docker-library/postgres/blob/master/18/bookworm/docker-entrypoint.sh) | On first start, `docker_temp_server_start` runs a temporary server with `listen_addresses=''` (Unix socket only) for init, then restarts it. A socket-based `pg_isready` can pass before the real server accepts TCP, so the dev healthcheck probes `127.0.0.1`. (Verified 2026-09-26) |
+| `MS-WSL-CONF` | [Advanced settings configuration in WSL](https://learn.microsoft.com/en-us/windows/wsl/wsl-config) | `wsl.conf` `[network] generateResolvConf=false` stops WSL from generating `/etc/resolv.conf` so you can write your own (e.g. `nameserver 1.1.1.1`). `dnsTunneling` and `mirrored` networking are Windows 11 22H2+ only. (Verified 2026-09-26) |
 
 ## Tooling
 

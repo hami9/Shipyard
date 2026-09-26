@@ -16,7 +16,10 @@ services:
       # PostgreSQL 18+ images declare the volume at /var/lib/postgresql.
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shipyard -d shipyard"]
+      # Probe over TCP: the first-run init server listens only on the Unix
+      # socket, so a socket probe reports healthy before the real server
+      # starts and `make migrate` then fails with 57P03 [PG-IMAGE-INIT].
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U shipyard -d shipyard"]
       interval: 2s
       timeout: 5s
       retries: 30
