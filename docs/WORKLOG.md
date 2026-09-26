@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 0: Bootstrap. The code is done; waiting on two external checks |
-| **Last completed** | P0.1–P0.8: bootstrap plus public-repo readiness (license, release pipeline, security and contributing docs) |
-| **Next task** | Owner sets up WSL2 (docs/DEVELOPMENT.md §2), then runs §3 and sends the output. Then P1.1 (schema v1) |
-| **Blockers** | Owner: (1) WSL2 setup and local verification run; (2) set the repository About text; (3) enable private vulnerability reporting. First release `v0.1.0` after Phase 0 merges to `main` |
+| **Active phase** | Phase 0: Bootstrap. Exit criteria met; waiting on merge to `main` and `v0.1.0` |
+| **Last completed** | P0 local verification on the owner's WSL2 machine; dev healthcheck race fixed |
+| **Next task** | Owner: merge Phase 0 to `main`, cut `v0.1.0` (docs/RELEASING.md), make the GHCR package public. Agent: P1.1 (schema v1) |
+| **Blockers** | None for P1.1. Release waits on the owner |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
-| **Last updated** | 2026-09-25 |
+| **Last updated** | 2026-09-26 |
 
 ## Entry template
 
@@ -53,6 +53,44 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-26: Owner local run (WSL2), repo settings
+
+- **Phase / task:** P0 exit criteria (local verification), owner blockers
+- **Author:** Claude Code (desktop session on the owner's Windows 10 machine)
+- **Goal:** Clear the owner-side Phase 0 blockers and run DEVELOPMENT.md §2–§3 locally.
+
+**Done**
+- GitHub, via `gh`: set the About description and 10 topics; enabled private vulnerability reporting (`{"enabled":true}`).
+- WSL2: installed `Ubuntu-24.04` (systemd on), Docker Engine 29.8.1, Compose v5.5.1, and go1.26.8 (checksum OK), following §2.3–§2.4. Docker Desktop stays installed; its WSL integration is not enabled for Ubuntu.
+- Fixed a dev-env race: on a fresh volume, `make dev-up && make migrate` failed with `57P03 the database system is starting up`. The healthcheck probed the Unix socket, which the image's init-only temp server already serves `[PG-IMAGE-INIT]`. It now probes `127.0.0.1`.
+- Added WSL troubleshooting rows (VPN DNS, apt IPv6, Docker Desktop CLI on PATH) and tags `PG-IMAGE-INIT`, `MS-WSL-CONF`.
+
+**Changed files**
+- `deploy/dev/compose.yaml`: TCP healthcheck
+- `docs/DEVELOPMENT.md`, `docs/SOURCES.md`, `docs/ROADMAP.md`: troubleshooting, tags, exit criteria
+
+**Decisions**
+- none (dev-only config fix)
+
+**Verification** (inside Ubuntu-24.04 on WSL2, as root, commit `b254f91` plus the fix)
+- §2.5: `docker info` → `Ubuntu 24.04.5 LTS`; probe of container IP `172.17.0.2` → `HTTP 200`.
+- `make lint`: exit 0. `make test`: 8 packages ok under `-race`.
+- `make build && ./bin/shipyard-api version` → `shipyard-api b254f91 (commit b254f91ae4c5, go1.26.8)`.
+- Before the fix: first `make migrate` after `dev-up` → 57P03; container log showed the Unix-socket-only temp server.
+- After the fix: `make dev-reset`, then `dev-up && migrate && test-integration` **3/3 PASS**; second `migrate` → `applied=0`.
+- `curl /healthz` → `200 {"status":"ok"}` with `X-Request-Id`; `curl /readyz` → `200 {"status":"ready"}`.
+- API binary exits 0 on SIGINT and on SIGTERM, logging `api shutting down`.
+
+**Problems / surprises**
+- With the Windscribe VPN connected, WSL's NAT DNS proxy did not resolve anything, although IPs were reachable. Fixed per distro with `generateResolvConf=false` plus public resolvers `[MS-WSL-CONF]`. `dnsTunneling` is not available on Windows 10.
+- apt tried IPv6 and got `Ign:` on every package; forced IPv4 (`99force-ipv4`, `gai.conf`).
+- No regular Linux user exists in the distro yet; everything ran as root. The owner creates one (see Next).
+
+**Next**
+- Owner: create the WSL user (`wsl -d Ubuntu-24.04`, then `adduser <name>`, `usermod -aG sudo,docker <name>`, and set `[user] default=<name>` in `/etc/wsl.conf`).
+- Owner: merge this branch to `main`, then cut `v0.1.0` per docs/RELEASING.md and make the GHCR package public.
+- Agent: P1.1, schema v1 migration `0002_schema_v1.sql` plus store tests.
 
 ### 2026-09-25: Owner platform, WSL2 guide
 

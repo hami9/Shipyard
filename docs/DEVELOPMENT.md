@@ -165,3 +165,6 @@ Configuration comes only from `SHIPYARD_*` environment variables. See [deploy/sh
 | `SHIPYARD_TEST_DATABASE_URL is not set` | Run the tests through `make test-integration`, or export the variable yourself |
 | `go: downloading go1.26.8` hangs | The Go proxy is unreachable. Set `GOPROXY=https://proxy.golang.org,direct` and check the network |
 | staticcheck errors mentioning Go 1.27 | You are building with a newer local toolchain. Keep `GOTOOLCHAIN=auto` so `go.mod`'s pin applies |
+| WSL: `apt` hangs or `curl` fails with "Could not resolve host", but `ping 1.1.1.1` works | WSL's DNS proxy fails while a Windows VPN is connected. In the distro, add `[network]` / `generateResolvConf=false` to `/etc/wsl.conf`, run `wsl --terminate <distro>`, then replace `/etc/resolv.conf` (a symlink) with a file containing `nameserver 1.1.1.1` `[MS-WSL-CONF]` |
+| WSL: `apt` prints `Ign:` for every package | IPv6 does not route. Run `echo 'Acquire::ForceIPv4 "true";' \| sudo tee /etc/apt/apt.conf.d/99force-ipv4` |
+| `docker` inside Ubuntu is `/mnt/c/Program Files/Docker/…` | That is Docker Desktop's Windows CLI leaking in through the Windows PATH. Install Docker Engine (§2.3) and keep Docker Desktop's WSL integration **off** for this distro |

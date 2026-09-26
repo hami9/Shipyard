@@ -62,8 +62,9 @@ flowchart LR
 
 **Exit criteria**
 
-- A fresh clone passes `make lint test`. CI is green.
-- `make dev-up && make migrate && make test-integration` passes locally.
+- A fresh clone passes `make lint test`. CI is green. ✅
+- `make dev-up && make migrate && make test-integration` passes locally. ✅ (owner's WSL2 machine, 2026-09-26)
+- Remaining before `[x]`: merge to `main` and cut `v0.1.0` (owner).
 
 ## P1: Foundation, the first manual deploy
 
