@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -183,8 +184,34 @@ func (s *Store) ListApps(ctx context.Context) ([]App, error) {
 	return apps, mapError(err)
 }
 
+// ErrAppBusy means an app still has live work: a running operation or a
+// deployment that is starting or serving.
+var ErrAppBusy = errors.New("the app has a running operation or a live deployment; stop it first")
+
+// DeleteIdleApp deletes an app only when nothing of it is running or
+// serving, so a delete cannot pull rows out from under a worker or orphan a
+// serving container. It returns ErrNotFound or ErrAppBusy otherwise.
+func (s *Store) DeleteIdleApp(ctx context.Context, id string) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.LockApp(ctx, id); err != nil {
+			return err
+		}
+		var busy bool
+		if err := tx.q.QueryRow(ctx, `SELECT
+			EXISTS (SELECT 1 FROM operations WHERE app_id = $1 AND status = 'running') OR
+			EXISTS (SELECT 1 FROM deployments WHERE app_id = $1
+			        AND status IN ('building', 'starting', 'health_checking', 'switching', 'active'))`, id).Scan(&busy); err != nil {
+			return mapError(err)
+		}
+		if busy {
+			return ErrAppBusy
+		}
+		return tx.DeleteApp(ctx, id)
+	})
+}
+
 // DeleteApp removes an app and, by cascade, its history. It returns
-// ErrNotFound when the app does not exist.
+// ErrNotFound when the app does not exist. The API uses DeleteIdleApp.
 func (s *Store) DeleteApp(ctx context.Context, id string) error {
 	tag, err := s.q.Exec(ctx, `DELETE FROM apps WHERE id = $1`, id)
 	if err != nil {

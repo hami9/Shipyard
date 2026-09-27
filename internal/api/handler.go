@@ -23,16 +23,27 @@ type Deps struct {
 	DB     Pinger
 	Tokens TokenStore
 	Audit  AuditRecorder
+	Apps   AppStore
 }
 
 // NewHandler returns the root handler with middleware applied. Health
 // endpoints are public; every /v1 route goes through auth.protect.
 func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	auth := &authenticator{log: log, tokens: d.Tokens, audit: d.Audit}
+	route := func(mux *http.ServeMux, pattern, scope string, h http.HandlerFunc) {
+		mux.Handle(pattern, auth.protect(scope, h))
+	}
+	apps := &appHandlers{log: log, apps: d.Apps}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(log, d.DB))
-	mux.Handle("GET /v1/whoami", auth.protect(ScopeRead, http.HandlerFunc(handleWhoami)))
+	route(mux, "GET /v1/whoami", ScopeRead, handleWhoami)
+	route(mux, "GET /v1/apps", ScopeRead, apps.list)
+	route(mux, "POST /v1/apps", ScopeAdmin, apps.create)
+	route(mux, "GET /v1/apps/{app}", ScopeRead, apps.get)
+	route(mux, "PATCH /v1/apps/{app}", ScopeAdmin, apps.update)
+	route(mux, "DELETE /v1/apps/{app}", ScopeAdmin, apps.delete)
 	return withRequestID(withAccessLog(log, mux))
 }
 
