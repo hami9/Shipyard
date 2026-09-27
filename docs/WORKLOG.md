@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9) |
-| **Last completed** | P1.9: `internal/build` (limited buildx builder, bounded logs, image ID identity) |
-| **Next task** | P1.10: `internal/runtime` on `moby/moby/client` (per-app network, hardened flags, labels, env injection). Docker: owner's machine |
+| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10) |
+| **Last completed** | P1.10: `internal/runtime` (per-app network, hardened containers, label-guarded lifecycle) |
+| **Next task** | P1.11: the deploy use case in the worker (`queued → building → starting → health_checking → active`), plus the health probe |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
-| **Last updated** | 2026-09-26 |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet |
+| **Last updated** | 2026-09-27 |
 
 ## Entry template
 
@@ -53,6 +53,51 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.10 container runtime
+
+- **Phase / task:** P1.10: `internal/runtime`
+- **Author:** Claude Code (desktop session)
+- **Goal:** Run a deployment's image as a hardened container on its app's own network, safely repeatable after a crash (invariants 3 and 10).
+
+**Done**
+- `EnsureNetwork` / `RemoveNetwork`: the bridge network `shipyard-app-<slug>`, labelled `io.shipyard.{managed,app}`. Both are idempotent, and both refuse a same-named network without those labels.
+- `Create(Spec)` returns the ID without starting, so the caller persists it first.
+  - It ensures the network, then creates `shipyard-<slug>-<deployment-id>` from the image ID.
+  - Labels are `io.shipyard.{managed,app,deployment,commit}`. The env is injected as sorted `KEY=value`.
+  - A retry finds the existing container and returns it only if deployment and image match; otherwise `ErrNameTaken`.
+- `Start`, `Inspect` (status, restarts, OOM, exit code, IP on the app network), `Stop` (SIGTERM, then SIGKILL after the rounded-up timeout), `Remove` (force, anonymous volumes).
+  - All are idempotent, with `ErrNotFound` for a missing container.
+  - All refuse unlabelled containers (`ErrNotManaged`).
+- The hardened set is built in one function (ARCHITECTURE §7): `CapDrop ALL` plus an allowlist, `no-new-privileges`, `Memory`, `NanoCPUs`, `PidsLimit`, `unless-stopped`, the `local` log driver, one network, and no ports, mounts, or host namespaces. `Spec` has no field for anything forbidden.
+- `Spec.Validate` checks everything; its errors name env keys, never values (invariant 8).
+
+**Changed files**
+- `internal/runtime/`: the package, unit tests (CI), `docker`-tagged tests, and the `testdata/probe` helper.
+- `go.mod`/`go.sum`: new dependency, `github.com/moby/moby/client` v0.6.0, pulling in `moby/moby/api` v1.56.0 and `containerd/errdefs` v1.0.0. It is the approved Docker client (CLAUDE.md §4); shelling out to the CLI, as `build` does, would give no typed inspect data. It also pulls in OpenTelemetry HTTP instrumentation, which exports nothing unless configured.
+- ARCHITECTURE §7, SOURCES (`MOBY-CLIENT`), ROADMAP, DEVELOPMENT.
+
+**Decisions** (no ADR; these apply ARCHITECTURE §7)
+- **Capability allowlist:** `CHOWN DAC_OVERRIDE FOWNER NET_BIND_SERVICE SETGID SETUID`. **Pids default:** 512. Neither has a per-app column yet; add one when an app needs it.
+- **`Create` calls `EnsureNetwork`**, and every lifecycle call checks the labels, so the worker cannot hit a foreign container even when given a wrong ID.
+
+**Verification** (WSL2: Engine 29.8.1, API 1.56, cgroup v2)
+- `make lint`: exit 0. `make test` and `make test-integration`: all ok. `go mod verify`: all modules verified.
+- `make test-docker`: all ok. `internal/runtime` has 6 Docker tests, 23 s.
+  - **Exit criterion (`TestHardenedContainer`)**: the API inspect and `docker inspect` both show `["ALL"] ["no-new-privileges"] local 67108864 500000000 64 false false`. `PortBindings` is empty, with no bindings even though the image `EXPOSE`s 8080. Exactly one network.
+  - **From inside the container:** `NoNewPrivs: 1` and `CapPrm/CapEff/CapBnd` all zero; `pids.max=64`, `memory.max=67108864`, `cpu.max=50000 100000`; the injected env is readable, including an empty value.
+  - An allowlisted `NET_BIND_SERVICE` gives `CapBnd 0x400` exactly.
+  - **Idempotency:** create is idempotent and gives `ErrNameTaken` for another image; a missing image gives `ErrNotFound`. Start, stop, and remove are idempotent, with `ErrNotFound` after removal.
+  - **Label guard:** a foreign network or container is refused by every call and survives.
+- **Mutation check:** removing `no-new-privileges` and `CapDrop` makes `TestHardenedContainer` fail on 4 assertions.
+- No leftovers after the tests: no `io.shipyard` containers, `shipyard-app-*` networks, or `shipyard-test/*` images.
+
+**Problems / surprises**
+- Engine 29.8.1 **creates a container on a network that does not exist** and fails only at start. The first test run caught this, so `Create` now ensures the network (recorded in `MOBY-CLIENT`).
+- The WSL daemon's default log driver is `json-file`, so the per-container `local` setting is required, not redundant.
+
+**Next**
+- P1.11: the deploy use case: fetch → build → `runtime.Create` (persist the container ID) → `Start` → health probe on `State.IP:internal_port`, with phases persisted before each side effect.
 
 ### 2026-09-27: P1.9 image build
 

@@ -167,7 +167,7 @@ Run `make help` for the full list.
 | `make fmt` | Format Go code |
 | `make lint test` | Required before every commit |
 | `make test-integration` | Needs `make dev-up`. Uses throwaway databases and drops them afterwards |
-| `make test-docker` | Tests that need Docker Engine and buildx (tag `docker`). Each test creates its own `shipyard-test-*` builder and removes it, with its images. CI does not run these; paste the output into the work log |
+| `make test-docker` | Tests that need Docker Engine and buildx (tag `docker`). CI does not run these; paste the output into the work log. Build tests create their own `shipyard-test-*` builder and remove it, with its images. Runtime tests build two small `shipyard-test/probe` images `FROM scratch` (nothing is pulled), run `shipyard-rt-*` containers on `shipyard-app-rt-*` networks, and probe them by bridge IP, so they need the §2.5 check to pass. Everything is removed afterwards |
 | `make run-api` / `make run-worker` | Run against the dev database with text logs. `run-api` first runs `make dev-kek`, which creates a dev-only KEK in the ignored `.dev/kek/` |
 | `make dev-reset` | Wipe the dev database volume |
 

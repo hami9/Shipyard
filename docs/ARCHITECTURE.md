@@ -283,6 +283,12 @@ The reconciler runs at worker start and then every 60 s by default.
 - Always apply: `--cap-drop ALL`, with capabilities added back per app only from an allowlist; `--security-opt no-new-privileges`; `--pids-limit`; `--memory`; `--cpus`; `--restart unless-stopped`; the `local` log driver; one user-defined network per app.
 - Never use: `--privileged`, `--network host`, the Docker socket, host bind mounts, or `-p`.
 - `--read-only` and `--init` are opt-in per app.
+- How `internal/runtime` enforces this `[MOBY-CLIENT]`:
+  - Its `Spec` has no field for any forbidden option, so they cannot be requested. The flag set is built in one function, and a unit test (CI) and a `docker` test (owner's machine) check it. The `docker` test also checks from inside the container: `NoNewPrivs: 1`, empty capability sets, and the cgroup `pids.max`, `memory.max`, and `cpu.max`.
+  - The capability allowlist is `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `NET_BIND_SERVICE`, `SETGID`, and `SETUID`, all in Docker's default set `[DK-SEC]`. The pids limit defaults to 512. Neither has a per-app setting yet.
+  - The `local` log driver is set on each container, because the daemon default may still be `json-file`.
+  - `Create` first ensures the app network, because Engine 29 accepts a missing network at create and fails only at start.
+  - It never adopts or touches a network or container without its `io.shipyard.*` labels. `Start`, `Stop`, `Remove`, and `Inspect` check the labels first, so a wrong ID cannot affect an unrelated container on the host.
 
 **Docker daemon** `[DK-LOG][DK-LOG-LOCAL][DK-LIVE]`
 
