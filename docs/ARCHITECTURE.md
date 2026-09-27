@@ -174,8 +174,10 @@ stateDiagram-v2
    - A failure can be retried after a delay while attempts remain (default 3).
    - `LISTEN/NOTIFY` may wake the worker, but polling (every 2 s) stays the fallback.
 3. **Fetch.** Fetch the exact SHA over HTTPS. For private repositories, use a one-hour installation token scoped to that repository with `contents: read` `[GH-APP-TOKEN]`, passed as a git header, never in the URL.
-   - **Verify that the SHA is an ancestor of the tracked branch**, for example with `git merge-base --is-ancestor`. Fork commits are reachable through the upstream network `[GH-FORKS]`.
-   - Reject Dockerfile or context paths that escape the checkout.
+   - **Verify that the SHA is an ancestor of the tracked branch** with `git merge-base --is-ancestor` `[GIT-MERGE-BASE]`. Fork commits are reachable through the upstream network `[GH-FORKS]`.
+   - How: a blobless, single-branch clone (`--filter=blob:none --single-branch`) into `<work>/op-<operation-id>`, emptied first on every retry. It has every commit of the branch but only the files of the commit checked out. A SHA missing from that history is refused without fetching anything else.
+   - git runs without a shell, ignores the host's git config (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM`), never prompts, and allows only the base URL's transport (`protocol.allow=never` plus one exception). The token travels as an `http.extraHeader` in the environment `[GIT-CONFIG]`, never in argv, the URL, or `.git/config`.
+   - Reject Dockerfile or context paths that escape the checkout, **after resolving symlinks** (`Checkout.Path`).
 4. **Build.** Run `docker buildx build --builder shipyard --load --metadata-file … --label io.shipyard.*` on the resource-limited builder, under a context deadline `[DK-BX-CONTAINER][DK-BX-BUILD]`.
    - No Shipyard credentials go into the build: no build args, no environment `[DK-BUILD-SECRETS]`.
    - Record the image ID and build metadata. Stream bounded build logs to operation events.

@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7) |
-| **Last completed** | P1.7: CLI and deploy endpoint |
-| **Next task** | P1.8: `internal/source` (fetch the exact SHA, resolve the branch head, ancestry check, per-operation workspace). Needs git and the network, so it is tested on the owner's machine |
+| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8) |
+| **Last completed** | P1.8: `internal/source` (blobless fetch, ancestry, per-op workspace, symlink-safe paths) |
+| **Next task** | P1.9: `internal/build` (buildx builder with limits, `--load`, deadline, metadata file, bounded logs). Needs Docker and BuildKit: tested on the owner's WSL2 machine |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,46 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.8 source fetch
+
+- **Phase / task:** P1.8: `internal/source`
+- **Author:** Claude Code (desktop session)
+- **Goal:** Put the exact commit into a fresh per-operation workspace, and prove it is on the tracked branch (invariant 7).
+
+**Done**
+- `Fetcher.Fetch(Request{OperationID, Repo, Branch, Ref, Token})` returns `Checkout{Dir, SHA, BranchHead}`:
+  1. Validate every input first (UUID, owner/name, git ref rules plus no leading `-`, full SHA).
+  2. Empty `<Root>/op-<id>` (a retry starts clean); the root is mode 0700.
+  3. `git clone --no-checkout --filter=blob:none --single-branch --no-tags --branch B -- URL DIR`.
+  4. Resolve the branch head; the target is `Ref` or the head.
+  5. `cat-file -e` in the branch history (otherwise `ErrNotOnBranch`, fetching nothing more), then `merge-base --is-ancestor` `[GIT-MERGE-BASE]`.
+  6. Detached checkout, and verify that `HEAD` equals the SHA.
+- git runs via `exec` (no shell) with a locked-down environment:
+  - no host git config, no prompts, `core.hooksPath=/dev/null`, no credential helper;
+  - `protocol.allow=never` plus only the base URL's scheme;
+  - the token becomes `http.extraHeader: Authorization: Basic x-access-token:…` through `GIT_CONFIG_COUNT` `[GIT-CONFIG]`, never in argv (world-readable in `/proc`), the URL, or `.git/config`;
+  - stderr in errors is truncated and the token redacted.
+- The base URL must be `https`; `http` is allowed only on loopback (tests). URLs with user info are refused.
+- `Checkout.Path(rel)` resolves through symlinks and returns `ErrEscapes` outside the checkout (ADR-0004). `Cleanup(opID)`.
+
+**Decisions**
+- **Blobless single-branch clone:** it has the full commit history, so ancestry is exact, but downloads file contents for one commit only.
+- **A SHA absent from the branch history is refused without fetching it.** Fork commits reachable through GitHub's network `[GH-FORKS]` therefore never enter the workspace.
+- **Tests run against a real git smart-HTTP server** (`git http-backend` behind `net/http/cgi` on loopback), under the `integration` tag because they need the git binary. They need no network, so CI runs them too.
+
+**Verification** (WSL2, git 2.43.0)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- `internal/source` integration (7 tests):
+  - branch head checkout; a pinned ancestor with the **clone confirmed blobless** (missing blobs present);
+  - **a feature-branch commit and an unknown SHA are refused as `ErrNotOnBranch`**, while the same commit works for its own branch; a missing branch returns `ErrBranchNotFound`;
+  - separate workspaces per op, a retry wipes stale files, `Cleanup` touches only its op;
+  - **the token reached the server as Basic `x-access-token`**, appears in no workspace file, and is not in error text;
+  - `Path`: `evil -> /etc` and `../x` are refused, `link -> Dockerfile` is allowed;
+  - bad inputs and base URLs (`ext::`, `file://`, plain `http` to a remote host, user info) fail before git is executed (checked with a nonexistent git binary).
+
+**Next**
+- P1.9: `internal/build`. It needs Docker and BuildKit, so it runs locally on WSL2.
 
 ### 2026-09-27: P1.7 CLI and deploy endpoint
 
