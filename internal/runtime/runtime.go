@@ -6,18 +6,22 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"math"
 	"net/netip"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -370,6 +374,35 @@ func (r *Runtime) Remove(ctx context.Context, id string) error {
 		return fmt.Errorf("remove container %s: %w", id, wrap(err))
 	}
 	return nil
+}
+
+// maxLogBytes bounds what Logs reads, whatever the line lengths.
+const maxLogBytes = 256 << 10
+
+// Logs returns up to tail last lines of a managed container's stdout and
+// stderr, e.g. to explain a failed health check. Output is the app's own.
+func (r *Runtime) Logs(ctx context.Context, id string, tail int) ([]string, error) {
+	if _, err := r.managed(ctx, id); err != nil {
+		return nil, err
+	}
+	rc, err := r.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(max(tail, 1)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("logs of container %s: %w", id, wrap(err))
+	}
+	defer rc.Close()
+	// Containers never get a TTY, so the stream is multiplexed [MOBY-CLIENT].
+	// A stream cut at the byte limit ends mid-frame; keep what was read.
+	var buf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&buf, &buf, io.LimitReader(rc, maxLogBytes)); err != nil && buf.Len() == 0 {
+		return nil, fmt.Errorf("logs of container %s: %w", id, err)
+	}
+	out := strings.TrimRight(buf.String(), "\n")
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
 }
 
 // managed inspects a container and refuses anything Shipyard did not create,

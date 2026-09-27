@@ -149,12 +149,17 @@ make dev-down              # stop PostgreSQL (data kept; `make dev-reset` delete
 make dev-up && make migrate && make build
 ./bin/shipyard-api token create --name dev > /tmp/dev.token    # the first admin token
 make run-api                                                     # second terminal
+make run-worker                                                  # third terminal: needs Docker and buildx
 ./bin/shipyard login --url http://127.0.0.1:8080 < /tmp/dev.token
-./bin/shipyard app create hello --repo OWNER/REPO --branch main --port 8080
+./bin/shipyard app create hello --repo OWNER/REPO --branch main --port 8080 --health-path /
 echo 's3cret' | ./bin/shipyard env set hello API_KEY
 ./bin/shipyard env list hello
-./bin/shipyard deploy hello     # stays "queued" until the worker exists (P1.11)
+./bin/shipyard deploy hello             # prints the operation ID
+./bin/shipyard operation <ID>           # phase fetch → build → start → health → activate; then "succeeded"
+docker ps --filter label=io.shipyard.app=hello
 ```
+
+The repository must be public (GitHub App tokens arrive in Phase 4), and its image must listen on `--port`. There is no public route until Phase 2: reach the container by its IP on `shipyard-app-hello`. The first `make run-worker` creates the `shipyard` buildx builder (2 GB, 2 CPUs), and it stays for later builds.
 
 `login` reads the token from stdin so it never lands in shell history. The CLI refuses plain `http://` to a non-loopback host. On the server itself, use the API socket: `--url unix:///run/shipyard/api.sock`. On Windows, a `shipyard.exe` built with `GOOS=windows` reaches an API in WSL at `http://127.0.0.1:<port>`.
 
@@ -168,6 +173,7 @@ Run `make help` for the full list.
 | `make lint test` | Required before every commit |
 | `make test-integration` | Needs `make dev-up`. Uses throwaway databases and drops them afterwards |
 | `make test-docker` | Tests that need Docker Engine and buildx (tag `docker`). CI does not run these; paste the output into the work log. Build tests create their own `shipyard-test-*` builder and remove it, with its images. Runtime tests build two small `shipyard-test/probe` images `FROM scratch` (nothing is pulled), run `shipyard-rt-*` containers on `shipyard-app-rt-*` networks, and probe them by bridge IP, so they need the §2.5 check to pass. Everything is removed afterwards |
+| `make test-e2e` | Needs `make dev-up`, Docker, buildx, and git. Builds the three binaries, serves a test repository over local git HTTP, and deploys through the CLI. It covers a pinned SHA that becomes a hardened, healthy container, a broken Dockerfile, a SHA off the branch, an unhealthy release that leaves the running one alone, an `Idempotency-Key` replay, and a second release superseding the first. About 2 minutes. It uses its own `shipyard-e2e-*` builder and removes everything afterwards |
 | `make run-api` / `make run-worker` | Run against the dev database with text logs. `run-api` first runs `make dev-kek`, which creates a dev-only KEK in the ignored `.dev/kek/` |
 | `make dev-reset` | Wipe the dev database volume |
 

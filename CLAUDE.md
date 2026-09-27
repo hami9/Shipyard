@@ -100,6 +100,7 @@ make test               # unit tests (go test -race ./...)
 make lint               # gofmt check, go vet, staticcheck (incl. integration files)
 make test-integration   # needs PostgreSQL: make dev-up first
 make test-docker        # needs Docker Engine + buildx; owner's machine only (tag: docker)
+make test-e2e           # real binaries + Docker + PostgreSQL + git; owner's machine only (tag: e2e)
 make dev-up / dev-down  # local PostgreSQL 18 on 127.0.0.1:54320
 make migrate            # apply migrations to $SHIPYARD_DATABASE_URL
 make run-api / run-worker

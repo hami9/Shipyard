@@ -175,7 +175,7 @@ stateDiagram-v2
    - `LISTEN/NOTIFY` may wake the worker, but polling (every 2 s) stays the fallback.
 3. **Fetch.** Fetch the exact SHA over HTTPS. For private repositories, use a one-hour installation token scoped to that repository with `contents: read` `[GH-APP-TOKEN]`, passed as a git header, never in the URL.
    - **Verify that the SHA is an ancestor of the tracked branch** with `git merge-base --is-ancestor` `[GIT-MERGE-BASE]`. Fork commits are reachable through the upstream network `[GH-FORKS]`.
-   - How: a blobless, single-branch clone (`--filter=blob:none --single-branch`) into `<work>/op-<operation-id>`, emptied first on every retry. It has every commit of the branch but only the files of the commit checked out. A SHA missing from that history is refused without fetching anything else.
+   - How: a blobless, single-branch clone (`--filter=blob:none --single-branch`) into `<work>/op-<operation-id>`, emptied first on every retry. It has every commit of the branch but only the files of the commit checked out. A SHA missing from that history is refused without fetching anything else: the history and ancestry checks run with `GIT_NO_LAZY_FETCH=1`, because a partial clone otherwise downloads a missing commit on demand, even one from another branch or a fork `[GIT-PARTIAL]`.
    - git runs without a shell, ignores the host's git config (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM`), never prompts, and allows only the base URL's transport (`protocol.allow=never` plus one exception). The token travels as an `http.extraHeader` in the environment `[GIT-CONFIG]`, never in argv, the URL, or `.git/config`.
    - Reject Dockerfile or context paths that escape the checkout, **after resolving symlinks** (`Checkout.Path`).
 4. **Build.** Run `docker buildx build --builder shipyard --load --metadata-file … --label io.shipyard.*` on the resource-limited builder, under a context deadline `[DK-BX-CONTAINER][DK-BX-BUILD]`.
@@ -193,6 +193,27 @@ stateDiagram-v2
    - Verify the route through Caddy using the app's `Host` header.
    - Only then commit, in one transaction: the route's `deployment_id`, the candidate as `active`, and the previous deployment as `superseded`.
 8. **Observe and drain.** Keep the previous container for an observation window (default 5 min). Then run `docker stop` with the app's `stop_timeout`, which sends `SIGTERM` and later `SIGKILL` (Docker's default is 10 s `[DK-RUN]`), and remove the container. The image stays, subject to retention.
+
+**As implemented in Phase 1 (P1.11, `internal/app/deploy.go`; routing arrives in Phase 2)**
+
+- **Phases.** The operation records `fetch`, `build`, `start`, `health`, and `activate`, each before its side effect.
+- **Creating the deployment.** The deployment row is created after the fetch, once the commit is verified. It pins the app's latest environment revision at that moment.
+- **Lease guard.** Every deployment write is guarded by the operation's lease, as operation writes are.
+- **Resume.** A retried operation (the lease expired after a crash or shutdown) resumes its deployment.
+  - It keeps its commit, even if the branch moved.
+  - With an image already recorded, nothing is fetched or rebuilt.
+  - The container is re-created idempotently: same name, same image.
+- **Activation.** Superseding the previous active deployment, marking this one active, and completing the operation commit in one transaction.
+  - With no route yet, the previous container is drained right away, with no observation window.
+  - If the worker stops during the drain, the old container stays until the reconciler's container step (Phase 2) removes it.
+- **Failure.** A deploy failure is final, with no automatic retry.
+  - The candidate's last 50 output lines go to the operation's events.
+  - The candidate is removed, and the deployment and the operation are marked failed.
+  - Only a lost lease or a shutdown leaves the operation to be retried.
+- **Health gate (`internal/health`).**
+  - 3 consecutive 2xx or 3xx responses, probed every second, with 2 s per request, within the app's `health_timeout`.
+  - No proxy and no redirects.
+  - Before every probe, the container must be running with `RestartCount` 0.
 
 ### Failure handling
 
@@ -343,11 +364,13 @@ cmd/shipyard-api/      HTTP server and webhook receiver
 cmd/shipyard-worker/   deployment worker and reconciler
 internal/api/          handlers, authn/authz, problem+json errors, SSE
 internal/webhook/      GitHub signature verification and event mapping
-internal/app/          deployment use cases and state transitions (pure logic)
+internal/app/          deployment use cases and state transitions, behind ports it declares
+                       (adapters are wired in cmd/shipyard-worker, so the API never links Docker)
 internal/queue/        operation claim/lease/heartbeat on PostgreSQL
 internal/source/       git fetch, ancestry check, GitHub App tokens
 internal/build/        BuildKit/buildx invocation and metadata capture
 internal/runtime/      Docker container lifecycle (moby client)
+internal/health/       HTTP health gate for candidates
 internal/routing/      Caddy config rendering and admin API client
 internal/reconcile/    startup and periodic reconciliation
 internal/secrets/      envelope encryption and environment revisions
