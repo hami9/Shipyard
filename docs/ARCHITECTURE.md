@@ -138,7 +138,7 @@ The model is PostgreSQL-first, implemented in [`migrations/0002_schema_v1.sql`](
 **Rollback artifacts.** A deployment references an immutable **image ID** and an **environment revision**.
 
 - Tags such as `shipyard/<app>:<sha12>` are for humans only. Containers are always created from the image ID.
-- The build metadata (`containerimage.digest`, `containerimage.config.digest`) is stored for provenance `[DK-BX-BUILD]`.
+- The build metadata (the whole `--metadata-file` output: `containerimage.digest`, `containerimage.descriptor`, and `containerimage.config.digest` when buildx reports it) is stored for provenance `[DK-BX-BUILD]`. On the containerd image store, the image ID equals `containerimage.digest`.
 
 **Retention** is explicit and configurable. By default, Shipyard keeps the images of the last 5 successful deployments per app, keeps all deployment rows, and caps the BuildKit cache (ADR-0006).
 

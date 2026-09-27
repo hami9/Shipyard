@@ -26,7 +26,7 @@ SHIPYARD_TEST_DATABASE_URL ?= postgres://shipyard:shipyard@127.0.0.1:54320/postg
 SHIPYARD_KEK_DIR           ?= $(CURDIR)/.dev/kek
 SHIPYARD_KEK_ACTIVE        ?= dev
 
-.PHONY: help build test lint fmt test-integration dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot clean
+.PHONY: help build test lint fmt test-integration test-docker dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -37,18 +37,21 @@ build: ## Build static binaries into ./bin
 test: ## Unit tests with the race detector
 	$(GO) test -race ./...
 
-lint: ## gofmt check, go vet, staticcheck (unit and integration files)
+lint: ## gofmt check, go vet, staticcheck (unit, integration, and docker files)
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
 	$(GO) vet ./...
-	$(GO) vet -tags integration ./...
+	$(GO) vet -tags integration,docker ./...
 	$(GO) run $(STATICCHECK) ./...
-	$(GO) run $(STATICCHECK) -tags integration ./...
+	$(GO) run $(STATICCHECK) -tags integration,docker ./...
 
 fmt: ## Format all Go files
 	gofmt -w .
 
 test-integration: ## Integration tests against PostgreSQL (run `make dev-up` first)
 	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -race -tags integration ./...
+
+test-docker: ## Tests that need Docker Engine and buildx (owner's machine, not CI)
+	$(GO) test -race -tags docker -count=1 ./...
 
 dev-up: ## Start local PostgreSQL 18 (Docker, bound to 127.0.0.1:54320)
 	$(DEV_COMPOSE) up -d --wait

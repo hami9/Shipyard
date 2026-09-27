@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8) |
-| **Last completed** | P1.8: `internal/source` (blobless fetch, ancestry, per-op workspace, symlink-safe paths) |
-| **Next task** | P1.9: `internal/build` (buildx builder with limits, `--load`, deadline, metadata file, bounded logs). Needs Docker and BuildKit: tested on the owner's WSL2 machine |
+| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9) |
+| **Last completed** | P1.9: `internal/build` (limited buildx builder, bounded logs, image ID identity) |
+| **Next task** | P1.10: `internal/runtime` on `moby/moby/client` (per-app network, hardened flags, labels, env injection). Docker: owner's machine |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,42 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.9 image build
+
+- **Phase / task:** P1.9: `internal/build`
+- **Author:** Claude Code (desktop session)
+- **Goal:** Build a verified checkout into a local image on a resource-limited BuildKit builder (ADR-0004).
+
+**Done**
+- `Builder.Ensure(Limits{Memory, CPUQuota})`: creates the `docker-container` builder with `--driver-opt memory=…,cpu-quota=…,cpu-period=100000` if missing, then bootstraps it `[DK-BX-CONTAINER]`. `Remove`.
+- `Builder.Build(Request)`:
+  - `buildx build --builder shipyard --load --provenance=false --sbom=false --progress=plain --metadata-file … --tag shipyard/<slug>:<sha12>`, plus the `io.shipyard.{managed,app,commit,deployment}` labels.
+  - A deadline (15 min default); on expiry the CLI gets SIGINT so BuildKit cancels.
+  - One build at a time.
+  - Result: `ImageID` from `image inspect`, and the metadata file.
+- The docker CLI gets a whitelisted environment, so no `SHIPYARD_*` variable reaches a build `[DK-BUILD-SECRETS]`.
+- Bounded log capture: at most `MaxLog` bytes (5 MB default) go to the sink, then one truncation notice. The last 20 lines always end up in the failure error.
+
+**Decisions**
+- **Attestations are off (`--provenance=false --sbom=false`)**, because `--load` of an attested image fails on the classic image store `[DK-ATTEST]`. The image ID is the identity, and the metadata file (which includes buildx's own provenance) is kept.
+- **Docker tests get their own build tag, `docker`, and `make test-docker`.** They run on the owner's machine (CLAUDE.md §6); CI only compiles them through `make lint`, which now vets and staticchecks the `docker` tag too.
+- The sink is a callback. The worker (P1.11) connects it to `AppendOperationEvent`.
+
+**Verification** (WSL2: Engine 29.8.1, buildx 0.37.1)
+- `make lint`: exit 0. `make test` and `make test-integration`: all ok.
+- `make test-docker` (8 tests, 40 s):
+  - **the builder container really has Memory=512 MiB, CpuQuota=100000, CpuPeriod=100000**, and `Ensure` is idempotent;
+  - a build gives `sha256:` ID, the tag, all four labels on the image ID, a captured log, and `ImageID == containerimage.digest` on the containerd store;
+  - a broken Dockerfile (`COPY missing-file`) returns `ErrBuildFailed` naming the missing file, with the log within the 400-byte budget;
+  - a 1 ms deadline returns `deadline of 1ms exceeded`.
+- After the tests, `docker buildx ls` shows only `default` and there are 0 `shipyard/web` images: no leftovers.
+
+**Problems / surprises**
+- **A documented fact did not hold.** With `--load`, buildx 0.37.1 writes `containerimage.digest` and `containerimage.descriptor` but **no `containerimage.config.digest`**, which SOURCES, ARCHITECTURE, and ADR-0004 expected. I recorded the observation in `DK-BX-BUILD`, updated ARCHITECTURE §4, and added a dated note to ADR-0004 (the decision is unchanged, and the whole file is persisted).
+
+**Next**
+- P1.10: `internal/runtime` (moby client, per-app network, hardened flags, and the automated `docker inspect` checks from the exit criteria).
 
 ### 2026-09-27: P1.8 source fetch
 
