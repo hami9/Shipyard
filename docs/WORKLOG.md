@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. **All tasks and exit criteria done**, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11) |
-| **Last completed** | P1.11: the deploy use case in the worker, the health gate, and `make test-e2e` covering every Phase 1 exit criterion |
-| **Next task** | P2.1: Caddy container bootstrap (the only published ports; admin API on a Unix socket). Docker: owner's machine |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1) |
+| **Last completed** | P2.1: the Caddy edge container (`runtime.EnsureEdge`), started by the worker |
+| **Next task** | P2.2: `internal/routing` renderer (`routes` → full Caddy JSON, keeping `admin.listen` on the socket), golden-file tests |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
 | **Last updated** | 2026-09-27 |
@@ -53,6 +53,60 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P2.1 Caddy edge
+
+- **Phase / task:** P2.1: Caddy container bootstrap
+- **Author:** Claude Code (desktop session)
+- **Goal:** One Caddy container that alone publishes host ports, joins every app network, and exposes its admin API only on a permissioned Unix socket (ADR-0003, invariants 11 and 12).
+
+**Done**
+- **`runtime.EnsureEdge(EdgeSpec)`** (idempotent) prepares the admin directory, then ensures the edge network, the `-data` and `-config` volumes, and the container (pulled if missing). It then starts it, joins every app network, and waits until the socket accepts connections.
+  - A spec-hash label recreates the container when the spec changes, keeping the volumes.
+  - A foreign container or network with the name is refused.
+- **The container** (one place, `EdgeSpec.createOptions`):
+  - `caddy:2.11.4-alpine@sha256:6aeddd44…`, running `caddy run --resume`, with `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`;
+  - user `0:<worker gid>`, `--cap-drop ALL` plus `NET_BIND_SERVICE`, `no-new-privileges`, and a read-only rootfs with a `/tmp` tmpfs;
+  - 512 MiB, 1 CPU, 512 pids, the `local` log driver, `unless-stopped`;
+  - ports 80/tcp, 443/tcp, and 443/udp;
+  - the socket directory is the only bind mount.
+- **Admin directory:** the worker makes it group = its own gid with mode 2770 (setgid), or checks that an existing directory is set up that way.
+- **App networks:** `Runtime.Edge` makes `EnsureNetwork` (and so `Create`) join the edge to new app networks. `RemoveNetwork` detaches the edge first. `AttachEdge` and `RemoveEdge` complete the set.
+- **Worker:** calls `EnsureEdge` at start. Config: `SHIPYARD_CADDY[_NAME|_IMAGE|_ADMIN_DIR|_BIND|_HTTP_PORT|_HTTPS_PORT]`. `make run-worker` publishes only on 127.0.0.1:18081/18443.
+
+**Decisions** (dated note in ADR-0003; ARCHITECTURE §7)
+- The socket gets its own directory, `/run/shipyard/caddy/`, so Caddy never sees the API socket in `/run/shipyard`.
+- **Root with the worker's gid**, not a non-root user:
+  - binding 80/443 then needs only `NET_BIND_SERVICE`;
+  - the socket can be created in the group-writable directory without `CAP_DAC_OVERRIDE`;
+  - `no-new-privileges` would block the file capability for a non-root user.
+- `--resume` plus the `/config` volume keeps serving after restarts. P2.2 must render `admin.listen` on the socket, because a loaded config overrides `CADDY_ADMIN`.
+
+**Verification** (WSL2, Engine 29.8.1)
+- `make lint`, `make test`, `make test-integration`: all ok. Unit: `TestEdgeSpecValidate` (11 negative cases), `TestEdgeCreateOptions`, `TestEdgeSpecHash`, `TestLoadWorkerCaddy` (8 negative cases).
+- Docker, `internal/runtime` (16 tests, 31 s):
+  - **`TestEdgeBootstrap`:**
+    - the socket is a socket, mode 0660, with the worker's gid;
+    - `GET /config/` over the socket gives `null`;
+    - **TCP 2019 on the container IP is refused**;
+    - hardening is confirmed by inspect, and the only bind mount is the socket directory.
+  - After `POST /load` of a static response, it is served through the published loopback port.
+  - A second `EnsureEdge` returns the same ID.
+  - **`docker restart` resumes the loaded config**, and a spec change recreates the container with the config kept.
+  - `TestEdgeJoinsAppNetworks`: networks both before and after `EnsureEdge` are joined, and `RemoveNetwork` detaches.
+  - `TestEdgeRefusesForeignContainer`.
+- **Mutation checks:**
+  - socket `|0666` → the test fails on the mode;
+  - no `NET_BIND_SERVICE` → Caddy never comes up.
+- `make test-e2e`: PASS (111 s). The worker now starts its own Caddy, which joins the app network, and the app container publishes no ports.
+- No leftovers: only the pre-existing dev PostgreSQL.
+
+**Problems / surprises**
+- **The official image's `caddy` binary has `cap_net_bind_service=ep`.** Without that capability, the exec itself fails: `exec /usr/bin/caddy: operation not permitted` (recorded in `CADDY-IMAGE`).
+- **Engine 29 reports `CapAdd` as `CAP_NET_BIND_SERVICE`**, while the request says `NET_BIND_SERVICE` (recorded in `MOBY-CLIENT`).
+
+**Next**
+- P2.2: `internal/routing`: render the full Caddy JSON from `routes` (with `admin.listen` on the socket, the API, and `/hooks/github`); golden-file tests.
 
 ### 2026-09-27: P1.11 deploy worker
 

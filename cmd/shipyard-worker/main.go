@@ -104,6 +104,10 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		return fmt.Errorf("buildx builder: %w", err)
 	}
 
+	if err := ensureEdge(ctx, cfg.Caddy, rt, log); err != nil {
+		return err
+	}
+
 	s := store.New(db)
 	deployer := &app.Deployer{
 		Store:   s,
@@ -128,6 +132,29 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 	wg.Wait()
 	log.Info("worker stopped")
+	return nil
+}
+
+// ensureEdge keeps the Caddy container running and joined to every app
+// network, with its admin API on a socket only the worker's group can use
+// (ADR-0003). Routes are loaded from Phase 2 on (P2.2–P2.4).
+func ensureEdge(ctx context.Context, c config.Caddy, rt *runtime.Runtime, log *slog.Logger) error {
+	if !c.Enabled {
+		log.Warn("caddy is disabled; apps get no routes", slog.String("env", config.EnvCaddy))
+		return nil
+	}
+	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: os.Getegid(),
+		BindIP: c.BindIP, HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort}
+	if spec.Image == "" {
+		spec.Image = runtime.DefaultEdgeImage
+	}
+	id, err := rt.EnsureEdge(ctx, spec)
+	if err != nil {
+		return fmt.Errorf("caddy: %w", err)
+	}
+	rt.Edge = c.Name
+	log.Info("caddy ready", slog.String("container", c.Name), slog.String("container_id", id[:12]),
+		slog.String("admin_socket", spec.AdminSocket()))
 	return nil
 }
 

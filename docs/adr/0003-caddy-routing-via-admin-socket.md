@@ -45,6 +45,16 @@
   - Every config change is a full reload, which is cheap at single-VPS scale.
 - **Follow-ups:** P2.2 (config renderer with golden tests), P2.3 (admin socket client), P2.5 (DNS preflight), P3.x (Caddy data backup).
 
+## Implementation notes
+
+- **2026-09-27 (P2.1).** The decision is unchanged. Details fixed while implementing `runtime.EnsureEdge`; ARCHITECTURE §7 has the full list:
+  - **Socket path.** The socket lives in its own directory: `/run/shipyard/caddy/caddy-admin.sock`, not `/run/shipyard/caddy-admin.sock`.
+    - The directory is group-owned by the worker's group with mode `2770` (setgid), and is bind-mounted into Caddy at the same path.
+    - Only this directory is shared, never all of `/run/shipyard`, where the API socket also lives.
+  - **Admin address.** It is set by `CADDY_ADMIN`, the default admin address; a loaded config takes precedence over it `[CADDY-API]`. P2.2's renderer must therefore keep `admin.listen` on the socket.
+  - **User.** Caddy runs as uid 0 with the worker's gid, `--cap-drop ALL` plus `NET_BIND_SERVICE`, and `no-new-privileges`. The official image's binary carries the `cap_net_bind_service=ep` file capability, so the container cannot even exec it without that capability `[CADDY-IMAGE]`.
+  - **Resume.** `caddy run --resume` with a persistent `/config` volume serves the last loaded config after a restart, before the worker reloads it `[CADDY-CLI]`.
+
 ## Alternatives considered
 
 - **Caddy on the host (systemd):** workable, since the host can reach bridge IPs, but it loses name-based upstreams and couples Caddy to host networking. Kept as a fallback.

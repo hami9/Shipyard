@@ -203,6 +203,9 @@ type State struct {
 // Runtime talks to Docker Engine. Only the worker uses it (invariant 1).
 type Runtime struct {
 	cli *client.Client
+	// Edge names the Caddy container (EnsureEdge). When set, every app
+	// network that EnsureNetwork or Create makes is joined by it (ADR-0003).
+	Edge string
 }
 
 // New connects using DOCKER_HOST and friends, or the default socket.
@@ -224,12 +227,26 @@ func (r *Runtime) EnsureNetwork(ctx context.Context, app string) (string, error)
 	if !slugRE.MatchString(app) {
 		return "", fmt.Errorf("%w: app slug %q", ErrInvalid, app)
 	}
-	name := NetworkName(app)
+	id, err := r.ensureBridge(ctx, NetworkName(app), map[string]string{labelManaged: "true", labelApp: app})
+	if err != nil {
+		return "", err
+	}
+	if r.Edge != "" {
+		if err := r.attachEdge(ctx, r.Edge, NetworkName(app)); err != nil {
+			return "", err
+		}
+	}
+	return id, nil
+}
+
+// ensureBridge creates a bridge network with these labels if it is missing.
+// An existing network is used only if it carries all of them.
+func (r *Runtime) ensureBridge(ctx context.Context, name string, labels map[string]string) (string, error) {
 	for range 2 {
 		got, err := r.cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
 		if err == nil {
 			n := got.Network
-			if n.Name != name || n.Driver != "bridge" || !ownedBy(n.Labels, app) {
+			if n.Name != name || n.Driver != "bridge" || !hasLabels(n.Labels, labels) {
 				return "", fmt.Errorf("network %s: %w", name, ErrNotManaged)
 			}
 			return n.ID, nil
@@ -237,10 +254,7 @@ func (r *Runtime) EnsureNetwork(ctx context.Context, app string) (string, error)
 		if !cerrdefs.IsNotFound(err) {
 			return "", fmt.Errorf("inspect network %s: %w", name, err)
 		}
-		created, err := r.cli.NetworkCreate(ctx, name, client.NetworkCreateOptions{
-			Driver: "bridge",
-			Labels: map[string]string{labelManaged: "true", labelApp: app},
-		})
+		created, err := r.cli.NetworkCreate(ctx, name, client.NetworkCreateOptions{Driver: "bridge", Labels: labels})
 		if err == nil {
 			return created.ID, nil
 		}
@@ -264,6 +278,12 @@ func (r *Runtime) RemoveNetwork(ctx context.Context, app string) error {
 	}
 	if !ownedBy(got.Network.Labels, app) {
 		return fmt.Errorf("network %s: %w", name, ErrNotManaged)
+	}
+	if r.Edge != "" { // a network with a connected edge cannot be removed
+		_, err := r.cli.NetworkDisconnect(ctx, got.Network.ID, client.NetworkDisconnectOptions{Container: r.Edge, Force: true})
+		if err != nil && !cerrdefs.IsNotFound(err) && !strings.Contains(err.Error(), "is not connected") {
+			return fmt.Errorf("detach edge from %s: %w", name, err)
+		}
 	}
 	if _, err := r.cli.NetworkRemove(ctx, got.Network.ID, client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("remove network %s: %w", name, err)
@@ -424,6 +444,15 @@ func (r *Runtime) managed(ctx context.Context, id string) (container.InspectResp
 
 func ownedBy(labels map[string]string, app string) bool {
 	return labels[labelManaged] == "true" && labels[labelApp] == app
+}
+
+func hasLabels(have, want map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // wrap adds ErrNotFound to Engine 404s so callers need not import errdefs.
