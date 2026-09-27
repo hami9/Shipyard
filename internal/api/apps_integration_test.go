@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
 	"github.com/hami9/shipyard/internal/store/storetest"
 	"github.com/hami9/shipyard/migrations"
@@ -23,6 +24,7 @@ type apiFixture struct {
 	t      *testing.T
 	srv    *httptest.Server
 	s      *store.Store
+	env    *secrets.Env
 	admin  string
 	reader string
 	logs   *bytes.Buffer
@@ -54,7 +56,12 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	}
 	f := &apiFixture{t: t, s: s, admin: token(ScopeAdmin), reader: token(ScopeRead), logs: &bytes.Buffer{}}
 	log := logging.New(f.logs, slog.LevelDebug, logging.FormatJSON)
-	f.srv = httptest.NewServer(NewHandler(log, Deps{DB: pool, Tokens: s, Audit: s, Apps: s}))
+	keys, err := secrets.NewKeyring("test", map[string][]byte{"test": secrets.GenerateKey()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.env = secrets.NewEnv(keys, s)
+	f.srv = httptest.NewServer(NewHandler(log, Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: f.env}))
 	t.Cleanup(f.srv.Close)
 	return f
 }

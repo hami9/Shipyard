@@ -2,10 +2,12 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/hami9/shipyard/internal/app"
+	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
 )
 
@@ -43,6 +45,11 @@ func writeError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 		})
 	case errors.As(err, &br):
 		writeProblem(w, br.status, br.detail)
+	case errors.Is(err, secrets.ErrInvalidValue):
+		writeError(w, r, log, app.FieldErrors{{Field: "value",
+			Detail: fmt.Sprintf("must be at most %d bytes and contain no NUL character", secrets.MaxValueSize)}})
+	case errors.Is(err, secrets.ErrUnknownKey):
+		writeProblem(w, http.StatusNotFound, "the app has no such environment key")
 	case errors.Is(err, store.ErrNotFound):
 		writeProblem(w, http.StatusNotFound, "not found")
 	case errors.Is(err, store.ErrAppBusy):

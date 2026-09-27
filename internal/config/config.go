@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,8 @@ const (
 	EnvAPIAllowPublic     = "SHIPYARD_API_ALLOW_PUBLIC_LISTEN"
 	EnvWorkerID           = "SHIPYARD_WORKER_ID"
 	EnvWorkerPollInterval = "SHIPYARD_WORKER_POLL_INTERVAL"
+	EnvKEKDir             = "SHIPYARD_KEK_DIR"
+	EnvKEKActive          = "SHIPYARD_KEK_ACTIVE"
 )
 
 // Defaults.
@@ -38,8 +41,12 @@ const (
 	DefaultAPIListen       = "127.0.0.1:8080"
 	DefaultShutdownTimeout = 15 * time.Second
 	DefaultPollInterval    = 2 * time.Second
+	DefaultKEKDir          = "/etc/shipyard/kek"
 	minPollInterval        = 100 * time.Millisecond
 )
+
+// kekIDRE mirrors secret_values.kek_id.
+var kekIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // LookupFunc has the signature of os.LookupEnv; tests pass a map lookup.
 type LookupFunc func(key string) (string, bool)
@@ -56,6 +63,11 @@ type Common struct {
 	// DatabaseURL contains credentials. Never log it.
 	DatabaseURL     string
 	ShutdownTimeout time.Duration
+	// KEKDir holds <kek_id>.key files; KEKActive names the one that seals new
+	// values (ADR-0005). Commands that never touch secrets, such as migrate,
+	// do not need a KEK, so KEKActive is required only where it is used.
+	KEKDir    string
+	KEKActive string
 }
 
 // API configures shipyard-api.
@@ -189,9 +201,17 @@ func (r *reader) common() Common {
 		DatabaseURL:     r.str(EnvDatabaseURL, ""),
 		ShutdownTimeout: r.duration(EnvShutdownTimeout, DefaultShutdownTimeout),
 		Log:             Log{Level: slog.LevelInfo, Format: logging.FormatJSON},
+		KEKDir:          r.str(EnvKEKDir, DefaultKEKDir),
+		KEKActive:       r.str(EnvKEKActive, ""),
 	}
 	if c.DatabaseURL == "" {
 		r.fail(EnvDatabaseURL, errors.New("required"))
+	}
+	if !filepath.IsAbs(c.KEKDir) {
+		r.fail(EnvKEKDir, fmt.Errorf("%q must be an absolute path", c.KEKDir))
+	}
+	if c.KEKActive != "" && !kekIDRE.MatchString(c.KEKActive) {
+		r.fail(EnvKEKActive, fmt.Errorf("%q must be 1-64 characters of A-Z, a-z, 0-9, '_', '-'", c.KEKActive))
 	}
 	if s := r.str(EnvLogLevel, ""); s != "" {
 		if err := c.Log.Level.UnmarshalText([]byte(s)); err != nil {

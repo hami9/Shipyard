@@ -152,7 +152,7 @@ Run `make help` for the full list.
 | `make fmt` | Format Go code |
 | `make lint test` | Required before every commit |
 | `make test-integration` | Needs `make dev-up`. Uses throwaway databases and drops them afterwards |
-| `make run-api` / `make run-worker` | Run against the dev database with text logs |
+| `make run-api` / `make run-worker` | Run against the dev database with text logs. `run-api` first runs `make dev-kek`, which creates a dev-only KEK in the ignored `.dev/kek/` |
 | `make dev-reset` | Wipe the dev database volume |
 
 Configuration comes only from `SHIPYARD_*` environment variables. See [deploy/shipyard.env.example](../deploy/shipyard.env.example). The Makefile supplies dev defaults, and you can override any of them, e.g. `make migrate SHIPYARD_DATABASE_URL=...`.

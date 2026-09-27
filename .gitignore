@@ -18,6 +18,7 @@ go.work.sum
 *.pem
 /secrets/
 /kek/
+/.dev/
 
 # Local runtime data
 /data/

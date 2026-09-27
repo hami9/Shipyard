@@ -53,6 +53,21 @@ func TestLoadAPIOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadKEK(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.KEKDir != DefaultKEKDir || cfg.KEKActive != "" {
+		t.Fatalf("defaults: %+v, %v", cfg.Common, err)
+	}
+	w, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvKEKDir: "/srv/kek", EnvKEKActive: "2026-09_a"}))
+	if err != nil || w.KEKDir != "/srv/kek" || w.KEKActive != "2026-09_a" {
+		t.Fatalf("overrides: %+v, %v", w.Common, err)
+	}
+	_, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvKEKDir: "kek", EnvKEKActive: "bad id"}))
+	if err == nil || !strings.Contains(err.Error(), EnvKEKDir) || !strings.Contains(err.Error(), EnvKEKActive) {
+		t.Fatalf("want both KEK errors, got %v", err)
+	}
+}
+
 func TestLoadAPIListenValidation(t *testing.T) {
 	tests := []struct {
 		listen      string
