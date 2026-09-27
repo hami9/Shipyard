@@ -21,13 +21,14 @@ import (
 )
 
 type apiFixture struct {
-	t      *testing.T
-	srv    *httptest.Server
-	s      *store.Store
-	env    *secrets.Env
-	admin  string
-	reader string
-	logs   *bytes.Buffer
+	t        *testing.T
+	srv      *httptest.Server
+	s        *store.Store
+	env      *secrets.Env
+	admin    string
+	reader   string
+	deployer string
+	logs     *bytes.Buffer
 }
 
 func newAPIFixture(t *testing.T) *apiFixture {
@@ -54,14 +55,14 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		}
 		return plain
 	}
-	f := &apiFixture{t: t, s: s, admin: token(ScopeAdmin), reader: token(ScopeRead), logs: &bytes.Buffer{}}
+	f := &apiFixture{t: t, s: s, admin: token(ScopeAdmin), reader: token(ScopeRead), deployer: token(ScopeDeploy), logs: &bytes.Buffer{}}
 	log := logging.New(f.logs, slog.LevelDebug, logging.FormatJSON)
 	keys, err := secrets.NewKeyring("test", map[string][]byte{"test": secrets.GenerateKey()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.env = secrets.NewEnv(keys, s)
-	f.srv = httptest.NewServer(NewHandler(log, Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: f.env}))
+	f.srv = httptest.NewServer(NewHandler(log, Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: f.env, Ops: s}))
 	t.Cleanup(f.srv.Close)
 	return f
 }
@@ -85,6 +86,10 @@ func (f *apiFixture) call(method, path, token, contentType, body string) respons
 		f.t.Fatal(err)
 	}
 	defer res.Body.Close()
+	return readResponse(res)
+}
+
+func readResponse(res *http.Response) response {
 	raw, _ := io.ReadAll(res.Body)
 	out := response{status: res.StatusCode, header: res.Header, raw: string(raw)}
 	_ = json.Unmarshal(raw, &out.body)
