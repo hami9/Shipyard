@@ -82,9 +82,10 @@ flowchart LR
   - A bootstrap admin token command (`shipyard-api token create|list|revoke`).
   - `shp_` tokens stored as a SHA-256 hash, with scopes (`read` ⊂ `deploy` ⊂ `admin`) and expiry.
   - Middleware, plus an audit event on every mutation (ADR-0007). `GET /v1/whoami`.
-- [ ] **P1.4** `internal/secrets`: envelope encryption and environment revisions (ADR-0005).
+- [x] **P1.4** `internal/secrets`: envelope encryption and environment revisions (ADR-0005).
   - Negative tests: wrong AAD, wrong KEK, tampered ciphertext.
   - A test proving that a DB dump contains no plaintext.
+  - Wiring the keyring into the API and worker (config `SHIPYARD_KEK_DIR` and the active KEK id) arrives with the first consumers: the env endpoints (P1.6) and container start (P1.10).
 - [ ] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
 - [ ] **P1.6** App CRUD API: validation of slug, port, and paths (no escape from the repository), plus `application/problem+json` errors.
 - [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, `ps`, and `whoami`. Config holds the API URL and token.
