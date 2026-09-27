@@ -8,11 +8,11 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10) |
-| **Last completed** | P1.10: `internal/runtime` (per-app network, hardened containers, label-guarded lifecycle) |
-| **Next task** | P1.11: the deploy use case in the worker (`queued → building → starting → health_checking → active`), plus the health probe |
+| **Active phase** | Phase 1: Foundation. **All tasks and exit criteria done**, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11) |
+| **Last completed** | P1.11: the deploy use case in the worker, the health gate, and `make test-e2e` covering every Phase 1 exit criterion |
+| **Next task** | P2.1: Caddy container bootstrap (the only published ports; admin API on a Unix socket). Docker: owner's machine |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
 | **Last updated** | 2026-09-27 |
 
 ## Entry template
@@ -53,6 +53,63 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.11 deploy worker
+
+- **Phase / task:** P1.11: the deploy use case, the health probe, and the worker loop
+- **Author:** Claude Code (desktop session)
+- **Goal:** `shipyard deploy` really runs: fetch → build → start → health → active, with each phase persisted before its side effect and a crash resuming where it stopped.
+
+**Done**
+- **Store (`deployments.go`):**
+  - `CreateDeployment`, `DeploymentByOperation`/`ByID`, `ActiveDeployment`, `RecordImage`, `RecordContainer`, `MarkHealthChecking`, `FailDeployment`.
+  - `ActivateDeployment` supersedes the old active, marks this one active, and completes the operation in one transaction.
+  - **Every write joins the operation's lease** (`lease_owner`, `running`); zero rows is `ErrLeaseLost`.
+- **`internal/app/deploy.go` (`Deployer.Run`):**
+  - The operation phases are `fetch`, `build`, `start`, `health`, `activate`.
+  - The deployment row is created after the verified fetch and pins the latest env revision.
+  - The container ID is persisted before start.
+  - The health gate requires the container to stay running without restarts.
+  - Activation then drains the previous container.
+  - **Resume:** a recorded image skips fetch and build, the commit stays pinned, and the container is re-created idempotently.
+  - **Failure:** final. It captures the candidate's last 50 lines, removes the candidate, and fails the deployment and the operation.
+  - A lost lease or shutdown records nothing, so the next owner resumes.
+- **`internal/health`:** 3 consecutive 2xx/3xx, 1 s interval, 2 s per request, no proxy, no redirects. A dead container stops the gate at once, and a caller's cancel cause (lost lease) is passed through.
+- **Worker:**
+  - The queue loop with `Hold` (lease heartbeats), plus `RequeueExpired` at start and every lease.
+  - Adapters for source, build, and runtime.
+  - `Ensure` on the builder at start.
+  - New config: `SHIPYARD_WORK_DIR`, `SHIPYARD_SOURCE_BASE_URL`, `SHIPYARD_BUILDER[_MEMORY|_CPUS]`. The KEK is now required.
+- `runtime.Logs` (bounded, demultiplexed). The API uses `app.DeployPayload`.
+- **`test/e2e` + `make test-e2e`:** real binaries, a local git HTTP server, and the CLI (details under Verification).
+
+**Decisions** (no ADR; within ARCHITECTURE §5)
+- **Ports live in `internal/app`; adapters live in `cmd/shipyard-worker`.** `internal/source` imports `internal/app` (a cycle otherwise), and the API must not link the Docker client.
+- **No automatic retry of deploy failures.** Only lease loss or shutdown leads to a retry.
+- With no route yet, the previous container is drained right away, with no observation window.
+- The e2e test uses its own builder name (`SHIPYARD_BUILDER`), so it never touches the owner's `shipyard` builder.
+
+**Verification** (WSL2: Engine 29.8.1, buildx 0.37.1, git 2.43.0, PostgreSQL 18)
+- `make lint` (including the `e2e` tag): exit 0. `make test`, `make test-integration`, and `make test-docker`: all ok. `-race -count=5` on `app` and `health`: ok. `go mod verify`: ok.
+- Unit tests: 11 use-case scenarios (happy path, pinned ref, fetch, build, unhealthy, 4 container deaths, resume after and before the build, lost lease, resumed failure, bad payload), 7 health cases, and 3 store integration tests (lifecycle, lease guard including requeue, failure).
+- **`make test-e2e`: PASS (107 s)**, covering every Phase 1 exit criterion:
+  1. A pinned SHA deploys, and an `Idempotency-Key` replay returns the same operation. The container runs the pinned commit, and `docker inspect` shows `["ALL"] ["no-new-privileges"] local 536870912 1000000000 512 false {}`. The secret env value is readable inside.
+  2. A broken Dockerfile gives `failed` with `missing-file` in the error.
+  3. A SHA off the branch gives `failed`, "commit is not on the tracked branch".
+  4. An unhealthy release gives `failed` with `status 500`, and the same container is still the only one running.
+  5. A healthy release replaces it, and the old container is removed.
+- No leftovers: no containers, networks, `shipyard*` images, or extra builders.
+
+**Problems / surprises**
+- **A partial clone downloads off-branch commits** `[GIT-PARTIAL]`.
+  - In the e2e test, a feature-branch SHA got past `cat-file -e`: git lazily fetched it from the server. Only `merge-base` refused it, so invariant 7 held, but ARCHITECTURE's promise that nothing else is fetched was false.
+  - Confirmed with a standalone script, and in git's docs.
+  - Fix: `cat-file` and `merge-base` run with `GIT_NO_LAZY_FETCH=1`.
+  - Failing-first: the extended `TestFetchRejectsCommitsOffBranch` fails on the old code ("the feature-branch commit is in the workspace") and passes on the new.
+- **The e2e test first failed on a race in the test itself.** The operation succeeds at activation, and draining the old container comes after, so the test now waits for the drain. Failure warnings are now also logged by the worker, not only stored as events.
+
+**Next**
+- The owner merges #1–#9 in order. Then P2.1: the Caddy container bootstrap.
 
 ### 2026-09-27: P1.10 container runtime
 

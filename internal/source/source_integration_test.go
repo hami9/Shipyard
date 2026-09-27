@@ -155,9 +155,21 @@ func TestFetchRejectsCommitsOffBranch(t *testing.T) {
 	f := fetcher(t, s)
 	for name, ref := range map[string]string{"feature-branch commit": r.F, "unknown commit": strings.Repeat("0", 40)} {
 		_, err := f.Fetch(t.Context(), Request{OperationID: opA, Repo: "hami9/demo", Branch: "main", Ref: ref})
-		if !errors.Is(err, ErrNotOnBranch) {
-			t.Errorf("%s: %v, want ErrNotOnBranch", name, err)
+		// Refused by the history check, not only by the later ancestry check.
+		if !errors.Is(err, ErrNotOnBranch) || !strings.Contains(err.Error(), "is not in the history of main") {
+			t.Errorf("%s: %v, want ErrNotOnBranch from the history check", name, err)
 		}
+	}
+	// The off-branch commit was never downloaded: a partial clone would
+	// otherwise fetch it lazily from the server [GIT-PARTIAL].
+	if _, err := f.Fetch(t.Context(), Request{OperationID: opA, Repo: "hami9/demo", Branch: "main", Ref: r.F}); !errors.Is(err, ErrNotOnBranch) {
+		t.Fatalf("feature-branch commit: %v", err)
+	}
+	dir, _ := f.Workspace(opA)
+	probe := exec.Command("git", "-C", dir, "cat-file", "-e", r.F)
+	probe.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	if probe.Run() == nil {
+		t.Error("the feature-branch commit is in the workspace")
 	}
 	// The same commit is fine for the branch it is on.
 	if co, err := f.Fetch(t.Context(), Request{OperationID: opA, Repo: "hami9/demo", Branch: "feature", Ref: r.F}); err != nil || co.SHA != r.F {

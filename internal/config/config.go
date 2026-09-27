@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +35,11 @@ const (
 	EnvWorkerPollInterval = "SHIPYARD_WORKER_POLL_INTERVAL"
 	EnvKEKDir             = "SHIPYARD_KEK_DIR"
 	EnvKEKActive          = "SHIPYARD_KEK_ACTIVE"
+	EnvWorkDir            = "SHIPYARD_WORK_DIR"
+	EnvSourceBaseURL      = "SHIPYARD_SOURCE_BASE_URL"
+	EnvBuilderName        = "SHIPYARD_BUILDER"
+	EnvBuilderMemory      = "SHIPYARD_BUILDER_MEMORY"
+	EnvBuilderCPUs        = "SHIPYARD_BUILDER_CPUS"
 )
 
 // Defaults.
@@ -42,11 +48,22 @@ const (
 	DefaultShutdownTimeout = 15 * time.Second
 	DefaultPollInterval    = 2 * time.Second
 	DefaultKEKDir          = "/etc/shipyard/kek"
+	DefaultWorkDir         = "/var/lib/shipyard/work"
+	DefaultSourceBaseURL   = "https://github.com"
+	DefaultBuilderName     = "shipyard"
+	DefaultBuilderMemory   = "2g"
+	DefaultBuilderCPUs     = 2.0
 	minPollInterval        = 100 * time.Millisecond
 )
 
-// kekIDRE mirrors secret_values.kek_id.
-var kekIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var (
+	// kekIDRE mirrors secret_values.kek_id.
+	kekIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	// memoryRE is a buildx driver-opt memory value, e.g. 512m or 2g [DK-BX-CONTAINER].
+	memoryRE = regexp.MustCompile(`^[1-9][0-9]*[bkmg]?$`)
+	// builderRE is a safe buildx builder name; it becomes a container name.
+	builderRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+)
 
 // LookupFunc has the signature of os.LookupEnv; tests pass a map lookup.
 type LookupFunc func(key string) (string, bool)
@@ -82,6 +99,16 @@ type Worker struct {
 	Common
 	WorkerID     string
 	PollInterval time.Duration
+	// WorkDir holds one checkout per running operation (mode 0700).
+	WorkDir string
+	// SourceBaseURL is where repositories are cloned from: https, or
+	// http on loopback for tests.
+	SourceBaseURL string
+	// The buildx builder, and its caps, applied when the worker creates it
+	// (ADR-0004).
+	BuilderName   string
+	BuilderMemory string
+	BuilderCPUs   float64
 }
 
 // LoadAPI reads and validates the API configuration.
@@ -102,15 +129,41 @@ func LoadAPI(lookup LookupFunc) (API, error) {
 func LoadWorker(lookup LookupFunc) (Worker, error) {
 	r := reader{lookup: lookup}
 	cfg := Worker{
-		Common:       r.common(),
-		WorkerID:     r.str(EnvWorkerID, ""),
-		PollInterval: r.duration(EnvWorkerPollInterval, DefaultPollInterval),
+		Common:        r.common(),
+		WorkerID:      r.str(EnvWorkerID, ""),
+		PollInterval:  r.duration(EnvWorkerPollInterval, DefaultPollInterval),
+		WorkDir:       r.str(EnvWorkDir, DefaultWorkDir),
+		SourceBaseURL: r.str(EnvSourceBaseURL, DefaultSourceBaseURL),
+		BuilderName:   r.str(EnvBuilderName, DefaultBuilderName),
+		BuilderMemory: strings.ToLower(r.str(EnvBuilderMemory, DefaultBuilderMemory)),
+		BuilderCPUs:   DefaultBuilderCPUs,
+	}
+	if !builderRE.MatchString(cfg.BuilderName) {
+		r.fail(EnvBuilderName, fmt.Errorf("%q must be lowercase letters, digits, '-' or '_'", cfg.BuilderName))
 	}
 	if cfg.WorkerID == "" {
 		cfg.WorkerID = defaultWorkerID()
 	}
 	if cfg.PollInterval < minPollInterval {
 		r.fail(EnvWorkerPollInterval, fmt.Errorf("must be at least %s", minPollInterval))
+	}
+	if !filepath.IsAbs(cfg.WorkDir) {
+		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))
+	}
+	if u, err := url.Parse(cfg.SourceBaseURL); err != nil || u.User != nil || u.Host == "" ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !isLoopback(u.Hostname()))) {
+		r.fail(EnvSourceBaseURL, errors.New("must be an https URL without credentials (plain http only on loopback, for tests)"))
+	}
+	if !memoryRE.MatchString(cfg.BuilderMemory) {
+		r.fail(EnvBuilderMemory, fmt.Errorf("%q is not a size like 512m or 2g", cfg.BuilderMemory))
+	}
+	if s := r.str(EnvBuilderCPUs, ""); s != "" {
+		cpus, err := strconv.ParseFloat(s, 64)
+		if err != nil || !(cpus >= 0.01 && cpus <= 1024) {
+			r.fail(EnvBuilderCPUs, fmt.Errorf("%q must be a number of CPUs between 0.01 and 1024", s))
+		} else {
+			cfg.BuilderCPUs = cpus
+		}
 	}
 	return cfg, r.err()
 }
@@ -122,6 +175,14 @@ func defaultWorkerID() string {
 		host = "worker"
 	}
 	return fmt.Sprintf("%s-%d", host, os.Getpid())
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // validateListen enforces that the API is reachable only locally unless the

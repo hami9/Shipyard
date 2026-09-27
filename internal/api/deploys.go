@@ -45,10 +45,6 @@ func toOperationJSON(o store.Operation) operationJSON {
 		o.Attempt, o.MaxAttempts, o.LastError, o.CreatedAt, o.FinishedAt}
 }
 
-type deployPayload struct {
-	Ref string `json:"ref,omitempty"` // empty: the tracked branch's head at build time
-}
-
 type opHandlers struct {
 	*appHandlers
 	ops OperationStore
@@ -58,7 +54,7 @@ type opHandlers struct {
 // 200 with the original operation for a repeated Idempotency-Key. The worker
 // does the rest; the API never touches Docker or git (invariant 1).
 func (h *opHandlers) deploy(w http.ResponseWriter, r *http.Request) {
-	var req deployPayload
+	var req app.DeployPayload
 	if r.ContentLength != 0 {
 		var body struct {
 			Ref *string `json:"ref"`

@@ -112,11 +112,12 @@ func (f *Fetcher) Fetch(ctx context.Context, req Request) (Checkout, error) {
 		sha = head
 	}
 	// A commit missing from the branch's full history cannot be on the
-	// branch; nothing else is fetched, so fork commits never arrive.
-	if _, err := g.run(ctx, dir, "cat-file", "-e", "--end-of-options", sha+"^{commit}"); err != nil {
+	// branch. Lazy fetching is off for both checks, so a commit from another
+	// branch or a fork is refused without being downloaded.
+	if _, err := g.local(ctx, dir, "cat-file", "-e", "--end-of-options", sha+"^{commit}"); err != nil {
 		return Checkout{}, fmt.Errorf("%w: %s is not in the history of %s", ErrNotOnBranch, sha, req.Branch)
 	}
-	if _, err := g.run(ctx, dir, "merge-base", "--is-ancestor", sha, trackingRef); err != nil {
+	if _, err := g.local(ctx, dir, "merge-base", "--is-ancestor", sha, trackingRef); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() == 1 {
 			return Checkout{}, fmt.Errorf("%w: %s is not an ancestor of %s", ErrNotOnBranch, sha, req.Branch)
@@ -216,6 +217,16 @@ func (f *Fetcher) gitBin() string {
 // gitRunner runs git with a locked-down environment.
 type gitRunner struct {
 	bin, scheme, token string
+	noLazyFetch        bool
+}
+
+// local runs git using only objects already fetched. A blobless clone is a
+// partial clone, and git fetches a missing object from the remote on demand,
+// even a commit that is on another branch or in a fork [GIT-PARTIAL].
+func (g *gitRunner) local(ctx context.Context, dir string, args ...string) (string, error) {
+	l := *g
+	l.noLazyFetch = true
+	return l.run(ctx, dir, args...)
 }
 
 // run executes git and returns trimmed stdout. Errors carry the tail of
@@ -267,6 +278,9 @@ func (g *gitRunner) env() []string {
 	}
 	for i, kv := range cfg {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, kv[1]))
+	}
+	if g.noLazyFetch {
+		env = append(env, "GIT_NO_LAZY_FETCH=1")
 	}
 	return env
 }

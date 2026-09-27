@@ -157,6 +157,40 @@ func TestLoadWorker(t *testing.T) {
 	checkErr(t, err, "at least")
 }
 
+func TestLoadWorkerDeploySettings(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkDir != DefaultWorkDir || cfg.SourceBaseURL != "https://github.com" || cfg.BuilderMemory != "2g" || cfg.BuilderCPUs != 2 {
+		t.Errorf("defaults = %+v", cfg)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkDir: "/srv/work",
+		EnvSourceBaseURL: "http://127.0.0.1:9999", EnvBuilderMemory: "512M", EnvBuilderCPUs: "0.5"}))
+	if err != nil || cfg.WorkDir != "/srv/work" || cfg.SourceBaseURL != "http://127.0.0.1:9999" || cfg.BuilderMemory != "512m" || cfg.BuilderCPUs != 0.5 {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+	for name, tc := range map[string]struct{ key, value, want string }{
+		"relative work dir":    {EnvWorkDir, "work", EnvWorkDir},
+		"plain http remote":    {EnvSourceBaseURL, "http://git.example.com", EnvSourceBaseURL},
+		"credentials in url":   {EnvSourceBaseURL, "https://user:pw@github.com", EnvSourceBaseURL},
+		"other scheme":         {EnvSourceBaseURL, "file:///srv/repos", EnvSourceBaseURL},
+		"builder name":         {EnvBuilderName, "Shipyard; rm", EnvBuilderName},
+		"bad memory":           {EnvBuilderMemory, "lots", EnvBuilderMemory},
+		"memory with fraction": {EnvBuilderMemory, "1.5g", EnvBuilderMemory},
+		"zero cpus":            {EnvBuilderCPUs, "0", EnvBuilderCPUs},
+		"cpus not a number":    {EnvBuilderCPUs, "two", EnvBuilderCPUs},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+			checkErr(t, err, tc.want)
+			if err != nil && strings.Contains(err.Error(), "pw@") {
+				t.Errorf("error leaks the URL's credentials: %v", err)
+			}
+		})
+	}
+}
+
 func checkErr(t *testing.T, err error, want string) {
 	t.Helper()
 	switch {

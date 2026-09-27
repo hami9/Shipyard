@@ -103,7 +103,9 @@ flowchart LR
   - A per-app network, the hardened flag set, `io.shipyard.*` labels, and environment injection.
   - Create, start, inspect, stop, and remove.
   - The automated `docker inspect` check from the exit criteria is `TestHardenedContainer` (`make test-docker`).
-- [ ] **P1.11** `internal/app` deploy use case covering the phases `queued → building → starting → health_checking → active (no route)`, with each phase persisted before its side effect. Also implement the health probe.
+- [x] **P1.11** `internal/app` deploy use case covering the phases `queued → building → starting → health_checking → active (no route)`, with each phase persisted before its side effect. Also implement the health probe.
+  - The worker runs the queue loop, holds leases, and requeues expired operations.
+  - `test/e2e` (`make test-e2e`) drives the real binaries through every exit criterion below.
 
 **Exit criteria**
 

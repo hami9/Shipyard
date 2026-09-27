@@ -7,13 +7,22 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
+	"github.com/hami9/shipyard/internal/app"
+	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/queue"
+	"github.com/hami9/shipyard/internal/runtime"
+	"github.com/hami9/shipyard/internal/secrets"
+	"github.com/hami9/shipyard/internal/source"
 	"github.com/hami9/shipyard/internal/store"
 )
 
@@ -67,18 +76,99 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 	return 0
 }
 
-// work holds the worker's database connection until shutdown. The operation
-// loop (claim, lease, heartbeat) arrives with the queue in P1.5.
+// work claims operations one at a time until shutdown. A shutdown in the
+// middle of a deploy leaves its lease to expire; the next start resumes it.
 func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	log.Info("starting", slog.String("version", buildinfo.Get().String()))
+	// The worker decrypts environment revisions for containers.
+	if cfg.KEKActive == "" {
+		return fmt.Errorf("%s is required: it names the KEK in %s", config.EnvKEKActive, cfg.KEKDir)
+	}
+	keys, err := secrets.LoadKeyring(cfg.KEKDir, cfg.KEKActive)
+	if err != nil {
+		return fmt.Errorf("load KEKs: %w", err)
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	rt, err := runtime.New()
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	builder := &build.Builder{Name: cfg.BuilderName}
+	limits := build.Limits{Memory: cfg.BuilderMemory, CPUQuota: int(math.Round(cfg.BuilderCPUs * 100_000))}
+	if err := builder.Ensure(ctx, limits); err != nil {
+		return fmt.Errorf("buildx builder: %w", err)
+	}
 
-	log.Info("worker ready", slog.Duration("poll_interval", cfg.PollInterval))
-	<-ctx.Done()
+	s := store.New(db)
+	deployer := &app.Deployer{
+		Store:   s,
+		Source:  sourceAdapter{&source.Fetcher{Root: cfg.WorkDir, BaseURL: cfg.SourceBaseURL}},
+		Builder: buildAdapter{builder},
+		Runtime: runtimeAdapter{rt},
+		Env:     secrets.NewEnv(keys, s),
+		Health:  healthGate,
+		Log:     log,
+	}
+	q := queue.New(s, log, cfg.WorkerID, 0, cfg.PollInterval)
+
+	var wg sync.WaitGroup
+	wg.Go(func() { requeueExpired(ctx, s, log) })
+	log.Info("worker ready", slog.Duration("poll_interval", cfg.PollInterval), slog.String("work_dir", cfg.WorkDir))
+	for {
+		op, err := q.Next(ctx)
+		if err != nil {
+			break // shutdown
+		}
+		process(ctx, q, s, deployer, op, log)
+	}
+	wg.Wait()
 	log.Info("worker stopped")
 	return nil
+}
+
+// process runs one claimed operation while holding its lease.
+func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deployer, op store.Operation, log *slog.Logger) {
+	log = log.With(slog.String("operation_id", op.ID), slog.String("app_id", op.AppID), slog.String("kind", op.Kind))
+	log.Info("operation claimed", slog.Int("attempt", op.Attempt))
+	held, release := q.Hold(ctx, op)
+	defer release()
+	var err error
+	switch op.Kind {
+	case "deploy":
+		err = d.Run(held, op, q.Owner())
+	default: // rollback arrives in Phase 3
+		_, err = s.FailOperation(held, op.ID, q.Owner(), fmt.Sprintf("operation kind %q is not supported yet", op.Kind), 0)
+	}
+	if err != nil {
+		log.Warn("operation not finished; it resumes after its lease expires", slog.Any("err", err))
+		return
+	}
+	log.Info("operation finished")
+}
+
+// requeueExpired returns operations of crashed workers to the queue, at start
+// and then once per lease (ARCHITECTURE §5, Reconciler step 1). The rest of
+// the reconciler arrives later.
+func requeueExpired(ctx context.Context, s *store.Store, log *slog.Logger) {
+	tick := time.NewTicker(queue.DefaultLease)
+	defer tick.Stop()
+	for {
+		requeued, failed, err := s.RequeueExpired(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Warn("requeue expired operations failed", slog.Any("err", err))
+		case requeued+failed > 0:
+			log.Info("expired operations requeued", slog.Int("requeued", requeued), slog.Int("failed", failed))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }

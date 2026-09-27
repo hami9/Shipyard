@@ -304,6 +304,15 @@ func TestLifecycleIsIdempotent(t *testing.T) {
 	if err := r.Start(ctx, id); err != nil {
 		t.Fatalf("start a running container: %v", err)
 	}
+	var lines []string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if lines, _ = r.Logs(ctx, id, 5); len(lines) > 0 {
+			break
+		}
+	}
+	if len(lines) != 1 || !strings.HasSuffix(lines[0], "probe listening on :8080") {
+		t.Fatalf("logs = %q", lines)
+	}
 	for range 2 {
 		if err := r.Stop(ctx, id, 5*time.Second); err != nil {
 			t.Fatal(err)

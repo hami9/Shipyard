@@ -26,7 +26,7 @@ SHIPYARD_TEST_DATABASE_URL ?= postgres://shipyard:shipyard@127.0.0.1:54320/postg
 SHIPYARD_KEK_DIR           ?= $(CURDIR)/.dev/kek
 SHIPYARD_KEK_ACTIVE        ?= dev
 
-.PHONY: help build test lint fmt test-integration test-docker dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot clean
+.PHONY: help build test lint fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -40,9 +40,9 @@ test: ## Unit tests with the race detector
 lint: ## gofmt check, go vet, staticcheck (unit, integration, and docker files)
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
 	$(GO) vet ./...
-	$(GO) vet -tags integration,docker ./...
+	$(GO) vet -tags integration,docker,e2e ./...
 	$(GO) run $(STATICCHECK) ./...
-	$(GO) run $(STATICCHECK) -tags integration,docker ./...
+	$(GO) run $(STATICCHECK) -tags integration,docker,e2e ./...
 
 fmt: ## Format all Go files
 	gofmt -w .
@@ -52,6 +52,9 @@ test-integration: ## Integration tests against PostgreSQL (run `make dev-up` fir
 
 test-docker: ## Tests that need Docker Engine and buildx (owner's machine, not CI)
 	$(GO) test -race -tags docker -count=1 ./...
+
+test-e2e: ## End-to-end deploy through the real binaries (Docker, buildx, git; run `make dev-up` first)
+	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -tags e2e -count=1 -timeout 20m -v ./test/e2e
 
 dev-up: ## Start local PostgreSQL 18 (Docker, bound to 127.0.0.1:54320)
 	$(DEV_COMPOSE) up -d --wait
@@ -74,8 +77,9 @@ run-api: dev-kek ## Run the API against the dev database (127.0.0.1:8080)
 	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_KEK_DIR='$(SHIPYARD_KEK_DIR)' SHIPYARD_KEK_ACTIVE='$(SHIPYARD_KEK_ACTIVE)' \
 	  SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-api serve
 
-run-worker: ## Run the worker against the dev database
-	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-worker run
+run-worker: dev-kek ## Run the worker against the dev database (needs Docker and buildx; workspaces in .dev/work)
+	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_KEK_DIR='$(SHIPYARD_KEK_DIR)' SHIPYARD_KEK_ACTIVE='$(SHIPYARD_KEK_ACTIVE)' \
+	  SHIPYARD_WORK_DIR='$(CURDIR)/.dev/work' SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-worker run
 
 $(GORELEASER):
 	GOBIN=$(CURDIR)/$(BIN_DIR)/tools $(GO) install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)

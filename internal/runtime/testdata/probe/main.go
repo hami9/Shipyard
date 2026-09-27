@@ -26,5 +26,15 @@ func main() {
 		}
 		w.Write([]byte(v))
 	})
+	// Optional failure modes for the worker's docker tests.
+	if os.Getenv("PROBE_EXIT") != "" {
+		log.Fatal("probe exiting on request")
+	}
+	status := http.StatusOK
+	if os.Getenv("PROBE_UNHEALTHY") != "" {
+		status = http.StatusInternalServerError
+	}
+	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) })
+	log.Print("probe listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
