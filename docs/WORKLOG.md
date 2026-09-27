@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1) |
-| **Last completed** | P2.1: the Caddy edge container (`runtime.EnsureEdge`), started by the worker |
-| **Next task** | P2.2: `internal/routing` renderer (`routes` → full Caddy JSON, keeping `admin.listen` on the socket), golden-file tests |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2) |
+| **Last completed** | P2.2: `routing.Render` (routes → full Caddy JSON), with golden files and a real-Caddy test |
+| **Next task** | P2.3: admin socket client (`GET` the config with its `Etag`, `POST /load` with `If-Match`, 412 handling) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
 | **Last updated** | 2026-09-27 |
@@ -53,6 +53,45 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P2.2 route renderer
+
+- **Phase / task:** P2.2: `internal/routing` renderer
+- **Author:** Claude Code (desktop session)
+- **Goal:** Caddy's complete config as a pure function of the `routes` table (invariant 2, ADR-0003).
+
+**Done**
+- **`routing.Render(Settings, []Route) ([]byte, error)`:**
+  - `admin.listen` on the edge socket (`|0660`), and one server `shipyard` on `:443`.
+  - The optional API hostname proxies only `/v1/*` and `/hooks/github`; anything else there is 404.
+  - One terminal route per hostname: `reverse_proxy` to its upstream, or `503 no active deployment`.
+  - Issuers: default, Let's Encrypt with an email, LE staging, or internal.
+  - Output is sorted by hostname, so it is byte-for-byte deterministic, and the caller's slice is never modified.
+- **Validation refuses to render anything** for invalid input:
+  - hostnames that are not the schema's lowercase FQDN form (no wildcards or placeholders), duplicates, or an app on the API hostname;
+  - upstreams other than `host:port` with a real port (no network prefixes, port ranges, placeholders, or sockets for apps);
+  - an unclean admin socket path, an unknown CA, or a bad email.
+- `store.ListRoutes` (ordered by hostname) and `routing.FromStore`.
+
+**Decisions**
+- **The JSON shape comes from Caddy itself** (`caddy adapt` of an equivalent Caddyfile on 2.11.4), because the JSON docs pages render client-side `[CADDY-JSON]`.
+- **Apps can never proxy to a Unix socket.** Only the API upstream may be `unix//…`, so a route row cannot point Caddy at, say, the Docker socket.
+- **Settings passed in, not new config.** The API hostname, the API upstream, the CA, and the email come in as `Settings`. Wiring them from config comes with the load path (P2.3/P2.4) and P2.8.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4)
+- `make lint`, `make test`, `make test-integration`: all ok.
+  - Unit: 5 golden files, determinism, admin socket kept, `FromStore`, and 19 rejection cases.
+  - Integration: `TestListRoutes`, covering order, and upstream and deployment present or absent.
+- **`TestRenderedConfigServes` (docker, 7 s):** the empty config loads into the real P2.1 edge. Then the full config loads, with the internal CA and a `caddy respond` upstream on an app network:
+  - `web` → 200 "app ok", `idle` → 503 "no active deployment";
+  - `api/v1/whoami` and `api/hooks/github` → proxied, and `api/admin` and `api/v1` → 404;
+  - an unrouted hostname fails the TLS handshake;
+  - `http://` → 308 to `https://`;
+  - the admin socket still answers after the load.
+- No leftovers.
+
+**Next**
+- P2.3: the admin socket client: `GET /config/` with `Etag`, `POST /load` with `If-Match`, and handling of 412 and other errors.
 
 ### 2026-09-27: P2.1 Caddy edge
 

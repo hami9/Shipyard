@@ -125,7 +125,8 @@ flowchart LR
   - The admin API is on a Unix socket (`0660`, worker group only), and the data directory is a persistent volume.
   - It attaches to app networks (ADR-0003).
   - The worker ensures it at start (`runtime.EnsureEdge`).
-- [ ] **P2.2** `internal/routing` renderer: `routes` table → full Caddy JSON config, including the API and `/hooks/github` routes. Golden-file tests.
+- [x] **P2.2** `internal/routing` renderer: `routes` table → full Caddy JSON config, including the API and `/hooks/github` routes. Golden-file tests.
+  - Also a `docker` test that loads the rendered config into a real Caddy and routes HTTPS through it.
 - [ ] **P2.3** Admin socket client: `GET` the config with its `Etag`, then `POST /load` with `If-Match`. Handle 412 and other errors.
 - [ ] **P2.4** The `switching` phase: load, then verify through Caddy with the `Host` header, then commit route and status in one transaction. Failure paths re-render the previous state.
 - [ ] **P2.5** Domain API: DNS preflight (A/AAAA must resolve to the host), unique hostnames, an optional suffix allow-list, and a toggle for the Let's Encrypt staging CA.
