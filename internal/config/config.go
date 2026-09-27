@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -40,6 +41,13 @@ const (
 	EnvBuilderName        = "SHIPYARD_BUILDER"
 	EnvBuilderMemory      = "SHIPYARD_BUILDER_MEMORY"
 	EnvBuilderCPUs        = "SHIPYARD_BUILDER_CPUS"
+	EnvCaddy              = "SHIPYARD_CADDY"
+	EnvCaddyName          = "SHIPYARD_CADDY_NAME"
+	EnvCaddyImage         = "SHIPYARD_CADDY_IMAGE"
+	EnvCaddyAdminDir      = "SHIPYARD_CADDY_ADMIN_DIR"
+	EnvCaddyBind          = "SHIPYARD_CADDY_BIND"
+	EnvCaddyHTTPPort      = "SHIPYARD_CADDY_HTTP_PORT"
+	EnvCaddyHTTPSPort     = "SHIPYARD_CADDY_HTTPS_PORT"
 )
 
 // Defaults.
@@ -53,6 +61,8 @@ const (
 	DefaultBuilderName     = "shipyard"
 	DefaultBuilderMemory   = "2g"
 	DefaultBuilderCPUs     = 2.0
+	DefaultCaddyName       = "shipyard-caddy"
+	DefaultCaddyAdminDir   = "/run/shipyard/caddy"
 	minPollInterval        = 100 * time.Millisecond
 )
 
@@ -109,6 +119,18 @@ type Worker struct {
 	BuilderName   string
 	BuilderMemory string
 	BuilderCPUs   float64
+	Caddy         Caddy
+}
+
+// Caddy configures the edge container the worker keeps running (ADR-0003).
+type Caddy struct {
+	Enabled  bool
+	Name     string
+	Image    string // empty: the pinned default in internal/runtime
+	AdminDir string // holds the admin socket; group = the worker's group
+	// BindIP is where the ports are published; invalid means all interfaces.
+	BindIP              netip.Addr
+	HTTPPort, HTTPSPort int // 0 lets Docker choose (tests)
 }
 
 // LoadAPI reads and validates the API configuration.
@@ -141,6 +163,7 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	if !builderRE.MatchString(cfg.BuilderName) {
 		r.fail(EnvBuilderName, fmt.Errorf("%q must be lowercase letters, digits, '-' or '_'", cfg.BuilderName))
 	}
+	cfg.Caddy = r.caddy()
 	if cfg.WorkerID == "" {
 		cfg.WorkerID = defaultWorkerID()
 	}
@@ -175,6 +198,44 @@ func defaultWorkerID() string {
 		host = "worker"
 	}
 	return fmt.Sprintf("%s-%d", host, os.Getpid())
+}
+
+func (r *reader) caddy() Caddy {
+	c := Caddy{
+		Enabled:   r.boolean(EnvCaddy, true),
+		Name:      r.str(EnvCaddyName, DefaultCaddyName),
+		Image:     r.str(EnvCaddyImage, ""),
+		AdminDir:  r.str(EnvCaddyAdminDir, DefaultCaddyAdminDir),
+		HTTPPort:  r.port(EnvCaddyHTTPPort, 80),
+		HTTPSPort: r.port(EnvCaddyHTTPSPort, 443),
+	}
+	if !builderRE.MatchString(c.Name) || strings.HasPrefix(c.Name, "shipyard-app-") {
+		r.fail(EnvCaddyName, fmt.Errorf("%q must be lowercase letters, digits, '-' or '_', and not an app network name", c.Name))
+	}
+	if !filepath.IsAbs(c.AdminDir) || filepath.Clean(c.AdminDir) != c.AdminDir || strings.ContainsAny(c.AdminDir, "|:,") {
+		r.fail(EnvCaddyAdminDir, fmt.Errorf("%q must be a clean absolute path", c.AdminDir))
+	}
+	if s := r.str(EnvCaddyBind, ""); s != "" {
+		ip, err := netip.ParseAddr(s)
+		if err != nil {
+			r.fail(EnvCaddyBind, fmt.Errorf("%q is not an IP address", s))
+		}
+		c.BindIP = ip
+	}
+	return c
+}
+
+func (r *reader) port(key string, def int) int {
+	s := r.str(key, "")
+	if s == "" {
+		return def
+	}
+	p, err := strconv.Atoi(s)
+	if err != nil || p < 0 || p > 65535 {
+		r.fail(key, fmt.Errorf("invalid port %q", s))
+		return def
+	}
+	return p
 }
 
 func isLoopback(host string) bool {

@@ -55,6 +55,14 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if v := get(t, "http://"+ip+":8080/env?key=GREETING"); v != "hello from e2e" {
 		t.Fatalf("GREETING = %q", v)
 	}
+	// P2.1: the worker's Caddy is the only container publishing ports, and
+	// it joined the app's network.
+	if nets := h.docker("inspect", "--format", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", h.caddy); !strings.Contains(nets, "shipyard-app-"+slug) {
+		t.Fatalf("caddy networks = %q", nets)
+	}
+	if ports := h.docker("port", first); ports != "" {
+		t.Fatalf("the app container publishes ports: %s", ports)
+	}
 
 	// 2. A broken Dockerfile at the branch head fails with the build log.
 	h.wantOp(h.deploy(), "failed", "missing-file")
@@ -91,6 +99,7 @@ type harness struct {
 	t      *testing.T
 	bin    string
 	slug   string
+	caddy  string // the worker's edge container
 	repo   repo
 	env    []string // for the CLI
 	ops    []string // every operation deployed, for dumpEvents
@@ -108,9 +117,13 @@ func start(t *testing.T) *harness {
 		opRE:   regexp.MustCompile(`operation: ([0-9a-f-]{36})`),
 		status: regexp.MustCompile(`(?m)^status\s+(\S+)`)}
 	builder := "shipyard-e2e-" + strings.ToLower(rand.Text()[:8])
+	h.caddy = builder + "-caddy"
 
 	// Docker cleanup runs after the processes stop (cleanups run last first).
 	t.Cleanup(func() {
+		exec.Command("docker", "rm", "--force", h.caddy).Run() // first: it holds the app network
+		exec.Command("docker", "network", "rm", h.caddy).Run()
+		exec.Command("docker", "volume", "rm", h.caddy+"-data", h.caddy+"-config").Run()
 		out, _ := exec.Command("docker", "ps", "-aq", "--filter", "label=io.shipyard.app="+h.slug).Output()
 		for _, id := range strings.Fields(string(out)) {
 			exec.Command("docker", "rm", "--force", "--volumes", id).Run()
@@ -149,6 +162,8 @@ func start(t *testing.T) *harness {
 	waitHTTP(t, "http://"+addr+"/readyz")
 	h.spawn("worker", append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
+		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
+		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms"), "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=http://"+addr, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))

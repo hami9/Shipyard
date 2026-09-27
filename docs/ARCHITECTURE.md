@@ -321,6 +321,16 @@ The reconciler runs at worker start and then every 60 s by default.
 
 - The admin API listens on a Unix socket in a directory that only Caddy and the worker can access. App containers share a network with Caddy, so a TCP admin listener would let them rewrite routes.
 - Mount the data directory (certificates and ACME account) as a persistent volume and back it up.
+- How the worker runs it (`runtime.EnsureEdge`, P2.1) `[CADDY-IMAGE][CADDY-CLI]`:
+  - **Startup.** At every start, the worker ensures the `shipyard-caddy` container, its `shipyard-caddy` bridge network, and its `-data` and `-config` volumes. It then joins the container to every app network; new app networks are joined as they are created.
+  - **Recreation.** A label holding a hash of the spec (image, ports, socket directory, group) makes a changed spec recreate the container. The volumes are kept.
+  - **Image.** The official image, pinned by digest. It runs `caddy run --resume`, so a restart serves the last loaded config.
+  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by the worker's group with mode `2770`. It is bind-mounted at the same path, and is the only host path Caddy sees.
+  - **User.** Caddy runs as `0:<worker gid>`, so it can create the socket there without `CAP_DAC_OVERRIDE`.
+  - **Hardening.** `--cap-drop ALL` plus `NET_BIND_SERVICE`, `no-new-privileges`, a read-only root filesystem with a small `/tmp` tmpfs, 512 MiB, 1 CPU, 512 pids, the `local` log driver, and `unless-stopped`.
+  - **The capability is required.** The image's binary has `cap_net_bind_service=ep`: without the capability, even its exec fails.
+  - **Ports.** 80/tcp, 443/tcp, and 443/udp are published on all interfaces by default. The bind address and ports are configurable for development and tests.
+  - **Admin address in loaded configs.** A config loaded later must keep the admin address on this socket; P2.2's renderer always includes it.
 
 **Domains and TLS** `[CADDY-HTTPS][LE-LIMITS]`
 

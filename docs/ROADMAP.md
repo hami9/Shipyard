@@ -120,10 +120,11 @@ flowchart LR
 
 **Goal:** apps are served over HTTPS through Caddy, and only healthy candidates ever receive traffic.
 
-- [ ] **P2.1** Caddy container bootstrap:
+- [x] **P2.1** Caddy container bootstrap:
   - It is the only container with published ports (80/tcp, 443/tcp, 443/udp).
   - The admin API is on a Unix socket (`0660`, worker group only), and the data directory is a persistent volume.
   - It attaches to app networks (ADR-0003).
+  - The worker ensures it at start (`runtime.EnsureEdge`).
 - [ ] **P2.2** `internal/routing` renderer: `routes` table → full Caddy JSON config, including the API and `/hooks/github` routes. Golden-file tests.
 - [ ] **P2.3** Admin socket client: `GET` the config with its `Etag`, then `POST /load` with `If-Match`. Handle 412 and other errors.
 - [ ] **P2.4** The `switching` phase: load, then verify through Caddy with the `Host` header, then commit route and status in one transaction. Failure paths re-render the previous state.
