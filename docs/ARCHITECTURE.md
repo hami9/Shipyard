@@ -230,7 +230,10 @@ The reconciler runs at worker start and then every 60 s by default.
 | `shipyard logs APP --follow` | `GET /v1/apps/{id}/logs` (SSE) |
 | `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (SSE, resumable) |
 | `shipyard rollback APP --to <deployment-id>` | `POST /v1/apps/{id}/rollbacks` |
-| `shipyard env set APP KEY` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision |
+| `shipyard env set APP KEY [--plain]` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision. Body `{"value": …, "secret": true}`; secret by default |
+| `shipyard env unset APP KEY` | `DELETE /v1/apps/{id}/env/{key}` → new environment revision |
+| `shipyard env list APP` | `GET /v1/apps/{id}/env` (keys and whether each is secret; never values) |
+| `shipyard app show\|update\|delete APP` | `GET` / `PATCH` / `DELETE /v1/apps/{id}`. `{id}` accepts the slug. Slug and repo are fixed. Delete is refused while an operation runs or a deployment is live |
 | `shipyard domain set APP example.com` | `PUT /v1/apps/{id}/domain` (DNS preflight) |
 | — | `POST /hooks/github` (public, HMAC-verified) |
 

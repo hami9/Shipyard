@@ -47,8 +47,6 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | `DK-INSTALL-UBUNTU` | [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/) | The apt repository steps (keyring, `docker.sources`, `docker-ce` plus the buildx and compose plugins). Supports Ubuntu 26.04, 24.04, and 22.04. (Verified 2026-09-25) |
 | `MS-WSL-SYSTEMD` | [Use systemd with WSL](https://learn.microsoft.com/en-us/windows/wsl/systemd) | systemd is the default for current Ubuntu installed with `wsl --install`. Otherwise use `/etc/wsl.conf` `[boot] systemd=true` plus `wsl.exe --shutdown`, which needs WSL ≥ 0.67.6. (Verified 2026-09-25) |
 | `MS-WSL-FS` | [Working across file systems (WSL)](https://learn.microsoft.com/en-us/windows/wsl/filesystems) | Store project files in the Linux file system (`/home/<user>/…`), not `/mnt/c`, for performance. (Verified 2026-09-25) |
-| `GO-RAND` | [crypto/rand](https://pkg.go.dev/crypto/rand#Read) | `Read` "never returns an error, and always fills b entirely"; it crashes the program if the system source fails. (Verified 2026-09-26) |
-| `GO-GCM` | [crypto/cipher.NewGCMWithRandomNonce](https://pkg.go.dev/crypto/cipher#NewGCMWithRandomNonce) | Since Go 1.24. A random 96-bit nonce is prepended by `Seal` and read back by `Open`; `NonceSize` is 0 and `Overhead` is 28 bytes. A key must not encrypt more than 2³² messages. (Verified 2026-09-27) |
 | `GO-INSTALL` | [Go: download and install](https://go.dev/doc/install) | The Linux tarball install into `/usr/local/go` plus PATH. Never untar over an existing tree. The go1.26.8 linux-amd64 SHA-256 comes from `go.dev/dl/?mode=json`. (Verified 2026-09-25) |
 | `PG-IMAGE` | [Official postgres image docs](https://github.com/docker-library/docs/blob/master/postgres/content.md) | For PostgreSQL 18+ images, `PGDATA` is `/var/lib/postgresql/18/docker` and the `VOLUME` is `/var/lib/postgresql`. `POSTGRES_PASSWORD` is required. (Verified 2026-09-25) |
 | `DK-RESOURCES` | [Resource constraints](https://docs.docker.com/engine/containers/resource_constraints/) | `--memory` has a minimum of `6m`. `--cpus` accepts fractional values such as `1.5`. (Verified 2026-09-26) |
@@ -59,6 +57,7 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 
 | Tag | Source | What it supports |
 | --- | --- | --- |
+| `GIT-REFNAME` | [git check-ref-format](https://git-scm.com/docs/git-check-ref-format) | The ref-name rules: no component starting with `.` or ending in `.lock`; no `..`, `@{`, control characters, space, `~ ^ : ? * [ \`; no leading, trailing, or doubled `/`; no trailing `.`; not `@`. Shipyard adds "no leading `-`" against option injection. (Verified 2026-09-27) |
 | `GH-ACTIONS-PG` | [PostgreSQL service containers](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers) | Service container with a `pg_isready` health check. Jobs on the runner connect through `localhost` and the mapped port. |
 | `SETUP-GO` | [actions/setup-go README](https://github.com/actions/setup-go) | `go-version-file: go.mod` uses the `toolchain` directive when present, otherwise `go`. The `v7` major tag exists (checked with `git ls-remote`, 2026-09-25). |
 | `STATICCHECK` | [staticcheck releases](https://staticcheck.dev/changes/) | 2026.2.1 (module `honnef.co/go/tools` v0.8.1) requires Go ≥ 1.26. It could not analyze Go 1.27.1's standard library when tested on 2026-09-25, so the toolchain is pinned to go1.26.8. |
@@ -97,7 +96,8 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | Tag | Source | What it supports |
 | --- | --- | --- |
 | `GO-REL` | [Go release history](https://go.dev/doc/devel/release) | go1.27.0 (2026-08-19) and go1.26.0 (2026-02-10). Each major release is supported until two newer major releases exist. |
-| `GO-GCM` | [`cipher.NewGCMWithRandomNonce`](https://pkg.go.dev/crypto/cipher#NewGCMWithRandomNonce) | Added in Go 1.24. Uses a random 96-bit nonce. One key must not encrypt more than 2³² messages. |
+| `GO-GCM` | [`cipher.NewGCMWithRandomNonce`](https://pkg.go.dev/crypto/cipher#NewGCMWithRandomNonce) | Added in Go 1.24. Uses a random 96-bit nonce, prepended by `Seal` and read back by `Open`; `NonceSize` is 0 and `Overhead` is 28 bytes. One key must not encrypt more than 2³² messages. (Re-verified 2026-09-27) |
+| `GO-RAND` | [crypto/rand](https://pkg.go.dev/crypto/rand#Read) | `Read` "never returns an error, and always fills b entirely"; it crashes the program if the system source fails. (Verified 2026-09-26) |
 | `GO-ROUTING` | [Routing enhancements for Go 1.22](https://go.dev/blog/routing-enhancements) | `net/http.ServeMux` supports method matching and wildcards such as `GET /posts/{id}`. |
 
 ## Security guidance and web standards

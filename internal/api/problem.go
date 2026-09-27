@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/hami9/shipyard/internal/app"
 )
 
 // Problem is an RFC 9457 problem details body. Detail is shown to clients, so
@@ -12,6 +14,8 @@ type Problem struct {
 	Title  string `json:"title"`
 	Status int    `json:"status"`
 	Detail string `json:"detail,omitempty"`
+	// Errors lists invalid fields; an extension member [RFC9457].
+	Errors []app.FieldError `json:"errors,omitempty"`
 }
 
 func writeProblem(w http.ResponseWriter, status int, detail string) {

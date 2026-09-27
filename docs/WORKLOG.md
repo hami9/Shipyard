@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Stacked PRs: #1 `schema-v1` (P1.1–P1.3) → `main`, #2 `env-secrets` (P1.4) → #1, `op-queue` (P1.5) → #2 |
-| **Last completed** | P1.5: operation queue (admission, claim, lease, retry, requeue) and operation events |
-| **Next task** | P1.6: app CRUD API (validation, problem+json), plus the env endpoints and keyring wiring deferred from P1.4 |
+| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6) |
+| **Last completed** | P1.6: apps API, env API, KEK configuration |
+| **Next task** | P1.7: CLI (`app create\|list`, `env set\|list`, `deploy`, `ps`, `whoami`; config holds the API URL and token). `deploy` needs a deploy endpoint (`POST /v1/apps/{app}/deployments` enqueuing an operation) first |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,49 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.6 apps and env API
+
+- **Phase / task:** P1.6: App CRUD API (plus the env endpoints and KEK wiring deferred from P1.4)
+- **Author:** Claude Code (desktop session)
+- **Goal:** Manage apps and their environment over the API, with validation before the database and uniform problem+json errors.
+
+**Done** (commits `57137b1` App API, `92b2291` Sources dedupe, then Env API)
+- `internal/app` (pure logic): `ValidateNew` and `ValidateUpdate` report every invalid field at once.
+  - Branches follow git's ref-name rules `[GIT-REFNAME]` plus **no leading `-`** (option injection into git commands).
+  - Paths are relative with no `..` component, backslash, or control character. The worker still resolves symlinks (ADR-0004).
+  - Ports, durations, CPU, and memory are bounded.
+- `internal/api`:
+  - `/v1/apps` create (201 + Location), list, get, `PATCH` (slug and repo immutable), and `DELETE`. `{app}` is an ID or a slug.
+  - Env: `GET /env` (keys and whether secret), `PUT` and `DELETE /env/{key}`. Values are secret by default and never echoed.
+  - Strict JSON: `application/json` only (415), 1 MiB cap (413), unknown fields rejected, a single object (400).
+  - `errors.go` is the single error → problem+json mapping. Validation errors return 422 with an `errors` list (an RFC 9457 extension member). Unexpected errors return a logged, generic 500.
+- `store.DeleteIdleApp`: under the app lock, refuses (`ErrAppBusy` → 409) while an operation runs or a deployment is live.
+- Config `SHIPYARD_KEK_DIR` (default `/etc/shipyard/kek`) and `SHIPYARD_KEK_ACTIVE`. `serve` loads the keyring before opening the DB or listener, and refuses to start without the active KEK or with a KEK file other users can read.
+- `make dev-kek`: a dev-only KEK in the ignored `.dev/kek/`; `run-api` depends on it. `deploy/shipyard.env.example` documents KEK files.
+
+**Decisions**
+- **Validation lives in `internal/app`** (ARCHITECTURE §8: domain rules, no I/O). The database checks stay as the last line.
+- **`migrate` and `token` do not need a KEK.** `SHIPYARD_KEK_ACTIVE` is required only by `serve` (and later by the worker).
+- **Fix:** `GO-GCM` was defined twice in SOURCES.md, because P1.4 added a second row. The rows were merged, and a check for duplicate or undefined tags now passes.
+
+**Verification** (WSL2 as `hami`)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- Unit: `CheckBranch` (7 good, 27 bad, including `--upload-pack=…`), `CheckRepoPath`, `ValidateNew` (11 field errors at once), `ValidateUpdate`, and the KEK config.
+- API integration against real PostgreSQL:
+  - CRUD by slug and ID; 409 on a duplicate slug; 422 with the exact field list;
+  - 400, 413, and 415 cases; a read token gets 403; no ERROR logs for client errors;
+  - delete refused while an op runs, then allowed; audit trail;
+  - env set, list, unset; `Resolve` sees the sealed value; 404, 422, and 403 cases;
+  - negative: the secret appears in no log line and no audit row.
+- E2E with the real binary on `127.0.0.1:18080`:
+  - `dev-kek` is idempotent, mode 600, 32 bytes;
+  - `serve` without a KEK, or with a KEK file mode 644, is refused;
+  - create 201; invalid input 422 listing `branch` and `build_context`; env set, list, patch;
+  - **the secret appears 0 times in the API log and in a real `pg_dump`**; audit rows for every mutation.
+
+**Next**
+- P1.7: CLI. It needs `POST /v1/apps/{app}/deployments` (enqueue with `Idempotency-Key`) for `shipyard deploy`, so add that endpoint first.
 
 ### 2026-09-27: P1.5 operation queue
 

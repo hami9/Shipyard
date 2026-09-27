@@ -17,6 +17,7 @@ import (
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
 	"github.com/hami9/shipyard/migrations"
 )
@@ -87,6 +88,14 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 
 func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	log.Info("starting", slog.String("version", buildinfo.Get().String()))
+	// The API seals new environment values, so it needs the active KEK.
+	if cfg.KEKActive == "" {
+		return fmt.Errorf("%s is required to serve: it names the KEK in %s that seals new values", config.EnvKEKActive, cfg.KEKDir)
+	}
+	keys, err := secrets.LoadKeyring(cfg.KEKDir, cfg.KEKActive)
+	if err != nil {
+		return fmt.Errorf("load KEKs: %w", err)
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -98,7 +107,7 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 		return err
 	}
 	s := store.New(db)
-	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s})
+	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s)})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 

@@ -14,6 +14,9 @@ All notable changes to Shipyard are recorded here.
 - **Database schema v1** (migration `0002`): users and API tokens, apps, encrypted secret values and immutable environment revisions, the operations queue and its events, deployments, routes, webhook deliveries, and audit events. The database itself enforces one running operation and one active deployment per app, unique idempotency keys and hostnames, and same-app references.
 - **API tokens:** `shipyard-api token create|list|revoke` bootstraps and manages `shp_` tokens on the server. Tokens have scopes (`read`, `deploy`, `admin`) and an expiry of 1h to 366d (default 90d). Only a SHA-256 hash is stored, the plaintext is printed once, and every create and revoke is audited.
 - **API authentication:** every `/v1` route requires a bearer token with the right scope (401 or 403 per RFC 6750). Every authenticated mutation is audited, allowed or denied. `GET /v1/whoami` describes the calling token.
+- **Apps API:** `/v1/apps` create, list, show (by slug or ID), update, and delete. Every field is validated before it reaches the database: git branch rules, repository-relative paths without `..`, ports, and limits. All invalid fields are reported at once as `application/problem+json`.
+- **Environment API:** `GET /v1/apps/{app}/env` lists keys only; `PUT` and `DELETE /v1/apps/{app}/env/{key}` create new revisions. Values are secret (encrypted) by default.
+- **Configuration:** `SHIPYARD_KEK_DIR` and `SHIPYARD_KEK_ACTIVE`. `shipyard-api serve` refuses to start without the active KEK, or with a KEK file other users can read.
 - **Secret encryption and environment revisions** (`internal/secrets`): envelope encryption with a per-value AES-256-GCM key wrapped by a file-based KEK. Every change creates an immutable, numbered revision that reuses unchanged values without decrypting them.
 ## [0.1.0] - 2026-09-26
 
