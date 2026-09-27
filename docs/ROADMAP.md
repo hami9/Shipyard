@@ -86,7 +86,8 @@ flowchart LR
   - Negative tests: wrong AAD, wrong KEK, tampered ciphertext.
   - A test proving that a DB dump contains no plaintext.
   - Wiring the keyring into the API and worker (config `SHIPYARD_KEK_DIR` and the active KEK id) arrives with the first consumers: the env endpoints (P1.6) and container start (P1.10).
-- [ ] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
+- [x] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
+  - Also in `internal/store`: operation events with gapless `seq` for SSE resume, and `RequeueExpired` for the reconciler (called periodically from P3.2).
 - [ ] **P1.6** App CRUD API: validation of slug, port, and paths (no escape from the repository), plus `application/problem+json` errors.
 - [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, `ps`, and `whoami`. Config holds the API URL and token.
 - [ ] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
