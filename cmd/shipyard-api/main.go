@@ -107,7 +107,7 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 		return err
 	}
 	s := store.New(db)
-	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s)})
+	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 

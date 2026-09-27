@@ -206,5 +206,24 @@ func CheckRepoPath(p string, allowDot bool) error {
 	return nil
 }
 
+var commitRE = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// CheckCommitSHA accepts a full, lowercase SHA-1 or SHA-256 commit ID.
+// Abbreviated IDs are refused: a deploy pins an exact commit.
+func CheckCommitSHA(s string) error {
+	if !commitRE.MatchString(s) {
+		return errors.New("must be a full commit SHA (40 or 64 lowercase hex characters)")
+	}
+	return nil
+}
+
+// CheckIdempotencyKey accepts 1-200 visible ASCII characters.
+func CheckIdempotencyKey(k string) error {
+	if k == "" || len(k) > 200 || strings.ContainsFunc(k, func(r rune) bool { return r <= ' ' || r > '~' }) {
+		return errors.New("must be 1-200 visible ASCII characters")
+	}
+	return nil
+}
+
 func isControl(r rune) bool        { return r < 0x20 || r == 0x7f }
 func isSpaceOrControl(r rune) bool { return r == ' ' || isControl(r) }

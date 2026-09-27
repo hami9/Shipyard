@@ -1,0 +1,221 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/hami9/shipyard/internal/client"
+)
+
+func table(e env, header string, rows [][]string) error {
+	tw := tabwriter.NewWriter(e.stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, header)
+	for _, r := range rows {
+		fmt.Fprintln(tw, strings.Join(r, "\t"))
+	}
+	return tw.Flush()
+}
+
+// cmdLogin verifies a token against the API before saving it, so a typo is
+// caught now rather than on the next deploy.
+func cmdLogin(ctx context.Context, e env, args []string) error {
+	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	url := fs.String("url", "", "")
+	if _, err := parse(fs, args, 0); err != nil || *url == "" {
+		return errUsage
+	}
+	token, err := readSecret(e, "API token")
+	if err != nil {
+		return err
+	}
+	token = strings.TrimSpace(token)
+	c, err := client.New(*url, token)
+	if err != nil {
+		return err
+	}
+	who, err := c.Whoami(ctx)
+	if err != nil {
+		return fmt.Errorf("token check failed: %w", err)
+	}
+	path, err := defaultConfigPath(e.getenv)
+	if err != nil {
+		return err
+	}
+	if err := saveConfig(path, config{URL: *url, Token: token}); err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "Logged in to %s as token %s (%s). Saved to %s.\n", *url, who.Token, strings.Join(who.Scopes, ","), path)
+	return nil
+}
+
+func cmdWhoami(ctx context.Context, e env, c *client.Client) error {
+	w, err := c.Whoami(ctx)
+	if err != nil {
+		return err
+	}
+	expires := "never"
+	if w.ExpiresAt != nil {
+		expires = w.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	fmt.Fprintf(e.stdout, "token:   %s (%s)\nscopes:  %s\nexpires: %s\n", w.Token, w.Name, strings.Join(w.Scopes, ","), expires)
+	return nil
+}
+
+func cmdAppList(ctx context.Context, e env, c *client.Client) error {
+	apps, err := c.ListApps(ctx)
+	if err != nil {
+		return err
+	}
+	rows := make([][]string, len(apps))
+	for i, a := range apps {
+		rows[i] = []string{a.Slug, a.Repo, a.Branch, fmt.Sprint(a.Port)}
+	}
+	return table(e, "APP\tREPO\tBRANCH\tPORT", rows)
+}
+
+func cmdAppCreate(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("app create", flag.ContinueOnError)
+	var n client.NewApp
+	fs.StringVar(&n.Repo, "repo", "", "")
+	fs.StringVar(&n.Branch, "branch", "", "")
+	fs.IntVar(&n.Port, "port", 0, "")
+	fs.StringVar(&n.DockerfilePath, "dockerfile", "", "")
+	fs.StringVar(&n.BuildContext, "context", "", "")
+	fs.StringVar(&n.HealthPath, "health-path", "", "")
+	pos, err := parse(fs, args, 1)
+	if err != nil {
+		return err
+	}
+	n.Slug = pos[0]
+	a, err := c.CreateApp(ctx, n)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "Created app %s (%s, branch %s, port %d).\n", a.Slug, a.Repo, a.Branch, a.Port)
+	return nil
+}
+
+func cmdAppShow(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("app show", flag.ContinueOnError), args, 1)
+	if err != nil {
+		return err
+	}
+	a, err := c.GetApp(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	return table(e, "FIELD\tVALUE", [][]string{
+		{"id", a.ID}, {"repo", a.Repo}, {"branch", a.Branch}, {"dockerfile", a.DockerfilePath},
+		{"context", a.BuildContext}, {"port", fmt.Sprint(a.Port)}, {"health", a.HealthPath + " (timeout " + a.HealthTimeout + ")"},
+		{"cpu", fmt.Sprint(a.CPULimit)}, {"memory", fmt.Sprintf("%d MiB", a.MemoryLimit>>20)},
+		{"stop timeout", a.StopTimeout}, {"auto deploy", fmt.Sprint(a.AutoDeploy)},
+	})
+}
+
+func printEnv(e env, vars client.Env) error {
+	rows := make([][]string, len(vars.Vars))
+	for i, v := range vars.Vars {
+		kind := "plain"
+		if v.Secret {
+			kind = "secret"
+		}
+		rows[i] = []string{v.Key, kind}
+	}
+	fmt.Fprintf(e.stdout, "revision %d\n", vars.Revision)
+	return table(e, "KEY\tTYPE", rows)
+}
+
+func cmdEnvSet(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("env set", flag.ContinueOnError)
+	plain := fs.Bool("plain", false, "")
+	pos, err := parse(fs, args, 2)
+	if err != nil {
+		return err
+	}
+	value, err := readSecret(e, "Value for "+pos[1])
+	if err != nil {
+		return err
+	}
+	res, err := c.SetEnv(ctx, pos[0], pos[1], value, !*plain)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "Set %s on %s: revision %d. It applies on the next deploy.\n", pos[1], pos[0], res.Revision)
+	return nil
+}
+
+func cmdEnvUnset(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("env unset", flag.ContinueOnError), args, 2)
+	if err != nil {
+		return err
+	}
+	res, err := c.UnsetEnv(ctx, pos[0], pos[1])
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "Removed %s from %s: revision %d. It applies on the next deploy.\n", pos[1], pos[0], res.Revision)
+	return nil
+}
+
+func cmdEnvList(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("env list", flag.ContinueOnError), args, 1)
+	if err != nil {
+		return err
+	}
+	res, err := c.ListEnv(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	return printEnv(e, res)
+}
+
+func cmdDeploy(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	ref := fs.String("ref", "", "")
+	key := fs.String("idempotency-key", "", "")
+	pos, err := parse(fs, args, 1)
+	if err != nil {
+		return err
+	}
+	res, err := c.Deploy(ctx, pos[0], *ref, *key)
+	if err != nil {
+		return err
+	}
+	target := "the head of the tracked branch"
+	if *ref != "" {
+		target = *ref
+	}
+	verb := "Queued"
+	if !res.Created {
+		verb = "Already requested with this idempotency key:"
+	}
+	fmt.Fprintf(e.stdout, "%s deploy of %s at %s.\noperation: %s (%s)\n", verb, pos[0], target, res.Operation.ID, res.Operation.Status)
+	for _, id := range res.Superseded {
+		fmt.Fprintf(e.stdout, "cancelled older queued operation %s\n", id)
+	}
+	return nil
+}
+
+func cmdOperation(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("operation", flag.ContinueOnError), args, 1)
+	if err != nil {
+		return err
+	}
+	o, err := c.Operation(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	rows := [][]string{{"id", o.ID}, {"kind", o.Kind}, {"status", o.Status}, {"attempt", fmt.Sprintf("%d of %d", o.Attempt, o.MaxAttempts)},
+		{"created", o.CreatedAt.UTC().Format(time.RFC3339)}}
+	if o.Phase != "" {
+		rows = append(rows, []string{"phase", o.Phase})
+	}
+	if o.LastError != "" {
+		rows = append(rows, []string{"last error", o.LastError})
+	}
+	return table(e, "FIELD\tVALUE", rows)
+}

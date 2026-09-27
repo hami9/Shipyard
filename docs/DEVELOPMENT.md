@@ -143,6 +143,21 @@ make dev-down              # stop PostgreSQL (data kept; `make dev-reset` delete
 
 **Send back:** the output of §2.5, the last lines of `make lint`, `make test`, and `make test-integration`, and the two `curl` responses.
 
+### Try the API with the CLI
+
+```bash
+make dev-up && make migrate && make build
+./bin/shipyard-api token create --name dev > /tmp/dev.token    # the first admin token
+make run-api                                                     # second terminal
+./bin/shipyard login --url http://127.0.0.1:8080 < /tmp/dev.token
+./bin/shipyard app create hello --repo OWNER/REPO --branch main --port 8080
+echo 's3cret' | ./bin/shipyard env set hello API_KEY
+./bin/shipyard env list hello
+./bin/shipyard deploy hello     # stays "queued" until the worker exists (P1.11)
+```
+
+`login` reads the token from stdin so it never lands in shell history. The CLI refuses plain `http://` to a non-loopback host. On the server itself, use the API socket: `--url unix:///run/shipyard/api.sock`. On Windows, a `shipyard.exe` built with `GOOS=windows` reaches an API in WSL at `http://127.0.0.1:<port>`.
+
 ## 4. Everyday commands
 
 Run `make help` for the full list.

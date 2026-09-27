@@ -52,6 +52,8 @@ func writeError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 		writeProblem(w, http.StatusNotFound, "the app has no such environment key")
 	case errors.Is(err, store.ErrNotFound):
 		writeProblem(w, http.StatusNotFound, "not found")
+	case errors.Is(err, store.ErrIdempotencyMismatch):
+		writeProblem(w, http.StatusConflict, "this Idempotency-Key was already used for a different request")
 	case errors.Is(err, store.ErrAppBusy):
 		writeProblem(w, http.StatusConflict, store.ErrAppBusy.Error())
 	case errors.Is(err, store.ErrConflict):
