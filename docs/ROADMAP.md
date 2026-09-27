@@ -99,9 +99,10 @@ flowchart LR
   - `--load`, a deadline, and `--metadata-file`.
   - Bounded log capture into operation events. The line sink is a callback; P1.11 connects it to `AppendOperationEvent`.
   - Docker tests use the `docker` build tag and `make test-docker`, which run on the owner's machine, not in CI.
-- [ ] **P1.10** `internal/runtime` on `moby/moby/client`:
+- [x] **P1.10** `internal/runtime` on `moby/moby/client`:
   - A per-app network, the hardened flag set, `io.shipyard.*` labels, and environment injection.
   - Create, start, inspect, stop, and remove.
+  - The automated `docker inspect` check from the exit criteria is `TestHardenedContainer` (`make test-docker`).
 - [ ] **P1.11** `internal/app` deploy use case covering the phases `queued → building → starting → health_checking → active (no route)`, with each phase persisted before its side effect. Also implement the health probe.
 
 **Exit criteria**
