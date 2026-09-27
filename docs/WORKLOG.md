@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6) |
-| **Last completed** | P1.6: apps API, env API, KEK configuration |
-| **Next task** | P1.7: CLI (`app create\|list`, `env set\|list`, `deploy`, `ps`, `whoami`; config holds the API URL and token). `deploy` needs a deploy endpoint (`POST /v1/apps/{app}/deployments` enqueuing an operation) first |
+| **Active phase** | Phase 1: Foundation. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7) |
+| **Last completed** | P1.7: CLI and deploy endpoint |
+| **Next task** | P1.8: `internal/source` (fetch the exact SHA, resolve the branch head, ancestry check, per-operation workspace). Needs git and the network, so it is tested on the owner's machine |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,56 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.7 CLI and deploy endpoint
+
+- **Phase / task:** P1.7: CLI
+- **Author:** Claude Code (desktop session)
+- **Goal:** Operate Shipyard from a terminal (apps, environment, deploys) through the API only.
+
+**Done** (commits `adceac8` Deploy endpoint, then CLI)
+- API:
+  - `POST /v1/apps/{app}/deployments` (`deploy` scope): an optional full commit `ref` (40 or 64 lowercase hex) and an `Idempotency-Key` (1–200 visible ASCII, stored as `api:<key>`, generated as `api:auto:…` when absent).
+  - 202 for a new operation, 200 for a replay of the same request, 409 when the key was used for a different app or ref. The response lists superseded operations.
+  - `GET /v1/operations/{id}`.
+- `internal/client`: a typed client.
+  - It refuses plain `http` to non-loopback hosts (the token would travel in clear) and supports `unix://` sockets.
+  - It decodes problem+json into `*client.Error` with field errors, and path-escapes every segment.
+- `cmd/shipyard`:
+  - `login --url` reads the token from stdin, checks it with `whoami`, and only then saves `config.json` (mode 0600, written atomically). A config readable by others is refused.
+  - `whoami`, `app create|list|show`, `ps`, `env set|unset|list`, `deploy`, `operation`.
+  - Flags may come before or after positional arguments. Values are read from stdin with one trailing newline (LF or CRLF) dropped.
+  - `SHIPYARD_URL`, `SHIPYARD_TOKEN`, and `SHIPYARD_CONFIG` override the config.
+
+**Decisions**
+- **`internal/client` is a new package** (ARCHITECTURE §8 updated). It keeps the CLI thin and testable.
+- **`ps` equals `app list` for now.** It gains deployment status when deployments exist (P1.11).
+- **An idempotent replay must be the same request**, not just the same key (payloads compared semantically), as with common payment APIs.
+
+**Verification** (WSL2 as `hami`, plus native Windows)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- API integration `TestDeployEndpoint`: 202 → replay 200 → other ref 409 → other app 409; a keyless deploy supersedes; `GET` shows `cancelled` / `superseded by`; 422 for short or uppercase SHAs and bad keys; 400, 404, and 403 cases.
+- Client unit tests: URL rules (7 accepted, 6 refused, including `http://10.0.0.5`); problem+json field errors; a non-JSON 502; `a/b` escaped as one segment.
+- `TestCLIEndToEnd` against a real API and PostgreSQL:
+  - a bad token login saves nothing; login, whoami;
+  - two app creates (flags before and after the slug); 422 with field lines; ps, app show;
+  - env set (secret and plain), list, unset, 404 on a missing key;
+  - deploy, supersede, replay, short-ref error, operation;
+  - **the token and the secret never appear in CLI output**.
+- Native Windows: `go test ./cmd/shipyard ./internal/client ./internal/app` ok (local go1.27.1).
+- **A Windows `shipyard.exe` against the API in WSL** (`http://127.0.0.1:18080`):
+  - login, whoami, create, env set (CRLF input), env list, deploy, and ps all work;
+  - a 422 lists both field errors; `http://example.com` is refused;
+  - the secret appears 0 times in the API log.
+
+**Problems / surprises**
+- **Test harness, not product:**
+  - Piping a script into `bash` lets WSL interop hand the rest of the script to the Windows exe as its stdin. Scripts now run from a file with `< /dev/null`.
+  - `pkill -f 'shipyard-api serve'` matched its own shell; use `'[b]in/shipyard-api serve'`.
+  - One run's `token create` returned nothing with stderr hidden. The rerun with stderr shown succeeded, so the cause is unknown.
+
+**Next**
+- P1.8: `internal/source`.
 
 ### 2026-09-27: P1.6 apps and env API
 

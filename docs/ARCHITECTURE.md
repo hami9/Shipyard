@@ -224,8 +224,10 @@ The reconciler runs at worker start and then every 60 s by default.
 | CLI example | API operation |
 | --- | --- |
 | `shipyard app create --repo owner/repo --branch main --port 3000` | `POST /v1/apps` |
-| `shipyard deploy APP [--ref <commit-sha>]` | `POST /v1/apps/{id}/deployments` (with `Idempotency-Key`) |
+| `shipyard deploy APP [--ref <commit-sha>] [--idempotency-key K]` | `POST /v1/apps/{id}/deployments` (`deploy` scope). 202 for a new operation; 200 with the original for a repeated key; 409 if the key was used for a different request. Client keys are stored as `api:<key>` so they never collide with `gh:` keys |
+| `shipyard operation ID` | `GET /v1/operations/{id}` |
 | `shipyard ps` | `GET /v1/apps` |
+| `shipyard login --url URL` (token read from stdin) | `GET /v1/whoami` to verify, then saves `~/.config/shipyard/config.json` with mode 0600 |
 | `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
 | `shipyard logs APP --follow` | `GET /v1/apps/{id}/logs` (SSE) |
 | `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (SSE, resumable) |
@@ -328,6 +330,7 @@ The reconciler runs at worker start and then every 60 s by default.
 
 ```text
 cmd/shipyard/          CLI
+internal/client/       typed HTTP client for the API (used by the CLI)
 cmd/shipyard-api/      HTTP server and webhook receiver
 cmd/shipyard-worker/   deployment worker and reconciler
 internal/api/          handlers, authn/authz, problem+json errors, SSE
