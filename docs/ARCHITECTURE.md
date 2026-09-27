@@ -165,11 +165,14 @@ stateDiagram-v2
 1. **Admission (API).** Validate the request and insert an operation.
    - For webhooks, the idempotency key is `gh:<X-GitHub-Delivery>`, so a redelivery does not create a second deployment `[GH-BP]`.
    - For manual deploys, the key comes from the client's `Idempotency-Key` header, or the API generates one.
-   - A newer request for an app cancels that app's still-`queued` deploy. Latest wins, and a running operation is never interrupted.
-2. **Claim (worker).** Select the oldest eligible operation with `FOR UPDATE SKIP LOCKED` and set `status = running`, `lease_owner`, and `lease_expires_at` `[PG-SELECT]`.
-   - The partial unique index guarantees one running operation per app.
-   - A heartbeat extends the lease.
-   - `LISTEN/NOTIFY` may wake the worker, but polling stays the fallback.
+   - A newer request for an app cancels that app's still-`queued` operations. Latest wins, and a running operation is never interrupted. A row lock on the app serializes admissions, so concurrent requests leave exactly one queued.
+   - Reusing an idempotency key for a different app or kind is refused.
+   - Admission writes only the operation. The worker creates the deployment row when it starts the operation, so a cancelled request never has a deployment.
+2. **Claim (worker).** Select the oldest eligible operation with `FOR UPDATE SKIP LOCKED` and set `status = running`, `lease_owner`, `lease_expires_at`, and `attempt + 1` `[PG-SELECT]`.
+   - Apps with a running operation are skipped. The partial unique index still guarantees one running operation per app when two workers race; the loser retries on other apps.
+   - A heartbeat every lease/3 (lease 60 s by default) extends the lease. Phase changes, completion, and failure all require the caller to still own the lease. When a renewal fails or a whole lease passes without one, the worker cancels its own work.
+   - A failure can be retried after a delay while attempts remain (default 3).
+   - `LISTEN/NOTIFY` may wake the worker, but polling (every 2 s) stays the fallback.
 3. **Fetch.** Fetch the exact SHA over HTTPS. For private repositories, use a one-hour installation token scoped to that repository with `contents: read` `[GH-APP-TOKEN]`, passed as a git header, never in the URL.
    - **Verify that the SHA is an ancestor of the tracked branch**, for example with `git merge-base --is-ancestor`. Fork commits are reachable through the upstream network `[GH-FORKS]`.
    - Reject Dockerfile or context paths that escape the checkout.

@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. PR #1 (`schema-v1`: P1.1–P1.3) is open; branch `env-secrets` (P1.4) is stacked on it |
-| **Last completed** | P1.4: envelope encryption, environment revisions, store queries for secrets |
-| **Next task** | P1.5: `internal/queue` (claim with `SKIP LOCKED`, lease and heartbeat, idempotent insert, coalescing) |
+| **Active phase** | Phase 1: Foundation. Stacked PRs: #1 `schema-v1` (P1.1–P1.3) → `main`, #2 `env-secrets` (P1.4) → #1, `op-queue` (P1.5) → #2 |
+| **Last completed** | P1.5: operation queue (admission, claim, lease, retry, requeue) and operation events |
+| **Next task** | P1.6: app CRUD API (validation, problem+json), plus the env endpoints and keyring wiring deferred from P1.4 |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,51 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.5 operation queue
+
+- **Phase / task:** P1.5: `internal/queue`
+- **Author:** Claude Code (desktop session)
+- **Goal:** The durable per-app operation queue of ADR-0002, safe under racing workers and crashes.
+
+**Done** (commits `e728f97` Queue store, then Queue lease)
+- `internal/store/operations.go`:
+  - `EnqueueOperation`: `ON CONFLICT` idempotency. A key reused for another app or kind returns `ErrIdempotencyMismatch`. Latest-wins coalescing returns the IDs it superseded. An app row lock serializes admissions.
+  - `ClaimOperation`: `FOR UPDATE SKIP LOCKED` that skips busy apps, `attempt < max_attempts`, and `attempt + 1`. It retries up to 3 times after losing a same-app race to the unique index.
+  - `HeartbeatOperation`, `SetOperationPhase`, `CompleteOperation`, `FailOperation`: every write checks the lease owner, so a stale worker gets `ErrLeaseLost`. `FailOperation` can retry with a delay while attempts remain.
+  - `RequeueExpired`: expired leases go back to the queue, or fail once the attempts are used up.
+- `internal/store/events.go`: `AppendOperationEvent` with gapless per-operation `seq` (row lock, then the next seq read in a fresh statement). Messages are sanitized (NUL and invalid UTF-8 become U+FFFD) and truncated at 16384 characters. `OperationEvents(after, limit)` supports resume.
+- `internal/queue`: `Queue.Next` polls every 2 s and logs DB errors without dying. `Queue.Hold` heartbeats every lease/3 and cancels the work (cause `ErrLeaseLost`) when the lease is lost or a whole lease passes without renewal.
+
+**Decisions**
+- **Admission creates only the operation**, per ARCHITECTURE §5 step 1. The worker creates the deployment at start (P1.11), so cancelled requests have no deployment rows. This replaces the P1.1 rationale for `deployments.operation_id`, which is still the link from a deployment to its operation.
+- **`attempt` counts starts** and is incremented at claim. ADR-0002's "the reconciler increments attempt" is equivalent: an expired lease is simply claimed again.
+- **Coalescing cancels queued operations of any kind** (deploy or rollback), since both change the serving release.
+
+**Verification** (WSL2 as `hami`)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- Store integration (8 tests), including two race tests:
+  - 12 workers against 4 apps, one with two queued ops: each op claimed once, one running per app.
+  - 10 concurrent admissions for one app: exactly 1 queued and 9 cancelled.
+  - Both passed **20 times in a row under `-race`**.
+- Mutation checks:
+  - without the app lock in admission, 4 ops stay queued instead of 1;
+  - without conflict handling in claim, a worker returns a unique-violation error.
+- `internal/queue` unit tests in `testing/synctest` bubbles (exact virtual time):
+  - poll cadence and error logging, cancel;
+  - heartbeats every 20 s for a 60 s lease;
+  - stop on `ErrLeaseLost`;
+  - give up at exactly 80 s after a last success at 20 s;
+  - follow the parent context.
+- Integration `TestLeaseHandover` (10 repeats, `-race`): while A holds, nothing expires and B claims nothing. When A's heartbeats fail, A stops itself, the op is requeued, B claims attempt 2, and A's `Complete` is refused.
+- `TestEvents`: 20 concurrent appends produce gapless seqs 1–25; resume and limit work; NUL and invalid UTF-8 are stored sanitized.
+
+**Problems / surprises**
+- The first events test sent NUL bytes, and PostgreSQL rejected them (`22021`). Build output can contain NUL and invalid UTF-8, so the store now sanitizes messages.
+- A lock plus `max(seq)` in a single statement does not serialize writers under READ COMMITTED, because the snapshot predates the lock wait. That is why events use two statements in a transaction.
+
+**Next**
+- P1.6: app CRUD API with validation and problem+json, plus `PUT/DELETE /v1/apps/{id}/env/{key}` and the keyring config (`SHIPYARD_KEK_DIR`, active KEK id).
 
 ### 2026-09-27: P1.4 secrets and environment revisions
 
