@@ -296,6 +296,9 @@ The reconciler runs at worker start and then every 60 s by default.
 
 - Use envelope encryption. Each value gets a random DEK and is encrypted with AES-256-GCM (`cipher.NewGCMWithRandomNonce`), with AAD `(app_id, key, value_id)`. The DEK is wrapped by a KEK that carries a `kek_id`.
 - Keep the KEK in a root-owned file readable only by the `shipyard` group (`0640`, shared by the API and worker users) or in a systemd credential. It is **never in PostgreSQL** and never in the same backup as the database.
+  - A KEK file is `<kek_id>.key` holding exactly 32 raw bytes, e.g. `head -c 32 /dev/urandom`. Loading refuses a file that other users can access.
+  - All loaded KEKs can open; only the active one seals. That is what makes rotation possible.
+- Setting a key creates a new revision that references the unchanged value rows, so the API never decrypts. Only the worker's `Resolve` opens values, to start a container. Concurrent writers are serialized by a row lock on the app.
 - Document and test rotation and recovery before production (ADR-0005).
 
 **Host firewall** `[DK-FW]`

@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation. Branch `schema-v1` |
-| **Last completed** | P1.3: token auth (`shipyard-api token`, bearer middleware with scopes, audit on every mutation, `GET /v1/whoami`) |
-| **Next task** | P1.4: `internal/secrets`, envelope encryption and environment revisions (ADR-0005) |
+| **Active phase** | Phase 1: Foundation. PR #1 (`schema-v1`: P1.1–P1.3) is open; branch `env-secrets` (P1.4) is stacked on it |
+| **Last completed** | P1.4: envelope encryption, environment revisions, store queries for secrets |
+| **Next task** | P1.5: `internal/queue` (claim with `SKIP LOCKED`, lease and heartbeat, idempotent insert, coalescing) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,46 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-27: P1.4 secrets and environment revisions
+
+- **Phase / task:** P1.4: `internal/secrets`
+- **Author:** Claude Code (desktop session)
+- **Goal:** Envelope-encrypt environment values and version them as immutable revisions (ADR-0005).
+
+**Done** (commits `2a0ae5d` Envelope crypto, then Env revisions)
+- `internal/secrets/envelope.go`: `Keyring` (`NewKeyring`, `LoadKeyring`), `Seal` and `Open`, `GenerateKey`, `NewValueID`.
+  - A per-value DEK sealed with AES-256-GCM `NewGCMWithRandomNonce` `[GO-GCM]`, AAD `app_id|key|value_id`. The DEK is wrapped by the KEK with AAD `kek_id|value_id`.
+  - Every open failure is `ErrDecrypt`, so the causes are indistinguishable.
+  - KEK files are `<id>.key`, exactly 32 bytes, and must not be accessible to other users.
+- `internal/secrets/env.go`: `Env.Set` (secret or plain), `Unset`, `Keys` (never values), and `Resolve` (worker only).
+  - Each write locks the app row, then creates revision N+1 that references the unchanged entries.
+  - Values are at most 64 KiB and contain no NUL.
+- `internal/store/env.go`: `LockApp`, `InsertSecretValue`, `SecretValuesByID`, `CreateEnvRevision`, `LatestEnvRevision`, `EnvRevisionByID`.
+
+**Decisions**
+- **Value IDs are generated in Go** (UUID v4 from `crypto/rand`), because the ID is in the AAD and must exist before sealing.
+- **`internal/secrets` uses `*store.Store` directly**, not an interface: it needs `InTx`, and its tests run against real PostgreSQL anyway.
+- **Keyring wiring is deferred.** The config (`SHIPYARD_KEK_DIR`, the active id) arrives with the first consumers (P1.6 env endpoints, P1.10 container start). The roadmap says so.
+- The KEK is below the 2³² message limit by many orders of magnitude, since each wrap is one message `[GO-GCM]`.
+
+**Verification** (WSL2 as `hami`)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- Unit (8):
+  - round trip including empty and 4 KiB values; no nonce or DEK reuse;
+  - wrong AAD in 5 variants (other app, key, row; a DEK or ciphertext swapped in from another row);
+  - wrong KEK and unknown KEK id; every single-byte tamper of the ciphertext and the wrapped DEK; truncation;
+  - rotation (old values open, new ones seal with the new KEK); keyring validation; file mode refusal; UUID format.
+- Integration (5):
+  - revisions 1–4 with reuse by reference, an old revision still resolving the old secret, `Keys`, and `Unset`;
+  - rejections (NUL, oversize, bad key, unknown app) leave no revision;
+  - **Set with a keyring that cannot open the existing secret still works**, which proves Set never decrypts;
+  - 8 concurrent Sets produce revisions 1–8 with all keys;
+  - **dump of every table (`row_to_json`) contains neither the secret nor its hex**, while the plain value is present, which proves the check sees entry rows.
+- Mutation check: without `LockApp`, `TestConcurrentSet` fails with `env_revisions_app_id_number_key` (3/3 runs).
+
+**Next**
+- P1.5: `internal/queue`.
 
 ### 2026-09-26: P1.3 token auth
 
