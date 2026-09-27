@@ -331,6 +331,12 @@ The reconciler runs at worker start and then every 60 s by default.
   - **The capability is required.** The image's binary has `cap_net_bind_service=ep`: without the capability, even its exec fails.
   - **Ports.** 80/tcp, 443/tcp, and 443/udp are published on all interfaces by default. The bind address and ports are configurable for development and tests.
   - **Admin address in loaded configs.** A config loaded later must keep the admin address on this socket; P2.2's renderer always includes it.
+- **The rendered config** (`routing.Render`, P2.2) `[CADDY-JSON]` is deterministic: routes are sorted by hostname, and the same rows give the same bytes. Any invalid input renders nothing, so a broken config is never loaded. It contains:
+  - `admin.listen` on the socket (`|0660`), and one server `shipyard` on `:443`. Automatic HTTPS adds the `:80` redirect and HTTP challenges.
+  - The API hostname, if set. It proxies only `/v1/*` and `/hooks/github` to the API upstream (`host:port` or `unix//path`); anything else on that host is 404.
+  - One terminal route per hostname: `reverse_proxy` to the route's `upstream` (`host:port` only, never a socket), or `503 no active deployment` while there is none.
+  - An unrouted hostname gets no certificate, so its TLS handshake fails.
+  - Issuers: Caddy's defaults, Let's Encrypt with an email, the Let's Encrypt staging CA `[LE-STAGING]`, or Caddy's internal CA (tests).
 
 **Domains and TLS** `[CADDY-HTTPS][LE-LIMITS]`
 
