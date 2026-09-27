@@ -94,10 +94,11 @@ flowchart LR
   - Also `login`, `app show`, `env unset`, `operation ID`, and the API's `POST /v1/apps/{app}/deployments` and `GET /v1/operations/{id}`. Deploys stay `queued` until the worker executes them (P1.11).
 - [x] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
   - Also `Checkout.Path`, which resolves the Dockerfile and context paths through symlinks. The workspace root setting (`SHIPYARD_WORK_DIR`) is wired with the worker in P1.11. GitHub App tokens arrive in P4; `Request.Token` is already sent as a header.
-- [ ] **P1.9** `internal/build`:
+- [x] **P1.9** `internal/build`:
   - A `shipyard` buildx builder with CPU and memory caps.
   - `--load`, a deadline, and `--metadata-file`.
-  - Bounded log capture into operation events.
+  - Bounded log capture into operation events. The line sink is a callback; P1.11 connects it to `AppendOperationEvent`.
+  - Docker tests use the `docker` build tag and `make test-docker`, which run on the owner's machine, not in CI.
 - [ ] **P1.10** `internal/runtime` on `moby/moby/client`:
   - A per-app network, the hardened flag set, `io.shipyard.*` labels, and environment injection.
   - Create, start, inspect, stop, and remove.
