@@ -92,7 +92,8 @@ flowchart LR
   - Also the env endpoints (`GET`, `PUT`, `DELETE /v1/apps/{app}/env[/{key}]`) and the KEK configuration (`SHIPYARD_KEK_DIR`, `SHIPYARD_KEK_ACTIVE`, `make dev-kek`), deferred from P1.4.
 - [x] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, `ps`, and `whoami`. Config holds the API URL and token.
   - Also `login`, `app show`, `env unset`, `operation ID`, and the API's `POST /v1/apps/{app}/deployments` and `GET /v1/operations/{id}`. Deploys stay `queued` until the worker executes them (P1.11).
-- [ ] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
+- [x] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
+  - Also `Checkout.Path`, which resolves the Dockerfile and context paths through symlinks. The workspace root setting (`SHIPYARD_WORK_DIR`) is wired with the worker in P1.11. GitHub App tokens arrive in P4; `Request.Token` is already sent as a header.
 - [ ] **P1.9** `internal/build`:
   - A `shipyard` buildx builder with CPU and memory caps.
   - `--load`, a deadline, and `--metadata-file`.

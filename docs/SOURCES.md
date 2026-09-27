@@ -57,6 +57,8 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 
 | Tag | Source | What it supports |
 | --- | --- | --- |
+| `GIT-CONFIG` | [git-config: ENVIRONMENT](https://git-scm.com/docs/git-config#ENVIRONMENT) | `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` adds runtime config from the environment, overriding config files. `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` replace or skip the host's config. Shipyard passes the auth header this way, never in argv. (Verified 2026-09-27) |
+| `GIT-MERGE-BASE` | [git merge-base --is-ancestor](https://git-scm.com/docs/git-merge-base) | Exit 0 if the first commit is an ancestor of the second, 1 if not, any other non-zero status on error. (Verified 2026-09-27) |
 | `GIT-REFNAME` | [git check-ref-format](https://git-scm.com/docs/git-check-ref-format) | The ref-name rules: no component starting with `.` or ending in `.lock`; no `..`, `@{`, control characters, space, `~ ^ : ? * [ \`; no leading, trailing, or doubled `/`; no trailing `.`; not `@`. Shipyard adds "no leading `-`" against option injection. (Verified 2026-09-27) |
 | `GH-ACTIONS-PG` | [PostgreSQL service containers](https://docs.github.com/en/actions/tutorials/use-containerized-services/create-postgresql-service-containers) | Service container with a `pg_isready` health check. Jobs on the runner connect through `localhost` and the mapped port. |
 | `SETUP-GO` | [actions/setup-go README](https://github.com/actions/setup-go) | `go-version-file: go.mod` uses the `toolchain` directive when present, otherwise `go`. The `v7` major tag exists (checked with `git ls-remote`, 2026-09-25). |
