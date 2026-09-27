@@ -17,12 +17,35 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// NewHandler returns the root handler with middleware applied.
-func NewHandler(log *slog.Logger, db Pinger) http.Handler {
+// Deps are the handler's dependencies, declared here as narrow interfaces
+// and satisfied by *store.Store in production.
+type Deps struct {
+	DB     Pinger
+	Tokens TokenStore
+	Audit  AuditRecorder
+}
+
+// NewHandler returns the root handler with middleware applied. Health
+// endpoints are public; every /v1 route goes through auth.protect.
+func NewHandler(log *slog.Logger, d Deps) http.Handler {
+	auth := &authenticator{log: log, tokens: d.Tokens, audit: d.Audit}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("GET /readyz", handleReadyz(log, db))
+	mux.HandleFunc("GET /readyz", handleReadyz(log, d.DB))
+	mux.Handle("GET /v1/whoami", auth.protect(ScopeRead, http.HandlerFunc(handleWhoami)))
 	return withRequestID(withAccessLog(log, mux))
+}
+
+// handleWhoami describes the calling token, so the CLI can check its
+// configuration without side effects.
+func handleWhoami(w http.ResponseWriter, r *http.Request) {
+	tok := principal(r.Context())
+	writeJSON(w, http.StatusOK, "application/json", struct {
+		Token     string     `json:"token"`
+		Name      string     `json:"name"`
+		Scopes    []string   `json:"scopes"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}{tok.Prefix, tok.Name, tok.Scopes, tok.ExpiresAt})
 }
 
 // handleHealthz reports liveness: the process is up and serving HTTP.

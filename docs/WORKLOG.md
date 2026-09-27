@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 1: Foundation (not started). Phase 0 closed with release `v0.1.0` |
-| **Last completed** | `v0.1.0` released (tag on `3000c74`): binaries, checksums, provenance, public multi-arch GHCR image |
-| **Next task** | P1.1: schema v1 migration `0002_schema_v1.sql` plus store tests, on a new short branch from `main` |
+| **Active phase** | Phase 1: Foundation. Branch `schema-v1` |
+| **Last completed** | P1.3: token auth (`shipyard-api token`, bearer middleware with scopes, audit on every mutation, `GET /v1/whoami`) |
+| **Next task** | P1.4: `internal/secrets`, envelope encryption and environment revisions (ADR-0005) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` |
 | **Last updated** | 2026-09-26 |
@@ -53,6 +53,116 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-26: P1.3 token auth
+
+- **Phase / task:** P1.3: Token auth
+- **Author:** Claude Code (desktop session)
+- **Goal:** Bootstrap the first admin token and protect every `/v1` route with scoped, expiring bearer tokens and an audit trail.
+
+**Done** (commits `17c37fb` Token command, then Auth middleware)
+- Tokens: `shp_` + 32 random bytes in unpadded base64url (47 characters). The display prefix is `shp_` plus 8 characters. Only the SHA-256 hash is stored `[GO-RAND]`.
+- `shipyard-api token create|list|revoke`:
+  - `create` makes the user if missing, prints the token alone on stdout and details on stderr, and audits `token.create` in the same transaction.
+  - `--ttl` accepts 1h–366d (default 90d).
+- Store:
+  - Tokens: `CreateToken`, `ActiveTokenByHash` (revoked, expired, and unknown are all `ErrNotFound`), `TouchToken` (at most one write per minute), `ListTokens`, `RevokeToken` (idempotent).
+  - Audit: `RecordAudit`, `AuditEvents`.
+- `internal/api`:
+  - `protect(scope, h)` wraps each route. 401 or 403 per `[RFC6750]`, same 401 for every bad token, well-formedness checked before any DB lookup, 503 without internal detail when the store is down.
+  - An audit event after every authenticated mutation (actor `token:<prefix>`, action `r.Pattern`, target path, success/failure/denied, request ID), written with `context.WithoutCancel`.
+- `GET /v1/whoami`.
+
+**Decisions**
+- **Scopes nest:** `read` ⊂ `deploy` ⊂ `admin`. `deploy` exists for CI tokens.
+- **Anonymous failures are not audited**, only logged, so unauthenticated clients cannot grow the audit table.
+- **The audit write is best-effort after the handler.** A failure is logged at ERROR and does not change the response. Writing audit in the mutation's own transaction is possible later, per use case.
+- **`api_tokens.prefix` is `UNIQUE`** (edited in unreleased `0002`), so revoke-by-prefix is unambiguous.
+- `internal/audit` (ARCHITECTURE §8) is not created yet: recording is one store call made by the middleware.
+
+**Verification** (WSL2 as `hami`)
+- `make lint`: exit 0. `make test` and `make test-integration`: all packages ok.
+- Unit: 6 rejection cases (challenge header and whether the DB was queried), whoami with 3 scheme spellings, scope denial plus 3 audit results, audit surviving client cancel, audit and store failures. Negative: the plaintext is never in responses or logs.
+- Integration: token lookups (active, no expiry, expired, unknown, revoked), idempotent revoke, touch throttle, unique prefix, hash, and non-empty scopes. `TestTokenCommand` bootstraps, lists, revokes, audits, and checks that the plaintext appears in no DB row.
+- E2E with the real binary on `127.0.0.1:18080`:
+  - no token → 401 `Bearer realm="shipyard"`; read token → 200 whoami; revoked → 401 `error="invalid_token"`;
+  - token in the API log: 0 occurrences; audit rows for create and revoke; API exits 0 on SIGTERM.
+
+**Problems / surprises**
+- Port 8080 inside WSL was taken by the owner's `hamicloud-keycloak` container in Docker Desktop. All WSL2 distros share one network namespace. The e2e run used 18080, and DEVELOPMENT.md §5 has a row for it.
+- WSL stops idle distros, which stops the dev PostgreSQL container. Run `make dev-up` again after a pause.
+
+**Next**
+- P1.4: `internal/secrets`. KEK file loading, per-value DEK, AES-256-GCM with AAD `app_id|key|value_id`, revision creation that reuses rows, plus store queries and the negative tests from the roadmap.
+
+### 2026-09-26: P1.2 store core
+
+- **Phase / task:** P1.2: `internal/store` on pgx
+- **Author:** Claude Code (desktop session)
+- **Goal:** One place for transactions and database error mapping, plus the first repositories.
+
+**Done**
+- `store.New`, `(*Store).InTx`. The same query methods run on the pool or in a transaction; a nested `InTx` joins the outer one.
+- `errors.go`: SQLSTATE → `ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrReference`, `ErrImmutable`, wrapped in `*ConstraintError{Table, Constraint, Column}`. PostgreSQL's message and detail are dropped because they quote values (`Key (slug)=(…)`), so the error is safe to log.
+- `users.go`: `CreateUser`, `UserByName`. `apps.go`: `CreateApp`, `UpdateApp`, `AppByID`, `AppBySlug`, `ListApps`, `DeleteApp`. A nil `AppSettings` field keeps the DB default or the current value, so defaults live only in the migration.
+
+**Changed files**
+- `internal/store/{store,errors,users,apps}.go`, `errors_test.go`, `apps_integration_test.go`
+- `migrations/0002_schema_v1.sql`: immutability SQLSTATE and owner FK (below). `docs/SOURCES.md`: `PG-RAISE`. `docs/ROADMAP.md`
+
+**Decisions**
+- **Scope:** P1.2 is the core plus users and apps. Each later task adds the queries it consumes (CLAUDE.md §5: interfaces are declared by the consumer). The roadmap item says so.
+- **Durations** are exchanged as microseconds (`extract(epoch …)` / `$n * interval '1 microsecond'`), independent of the driver's interval mapping.
+
+**Verification** (WSL2 as `hami`, PostgreSQL 18)
+- `make lint`: exit 0. `make test`: ok, including `TestMapError` and `TestConstraintErrorOmitsValues` (negative test: the rejected value never appears in `Error()`).
+- `make dev-reset && make dev-up && make migrate`: `applied=2`, then `applied=0`.
+- `go test -race -tags integration ./internal/store/`: all pass (users, app defaults, round trip, 9 rejection cases, update/list/delete, `InTx` rollback, nested join and commit, owner delete refused). `make test-integration`: all ok.
+
+**Problems / surprises**
+- **A test caught a real bug.** `ON DELETE RESTRICT` raises `23001 restrict_violation`, the same code the immutability trigger used, so "owner still has apps" would have surfaced as "row is immutable". Fixed in `0002`:
+  - the trigger now raises Shipyard's own `SY001` `[PG-RAISE]`;
+  - `apps.owner_id` uses the default `NO ACTION` (`23503`).
+  `0002` was edited in place because it is unreleased and only on this branch. Any dev database that applied the old `0002` needs `make dev-reset`.
+
+**Next**
+- P1.3: token auth. Add `api_tokens` and `audit_events` queries to `internal/store` with integration tests.
+
+### 2026-09-26: P1.1 schema v1
+
+- **Phase / task:** P1.1: Schema v1
+- **Author:** Claude Code (desktop session)
+- **Goal:** Turn the ARCHITECTURE §4 data model into migration `0002` with database-enforced invariants.
+
+**Done**
+- `migrations/0002_schema_v1.sql`: 12 tables (the roadmap's 11 plus `env_revision_entries`), 2 trigger functions, and the indexes the queue needs.
+- Enforced in the database:
+  - `UNIQUE(idempotency_key)`; one running operation per app; one active deployment per app; unique lowercase `hostname`.
+  - A running operation needs a lease; `finished_at` matches terminal status; `failed` needs a reason; serving states need `image_id` and `container_id`.
+  - Composite `(app_id, id)` foreign keys, so no cross-app operation, env revision, rollback source, route target, or secret. An entry's secret must also carry the entry's key (it is in the AAD, ADR-0005).
+  - Immutability triggers on secret values, revisions, and entries; append-only operation events; audit events reject UPDATE and DELETE.
+  - Cheap path checks: `dockerfile_path` and `build_context` cannot be absolute or contain a `..` segment (the worker still resolves symlinks, ADR-0004).
+- `internal/store/schema_integration_test.go`: 33 subtests asserting SQLSTATE codes.
+
+**Changed files**
+- `migrations/0002_schema_v1.sql`, `internal/store/schema_integration_test.go`: the slice
+- `docs/ARCHITECTURE.md` §4: ID and timestamp conventions, new columns; `docs/SOURCES.md`: `PG-UUID`, `DK-RESOURCES`; `CHANGELOG.md`; `docs/ROADMAP.md`
+
+**Decisions**
+- **IDs are `uuid` via `gen_random_uuid()`**, not `uuidv7()`: `uuidv7()` needs PostgreSQL 18, while ADR-0002 still accepts 17. They are not enumerable through the API.
+- **Immutable and append-only tables have no `updated_at`**, which is a deviation from "every table has `updated_at`". ARCHITECTURE §4 is updated.
+- **Added columns** not listed in §4: `deployments.operation_id` (a deployment row exists from admission, so coalescing can mark it `cancelled`), `deployments.source_deployment_id` (rollback target), and `api_tokens.name`.
+- **`slug` is limited to 40 characters** (one DNS label) so that container and network names stay short.
+- Enumerations are `text` plus `CHECK`, so adding a value takes a one-line migration.
+
+**Verification** (WSL2, as `hami`, PostgreSQL 18 in `make dev-up`)
+- `make lint`: exit 0 (gofmt, vet, and staticcheck, including integration files). `make test`: ok.
+- `make migrate`: applied versions 1 and 2, then `applied=0`.
+- `go test -tags integration -run TestSchema ./internal/store/`: 33/33 subtests PASS. `make test-integration`: all packages ok.
+- Mutation check: after removing the running-op index, the active-deployment index, and the audit DELETE guard, exactly those 3 subtests failed.
+
+**Next**
+- P1.2: `internal/store` repositories on pgx (apps, operations, deployments, env revisions, tokens, audit) with integration tests.
 
 ### 2026-09-26: Release v0.1.0
 

@@ -47,8 +47,10 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | `DK-INSTALL-UBUNTU` | [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/) | The apt repository steps (keyring, `docker.sources`, `docker-ce` plus the buildx and compose plugins). Supports Ubuntu 26.04, 24.04, and 22.04. (Verified 2026-09-25) |
 | `MS-WSL-SYSTEMD` | [Use systemd with WSL](https://learn.microsoft.com/en-us/windows/wsl/systemd) | systemd is the default for current Ubuntu installed with `wsl --install`. Otherwise use `/etc/wsl.conf` `[boot] systemd=true` plus `wsl.exe --shutdown`, which needs WSL ≥ 0.67.6. (Verified 2026-09-25) |
 | `MS-WSL-FS` | [Working across file systems (WSL)](https://learn.microsoft.com/en-us/windows/wsl/filesystems) | Store project files in the Linux file system (`/home/<user>/…`), not `/mnt/c`, for performance. (Verified 2026-09-25) |
+| `GO-RAND` | [crypto/rand](https://pkg.go.dev/crypto/rand#Read) | `Read` "never returns an error, and always fills b entirely"; it crashes the program if the system source fails. (Verified 2026-09-26) |
 | `GO-INSTALL` | [Go: download and install](https://go.dev/doc/install) | The Linux tarball install into `/usr/local/go` plus PATH. Never untar over an existing tree. The go1.26.8 linux-amd64 SHA-256 comes from `go.dev/dl/?mode=json`. (Verified 2026-09-25) |
 | `PG-IMAGE` | [Official postgres image docs](https://github.com/docker-library/docs/blob/master/postgres/content.md) | For PostgreSQL 18+ images, `PGDATA` is `/var/lib/postgresql/18/docker` and the `VOLUME` is `/var/lib/postgresql`. `POSTGRES_PASSWORD` is required. (Verified 2026-09-25) |
+| `DK-RESOURCES` | [Resource constraints](https://docs.docker.com/engine/containers/resource_constraints/) | `--memory` has a minimum of `6m`. `--cpus` accepts fractional values such as `1.5`. (Verified 2026-09-26) |
 | `PG-IMAGE-INIT` | [postgres image `docker-entrypoint.sh`](https://github.com/docker-library/postgres/blob/master/18/bookworm/docker-entrypoint.sh) | On first start, `docker_temp_server_start` runs a temporary server with `listen_addresses=''` (Unix socket only) for init, then restarts it. A socket-based `pg_isready` can pass before the real server accepts TCP, so the dev healthcheck probes `127.0.0.1`. (Verified 2026-09-26) |
 | `MS-WSL-CONF` | [Advanced settings configuration in WSL](https://learn.microsoft.com/en-us/windows/wsl/wsl-config) | `wsl.conf` `[network] generateResolvConf=false` stops WSL from generating `/etc/resolv.conf` so you can write your own (e.g. `nameserver 1.1.1.1`). `dnsTunneling` and `mirrored` networking are Windows 11 22H2+ only. (Verified 2026-09-26) |
 
@@ -85,6 +87,8 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | --- | --- | --- |
 | `PG-SELECT` | [SELECT … locking clause](https://www.postgresql.org/docs/current/sql-select.html) | `SKIP LOCKED` suits multiple consumers of a queue-like table and is not for general-purpose reads. |
 | `PG-LOCKS` | [Explicit locking: advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html) | Session-level advisory locks ignore transaction semantics and last until the session ends. They share the lock memory pool. |
+| `PG-RAISE` | [PL/pgSQL errors and messages](https://www.postgresql.org/docs/18/plpgsql-errors-and-messages.html) | `RAISE … USING ERRCODE` accepts any five-character SQLSTATE of digits and upper-case letters except `00000`. Avoid codes ending in `000` (category codes). (Verified 2026-09-26) |
+| `PG-UUID` | [UUID functions](https://www.postgresql.org/docs/18/functions-uuid.html) | `gen_random_uuid()` returns a version 4 (random) UUID and is in core since PostgreSQL 13. `uuidv7()` (time-ordered) is new in 18. (Verified 2026-09-26) |
 | `PG-VERSIONS` | [Versioning policy](https://www.postgresql.org/support/versioning/) | 18 is the current major (18.6), supported until 2030-11-14. 17 is supported until 2029-11-08. Run the latest minor release. |
 
 ## Go
@@ -100,6 +104,7 @@ Documents cite a source by its tag, for example `[DK-LOG]`.
 | Tag | Source | What it supports |
 | --- | --- | --- |
 | `OWASP-CRYPTO` | [OWASP Cryptographic Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html) | AES-256 with GCM or CCM as first preference. Store keys separately from data (not in the same DB). Envelope encryption with the KEK stored apart from DEKs. Put rotation in place before it is needed. |
+| `RFC6750` | [RFC 6750: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750#section-3) | A 401 carries `WWW-Authenticate: Bearer`. `invalid_token` (401) covers expired, revoked, and malformed tokens; `insufficient_scope` is 403. A request with no credentials gets no error code. (Verified 2026-09-26) |
 | `WHATWG-SSE` | [HTML Standard: Server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html) | `text/event-stream` (UTF-8), `Last-Event-ID` on reconnect, the `retry` field, and a comment line about every 15 s to keep proxies from closing the stream. |
 | `MDN-SSE` | [MDN: EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource) | Without HTTP/2, browsers allow 6 SSE connections per browser and domain. HTTP/2 negotiates streams (default 100). |
 | `RFC9457` | [RFC 9457: Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457.html) | `application/problem+json` error bodies. Obsoletes RFC 7807. |

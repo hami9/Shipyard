@@ -66,24 +66,28 @@ flowchart LR
 - `make dev-up && make migrate && make test-integration` passes locally. ✅ (owner's WSL2 machine, 2026-09-26)
 - Merged to `main` and released as [`v0.1.0`](https://github.com/hami9/Shipyard/releases/tag/v0.1.0) (2026-09-26).
 
-## P1: Foundation, the first manual deploy
+## P1: Foundation, the first manual deploy `[~]`
 
 **Goal:** `shipyard deploy` builds a public repository at an exact SHA and runs it in a hardened container that passes a health check. There is no public routing yet.
 
-- [ ] **P1.1** Schema v1:
+- [x] **P1.1** Schema v1 (`migrations/0002_schema_v1.sql`, with constraint tests in `internal/store/schema_integration_test.go`):
   - Tables: users, api_tokens, apps, secret_values, env_revisions and entries, deployments, operations, operation_events, audit_events, routes, webhook_deliveries.
   - Constraints: `UNIQUE(idempotency_key)`, the partial unique index for one running operation per app, and a unique `hostname`.
-- [ ] **P1.2** `internal/store` on pgx, with integration tests for every constraint.
-- [ ] **P1.3** Token auth:
-  - A bootstrap admin token command.
-  - `shp_` tokens stored as a SHA-256 hash, with scopes and expiry.
-  - Middleware, plus an audit event on every mutation (ADR-0007).
+- [x] **P1.2** `internal/store` core on pgx:
+  - `Store` and `InTx` (a nested call joins the outer transaction).
+  - Database errors mapped to `ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrReference`, and `ErrImmutable`, naming the constraint but never the values.
+  - Users and apps repositories.
+  - Each later task adds the queries it consumes, with integration tests: tokens and audit (P1.3), secrets and revisions (P1.4), operations and events (P1.5), deployments (P1.11).
+- [x] **P1.3** Token auth:
+  - A bootstrap admin token command (`shipyard-api token create|list|revoke`).
+  - `shp_` tokens stored as a SHA-256 hash, with scopes (`read` ⊂ `deploy` ⊂ `admin`) and expiry.
+  - Middleware, plus an audit event on every mutation (ADR-0007). `GET /v1/whoami`.
 - [ ] **P1.4** `internal/secrets`: envelope encryption and environment revisions (ADR-0005).
   - Negative tests: wrong AAD, wrong KEK, tampered ciphertext.
   - A test proving that a DB dump contains no plaintext.
 - [ ] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
 - [ ] **P1.6** App CRUD API: validation of slug, port, and paths (no escape from the repository), plus `application/problem+json` errors.
-- [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, and `ps`. Config holds the API URL and token.
+- [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, `ps`, and `whoami`. Config holds the API URL and token.
 - [ ] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
 - [ ] **P1.9** `internal/build`:
   - A `shipyard` buildx builder with CPU and memory caps.
