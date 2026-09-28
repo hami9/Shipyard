@@ -21,7 +21,8 @@ func (b badRequest) Error() string { return b.detail }
 
 // friendly explains constraint violations that clients can cause.
 var friendly = map[string]string{
-	"apps_slug_key": "an app with this slug already exists",
+	"apps_slug_key":       "an app with this slug already exists",
+	"routes_hostname_key": "this hostname is already used by an app",
 }
 
 // writeError maps an error to problem+json. It is the only place that does,

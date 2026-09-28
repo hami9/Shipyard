@@ -157,6 +157,46 @@ func TestLoadWorker(t *testing.T) {
 	checkErr(t, err, "at least")
 }
 
+func TestLoadAPIDomains(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || !cfg.Domains.Preflight || cfg.Domains.PublicIPs != nil || cfg.Domains.Suffixes != nil {
+		t.Fatalf("defaults = %+v, %v", cfg.Domains, err)
+	}
+	cfg, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvDNSPreflight: "false",
+		EnvPublicIPs: " 203.0.113.10, 2001:db8::10 ,", EnvDomainSuffixes: "Example.com, .apps.example.org"}))
+	d := cfg.Domains
+	if err != nil || d.Preflight || len(d.PublicIPs) != 2 || d.PublicIPs[1].String() != "2001:db8::10" ||
+		strings.Join(d.Suffixes, ",") != "example.com,apps.example.org" {
+		t.Fatalf("cfg = %+v, %v", d, err)
+	}
+	for name, tc := range map[string]struct{ key, value string }{
+		"private IP":        {EnvPublicIPs, "10.0.0.5"},
+		"loopback IP":       {EnvPublicIPs, "127.0.0.1"},
+		"not an IP":         {EnvPublicIPs, "vps.example.com"},
+		"wildcard suffix":   {EnvDomainSuffixes, "*.example.com"},
+		"single label":      {EnvDomainSuffixes, "com"},
+		"preflight garbage": {EnvDNSPreflight, "sometimes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+			checkErr(t, err, tc.key)
+		})
+	}
+}
+
+func TestLoadWorkerReconcileInterval(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.ReconcileInterval != time.Minute {
+		t.Fatalf("default = %s, %v", cfg.ReconcileInterval, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvReconcileInterval: "2s"}))
+	if err != nil || cfg.ReconcileInterval != 2*time.Second {
+		t.Fatalf("2s = %s, %v", cfg.ReconcileInterval, err)
+	}
+	_, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvReconcileInterval: "10ms"}))
+	checkErr(t, err, EnvReconcileInterval)
+}
+
 func TestLoadWorkerCaddy(t *testing.T) {
 	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
 	if err != nil {

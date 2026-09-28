@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -107,7 +108,13 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 		return err
 	}
 	s := store.New(db)
-	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s})
+	if cfg.Domains.Preflight && len(cfg.Domains.PublicIPs) == 0 {
+		log.Warn("adding domains is refused until the server's public IPs are set, or the DNS preflight is turned off",
+			slog.String("env", config.EnvPublicIPs+" / "+config.EnvDNSPreflight))
+	}
+	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s,
+		Domains: s, Resolver: net.DefaultResolver,
+		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes}})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 

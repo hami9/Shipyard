@@ -155,8 +155,10 @@ make run-worker                                                  # third termina
 echo 's3cret' | ./bin/shipyard env set hello API_KEY
 ./bin/shipyard env list hello
 ./bin/shipyard deploy hello             # prints the operation ID
-./bin/shipyard operation <ID>           # phase fetch → build → start → health → activate; then "succeeded"
+./bin/shipyard operation <ID>           # phase fetch → build → start → health → switch → activate; then "succeeded"
 docker ps --filter label=io.shipyard.app=hello
+./bin/shipyard domain add hello hello.localtest.example   # no DNS preflight in dev (make run-api)
+curl -sk --resolve hello.localtest.example:18443:127.0.0.1 https://hello.localtest.example:18443/   # within a minute
 ```
 
 The repository must be public (GitHub App tokens arrive in Phase 4), and its image must listen on `--port`. Routes arrive with P2.2–P2.4: until then, reach the container by its IP on `shipyard-app-hello`.

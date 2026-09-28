@@ -130,7 +130,7 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	q := queue.New(s, log, cfg.WorkerID, 0, cfg.PollInterval)
 
 	var wg sync.WaitGroup
-	wg.Go(func() { requeueExpired(ctx, s, log) })
+	wg.Go(func() { reconcile(ctx, cfg.ReconcileInterval, s, router, log) })
 	log.Info("worker ready", slog.Duration("poll_interval", cfg.PollInterval), slog.String("work_dir", cfg.WorkDir))
 	for {
 		op, err := q.Next(ctx)
@@ -184,7 +184,7 @@ func syncRoutes(ctx context.Context, c config.Caddy, s *store.Store, log *slog.L
 	if err != nil {
 		return nil, fmt.Errorf("caddy router: %w", err)
 	}
-	changed, err := router.Restore(ctx)
+	changed, err := router.Sync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("caddy config: %w", err)
 	}
@@ -212,11 +212,15 @@ func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deploye
 	log.Info("operation finished")
 }
 
-// requeueExpired returns operations of crashed workers to the queue, at start
-// and then once per lease (ARCHITECTURE §5, Reconciler step 1). The rest of
-// the reconciler arrives later.
-func requeueExpired(ctx context.Context, s *store.Store, log *slog.Logger) {
-	tick := time.NewTicker(queue.DefaultLease)
+// reconcile runs the reconciler steps implemented so far, at start and then
+// every interval (ARCHITECTURE §5, Reconciler):
+//  1. return operations of crashed workers to the queue;
+//  3. make Caddy serve the routes table, so added or removed domains apply.
+//
+// A route switch in progress is not disturbed: Sync keeps it in the render
+// until its deploy releases it (routing.Router).
+func reconcile(ctx context.Context, every time.Duration, s *store.Store, router *routing.Router, log *slog.Logger) {
+	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
 		requeued, failed, err := s.RequeueExpired(ctx)
@@ -225,6 +229,15 @@ func requeueExpired(ctx context.Context, s *store.Store, log *slog.Logger) {
 			log.Warn("requeue expired operations failed", slog.Any("err", err))
 		case requeued+failed > 0:
 			log.Info("expired operations requeued", slog.Int("requeued", requeued), slog.Int("failed", failed))
+		}
+		if router != nil {
+			changed, err := router.Sync(ctx)
+			switch {
+			case err != nil && ctx.Err() == nil:
+				log.Warn("caddy sync failed", slog.Any("err", err))
+			case changed:
+				log.Info("caddy config reloaded from the routes table")
+			}
 		}
 		select {
 		case <-ctx.Done():

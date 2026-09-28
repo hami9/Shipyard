@@ -132,12 +132,38 @@ func TestRouterSwitch(t *testing.T) {
 	if got := f.verify.seen(); got != "a.example.com,b.example.com" {
 		t.Fatalf("verified hosts = %v", got)
 	}
-	// The routes table itself is the caller's to commit; Restore goes back to it.
-	if changed, err := f.r.Restore(t.Context()); err != nil || !changed {
-		t.Fatalf("Restore = %v, %v", changed, err)
+	// The routes table itself is the caller's to commit; Release goes back to it.
+	if changed, err := f.r.Release(t.Context(), "web"); err != nil || !changed {
+		t.Fatalf("Release = %v, %v", changed, err)
 	}
 	if up := f.upstreams(t); up["a.example.com"] != "old:3000" {
-		t.Fatalf("after Restore = %v", up)
+		t.Fatalf("after Release = %v", up)
+	}
+}
+
+// Regression (P2.5): the reconciler's Sync must not revert a switch in
+// progress, or verification would pass against the old container.
+func TestRouterSyncKeepsPendingSwitch(t *testing.T) {
+	f := newRouterFixture(t)
+	if _, err := f.r.Switch(t.Context(), "web", "sick:3000", "/healthz"); err == nil {
+		t.Fatal("the sick candidate verified")
+	}
+	// The failed switch is still pending until its deploy releases it.
+	if _, err := f.r.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if up := f.upstreams(t); up["a.example.com"] != "sick:3000" || up["c.example.com"] != "else:80" {
+		t.Fatalf("Sync reverted a pending switch: %v", up)
+	}
+	if _, err := f.r.Release(t.Context(), "web"); err != nil {
+		t.Fatal(err)
+	}
+	if up := f.upstreams(t); up["a.example.com"] != "old:3000" {
+		t.Fatalf("after Release = %v", up)
+	}
+	// Released, it is gone from later syncs too.
+	if changed, err := f.r.Sync(t.Context()); err != nil || changed {
+		t.Fatalf("Sync after Release = %v, %v", changed, err)
 	}
 }
 
@@ -171,8 +197,8 @@ func TestRouterErrors(t *testing.T) {
 	if _, err := f.r.Switch(t.Context(), "web", "new:3000", "/"); err == nil || !strings.Contains(err.Error(), "db down") {
 		t.Fatalf("Switch = %v", err)
 	}
-	if _, err := f.r.Restore(t.Context()); err == nil {
-		t.Fatal("Restore without routes succeeded")
+	if _, err := f.r.Sync(t.Context()); err == nil {
+		t.Fatal("Sync without routes succeeded")
 	}
 	f.routes.err = nil
 	// An upstream the renderer refuses never reaches Caddy.

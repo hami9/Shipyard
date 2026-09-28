@@ -240,6 +240,33 @@ func (c *Client) UnsetEnv(ctx context.Context, app, key string) (Env, error) {
 	return e, err
 }
 
+// Domain is a hostname routed to an app.
+type Domain struct {
+	Hostname     string     `json:"hostname"`
+	DeploymentID *string    `json:"deployment_id"`
+	DNSCheckedAt *time.Time `json:"dns_checked_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (c *Client) ListDomains(ctx context.Context, app string) ([]Domain, error) {
+	var out struct {
+		Domains []Domain `json:"domains"`
+	}
+	_, err := c.do(ctx, "GET", p("v1", "apps", app, "domains"), nil, nil, &out)
+	return out.Domains, err
+}
+
+func (c *Client) AddDomain(ctx context.Context, app, hostname string) (Domain, error) {
+	var d Domain
+	_, err := c.do(ctx, "POST", p("v1", "apps", app, "domains"), map[string]string{"hostname": hostname}, nil, &d)
+	return d, err
+}
+
+func (c *Client) RemoveDomain(ctx context.Context, app, hostname string) error {
+	_, err := c.do(ctx, "DELETE", p("v1", "apps", app, "domains", hostname), nil, nil, nil)
+	return err
+}
+
 // Operation mirrors the API's operation representation.
 type Operation struct {
 	ID          string          `json:"id"`

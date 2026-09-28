@@ -117,8 +117,8 @@ func (f *fakeRouter) Switch(_ context.Context, appID, upstream, path string) ([]
 	f.rt.calls = append(f.rt.calls, "switch")
 	return f.hosts, f.switchErr
 }
-func (f *fakeRouter) Restore(context.Context) (bool, error) {
-	f.rt.calls = append(f.rt.calls, "restore")
+func (f *fakeRouter) Release(_ context.Context, appID string) (bool, error) {
+	f.rt.calls = append(f.rt.calls, "release "+appID)
 	return true, nil
 }
 
@@ -260,7 +260,7 @@ func TestDeploySwitchesTraffic(t *testing.T) {
 		t.Errorf("activation upstream=%q hosts=%v status=%s", h.st.upstream, h.st.hosts, h.st.dep.Status)
 	}
 	// The old container drains only after the switch was committed.
-	if want := []string{"start ctr-dep-1", "switch", "stop old-container 7s", "remove old-container"}; !slices.Equal(h.rt.calls, want) {
+	if want := []string{"start ctr-dep-1", "switch", "release app-1", "stop old-container 7s", "remove old-container"}; !slices.Equal(h.rt.calls, want) {
 		t.Errorf("calls = %v, want %v", h.rt.calls, want)
 	}
 	if !h.logged("verified through caddy: web.example.com") {
@@ -278,7 +278,7 @@ func TestDeploySwitchFailureRestores(t *testing.T) {
 	if err := h.run(t, `{}`); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"start ctr-dep-1", "switch", "restore", "remove ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
+	if want := []string{"start ctr-dep-1", "switch", "release app-1", "remove ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
 		t.Errorf("calls = %v, want %v", h.rt.calls, want)
 	}
 	if h.st.dep.Status != store.DeployFailed || !strings.Contains(h.st.opReason, "switch traffic") || h.st.upstream != "" {
@@ -297,7 +297,7 @@ func TestDeployActivationFailureRestores(t *testing.T) {
 	if err := h.run(t, `{}`); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"start ctr-dep-1", "switch", "restore", "remove ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
+	if want := []string{"start ctr-dep-1", "switch", "release app-1", "remove ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
 		t.Errorf("calls = %v", h.rt.calls)
 	}
 	if h.st.opStatus != store.OpFailed {
@@ -314,7 +314,7 @@ func TestDeployLeaseLostAfterSwitch(t *testing.T) {
 	if err := h.run(t, `{}`); !errors.Is(err, store.ErrLeaseLost) {
 		t.Fatalf("err = %v", err)
 	}
-	if want := []string{"start ctr-dep-1", "switch", "restore"}; !slices.Equal(h.rt.calls, want) {
+	if want := []string{"start ctr-dep-1", "switch", "release app-1"}; !slices.Equal(h.rt.calls, want) {
 		t.Errorf("calls = %v (the candidate must stay for the resume)", h.rt.calls)
 	}
 	if h.st.opStatus != "" || h.st.dep.Status == store.DeployFailed {
@@ -329,7 +329,7 @@ func TestDeployWithoutRoutes(t *testing.T) {
 	if err := h.run(t, `{}`); err != nil {
 		t.Fatal(err)
 	}
-	if h.st.dep.Status != store.DeployActive || h.st.hosts != nil || slices.Contains(h.rt.calls, "restore") {
+	if h.st.dep.Status != store.DeployActive || h.st.hosts != nil || h.logged("routes restored") {
 		t.Errorf("status %s hosts %v calls %v", h.st.dep.Status, h.st.hosts, h.rt.calls)
 	}
 	if !h.logged("no routes yet") {

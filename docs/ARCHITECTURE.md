@@ -266,7 +266,9 @@ The reconciler runs at worker start and then every 60 s by default.
 | `shipyard env unset APP KEY` | `DELETE /v1/apps/{id}/env/{key}` → new environment revision |
 | `shipyard env list APP` | `GET /v1/apps/{id}/env` (keys and whether each is secret; never values) |
 | `shipyard app show\|update\|delete APP` | `GET` / `PATCH` / `DELETE /v1/apps/{id}`. `{id}` accepts the slug. Slug and repo are fixed. Delete is refused while an operation runs or a deployment is live |
-| `shipyard domain set APP example.com` | `PUT /v1/apps/{id}/domain` (DNS preflight) |
+| `shipyard domain add APP example.com` | `POST /v1/apps/{id}/domains` (`admin` scope): normalize, suffix allow-list, DNS preflight, then a `routes` row. 201; 409 if another app has the hostname; 422 for a bad name or DNS; 503 if the preflight cannot run. An app may have several hostnames |
+| `shipyard domain remove APP example.com` | `DELETE /v1/apps/{id}/domains/{hostname}` → 204 |
+| `shipyard domain list APP` | `GET /v1/apps/{id}/domains` (hostname, the deployment it targets, when DNS was checked) |
 | — | `POST /hooks/github` (public, HMAC-verified) |
 
 - **Routing and errors.** Standard-library routing (`GET /v1/apps/{id}`) is sufficient, so no router framework is needed `[GO-ROUTING]`. Errors use `application/problem+json` `[RFC9457]`.
@@ -351,6 +353,15 @@ The reconciler runs at worker start and then every 60 s by default.
 - One app per hostname. An optional allow-list of domain suffixes restricts what users can claim.
 - Never enable on-demand TLS without an `ask` endpoint.
 - Development and CI use the Let's Encrypt staging CA.
+- As implemented (P2.5):
+  - **Preflight.** The API resolves the hostname, and **every** A/AAAA record must be one of `SHIPYARD_PUBLIC_IPS`. One stray record would send the ACME validation elsewhere.
+    - No record gives 422, and a failed lookup gives 503.
+    - With the preflight on and no public IPs configured, adding is refused (503). `SHIPYARD_DNS_PREFLIGHT=false` turns it off, and `dns_checked_at` then stays null.
+  - **Names.** Hostnames are lowercased with the trailing dot removed. Only exact FQDNs are allowed: no wildcards, no IP literals, no single labels. `SHIPYARD_DOMAIN_SUFFIXES` is the optional allow-list, matched at a label boundary.
+  - **API boundary.** The API only writes the `routes` row (invariant 1). Under the app lock, a hostname added to a serving app targets the active deployment at once: with the upstream its other routes use, or else `<deterministic container name>:<internal_port>`. Otherwise it serves "no active deployment" until the next deploy.
+  - **Activation.** It also moves the app's routes that point at the superseded deployment or at none, so a hostname added during a switch is not left on a drained container.
+  - **Reaching Caddy.** The worker applies added and removed hostnames on its next reconcile (`SHIPYARD_RECONCILE_INTERVAL`, default 60 s), and right after each activation.
+  - **The staging toggle** is the worker's `SHIPYARD_CADDY_CA=staging`, from P2.3.
 
 **Secrets** `[OWASP-CRYPTO][GO-GCM]`
 

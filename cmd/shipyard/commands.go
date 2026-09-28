@@ -173,6 +173,58 @@ func cmdEnvList(ctx context.Context, e env, c *client.Client, args []string) err
 	return printEnv(e, res)
 }
 
+func cmdDomainAdd(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("domain add", flag.ContinueOnError), args, 2)
+	if err != nil {
+		return err
+	}
+	d, err := c.AddDomain(ctx, pos[0], pos[1])
+	if err != nil {
+		return err
+	}
+	target := "no active deployment yet: it serves 503 until the next deploy"
+	if d.DeploymentID != nil {
+		target = "serving deployment " + *d.DeploymentID
+	}
+	fmt.Fprintf(e.stdout, "Added %s to %s (%s).\nCaddy loads it at the worker's next sync, within a minute.\n", d.Hostname, pos[0], target)
+	return nil
+}
+
+func cmdDomainRemove(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("domain remove", flag.ContinueOnError), args, 2)
+	if err != nil {
+		return err
+	}
+	if err := c.RemoveDomain(ctx, pos[0], pos[1]); err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "Removed %s from %s. Caddy drops it at the worker's next sync.\n", pos[1], pos[0])
+	return nil
+}
+
+func cmdDomainList(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("domain list", flag.ContinueOnError), args, 1)
+	if err != nil {
+		return err
+	}
+	ds, err := c.ListDomains(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	rows := make([][]string, len(ds))
+	for i, d := range ds {
+		dep, dns := "-", "skipped"
+		if d.DeploymentID != nil {
+			dep = *d.DeploymentID
+		}
+		if d.DNSCheckedAt != nil {
+			dns = d.DNSCheckedAt.UTC().Format(time.RFC3339)
+		}
+		rows[i] = []string{d.Hostname, dep, dns}
+	}
+	return table(e, "HOSTNAME\tDEPLOYMENT\tDNS CHECKED", rows)
+}
+
 func cmdDeploy(ctx context.Context, e env, c *client.Client, args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	ref := fs.String("ref", "", "")
