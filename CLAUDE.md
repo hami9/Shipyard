@@ -65,7 +65,7 @@ Source evidence for each invariant is in [docs/SOURCES.md](docs/SOURCES.md) and 
 | Database | PostgreSQL 18 via `pgx/v5`. Forward-only SQL migrations in `migrations/`, applied by the in-house runner (`shipyard-api migrate`). |
 | Docker | Engine 29.x through `github.com/moby/moby/client`. **Not** the deprecated `github.com/docker/docker`. |
 | Builds | `docker buildx` with a dedicated `docker-container` builder named `shipyard` |
-| Edge | Caddy v2, JSON config through `POST /load` on the admin Unix socket |
+| Edge | Caddy v2, whole JSON config through `POST /config/` with `If-Match` on the admin Unix socket (`/load` ignores `If-Match`: ADR-0003 note) |
 | Errors | `application/problem+json` (RFC 9457) |
 | Streaming | SSE with `id` and `Last-Event-ID` resume. WebSockets only if bidirectional traffic is needed. |
 | UI | React in `web/`, Phase 6 only. It must never be required for a deploy. |

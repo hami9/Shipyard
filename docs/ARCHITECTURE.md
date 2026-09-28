@@ -109,7 +109,7 @@ Docker-published ports bypass ufw rules `[DK-FW]`. Only Caddy publishes ports. P
 | Source fetcher | Fetches the exact commit and verifies it is reachable from the tracked branch `[GH-FORKS]` | Credentials are never written into the build context or image |
 | Builder | Builds an image from the Dockerfile on a dedicated, resource-limited BuildKit instance `[DK-BX-CONTAINER]` | Treats the source as untrusted code. Enforces time, CPU, memory, and log-size limits |
 | Docker runtime adapter | Creates, starts, stops, and inspects labeled containers and collects logs | Narrow interface defined where it is used |
-| Route manager | Renders the full Caddy JSON config from the `routes` table and applies it with `POST /load` `[CADDY-API]` | Only healthy candidates receive traffic, and config changes are atomic |
+| Route manager | Renders the full Caddy JSON config from the `routes` table and replaces Caddy's config with it (`POST /config/` + `If-Match`) `[CADDY-API][CADDY-ADMIN-SRC]` | Only healthy candidates receive traffic, and config changes are atomic |
 | Secret store | Seals and opens configuration values with envelope encryption `[OWASP-CRYPTO]` | Never returns plaintext through the API or logs. The KEK never enters PostgreSQL |
 | Reconciler | Compares database intent with containers, routes, and branch heads at startup and periodically | Repairs interrupted operations idempotently |
 
@@ -189,7 +189,7 @@ stateDiagram-v2
 6. **Health gate.** The worker probes `http://<container-ip>:<internal_port><health_path>` until it sees N consecutive 2xx/3xx responses or `health_timeout` expires. The container must also stay `running` without restarts. The default path is `/`, and each app can override it.
 7. **Switch traffic.**
    - Render the full Caddy config with this app's upstream pointing at the candidate.
-   - Apply it with `POST /load` and `If-Match: <etag>`. Caddy applies it atomically with zero downtime, or rolls back `[CADDY-API]`.
+   - Apply it as a whole-config replace, `POST /config/` with `If-Match: <etag>` (`routing.Admin.Apply`). Caddy applies it atomically with zero downtime, or rolls back `[CADDY-API]`. `/load` would ignore `If-Match` `[CADDY-ADMIN-SRC]`.
    - Verify the route through Caddy using the app's `Host` header.
    - Only then commit, in one transaction: the route's `deployment_id`, the candidate as `active`, and the previous deployment as `superseded`.
 8. **Observe and drain.** Keep the previous container for an observation window (default 5 min). Then run `docker stop` with the app's `stop_timeout`, which sends `SIGTERM` and later `SIGKILL` (Docker's default is 10 s `[DK-RUN]`), and remove the container. The image stays, subject to retention.
@@ -221,8 +221,8 @@ stateDiagram-v2
 | --- | --- | --- |
 | Fetch, ancestry, or build fails | None | Mark failed, keep bounded logs, clean the workspace. |
 | Candidate exits or fails health | None | Mark failed, capture the last log lines, remove the candidate. |
-| `POST /load` rejected | None (Caddy kept the old config) | Mark failed and remove the candidate. |
-| Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), `POST /load`, mark failed. |
+| Config load rejected | None (Caddy kept the old config) | Mark failed and remove the candidate. |
+| Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), load it, mark failed. |
 | Worker crash in any phase | Unchanged, or equal to the DB | The lease expires and the reconciler resumes or compensates using the phase, labels, and the `routes` table. |
 
 ### Rollback
@@ -239,7 +239,7 @@ The reconciler runs at worker start and then every 60 s by default.
 
 1. Re-queue operations whose leases expired, incrementing `attempt`. Once `max_attempts` is exceeded, mark them failed.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
-3. Render the Caddy config from `routes`. If it differs from the running config, `POST /load` it.
+3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
 
 ## 6. API and CLI shape

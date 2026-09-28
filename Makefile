@@ -80,7 +80,8 @@ run-api: dev-kek ## Run the API against the dev database (127.0.0.1:8080)
 run-worker: dev-kek ## Run the worker against the dev database (needs Docker and buildx; Caddy on 127.0.0.1:18081/18443)
 	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_KEK_DIR='$(SHIPYARD_KEK_DIR)' SHIPYARD_KEK_ACTIVE='$(SHIPYARD_KEK_ACTIVE)' \
 	  SHIPYARD_WORK_DIR='$(CURDIR)/.dev/work' SHIPYARD_CADDY_ADMIN_DIR='$(CURDIR)/.dev/caddy' SHIPYARD_CADDY_BIND=127.0.0.1 \
-	  SHIPYARD_CADDY_HTTP_PORT=18081 SHIPYARD_CADDY_HTTPS_PORT=18443 SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-worker run
+	  SHIPYARD_CADDY_HTTP_PORT=18081 SHIPYARD_CADDY_HTTPS_PORT=18443 SHIPYARD_CADDY_CA=internal \
+	  SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-worker run
 
 $(GORELEASER):
 	GOBIN=$(CURDIR)/$(BIN_DIR)/tools $(GO) install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)

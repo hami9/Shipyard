@@ -25,6 +25,7 @@ All notable changes to Shipyard are recorded here.
   - Its admin API is available only on a Unix socket (mode 0660) that the worker's group can use.
   - Certificates and the last loaded config persist in volumes, and a restart resumes that config.
   - Configured with `SHIPYARD_CADDY`, `SHIPYARD_CADDY_NAME`, `SHIPYARD_CADDY_IMAGE`, `SHIPYARD_CADDY_ADMIN_DIR`, `SHIPYARD_CADDY_BIND`, `SHIPYARD_CADDY_HTTP_PORT`, and `SHIPYARD_CADDY_HTTPS_PORT`.
+- **Caddy config from the database:** at start, the worker renders Caddy's whole config from the routes table. It loads the config only if it differs, as a conditional replace (`If-Match`) that fails safely on a concurrent change. The admin API always stays on its socket. A config Caddy rejects leaves the running one in place. Certificates are configured with `SHIPYARD_CADDY_CA` (default, `staging`, or `internal`) and `SHIPYARD_ACME_EMAIL`.
 - **Worker configuration:** `SHIPYARD_WORK_DIR`, `SHIPYARD_SOURCE_BASE_URL`, `SHIPYARD_BUILDER`, `SHIPYARD_BUILDER_MEMORY`, and `SHIPYARD_BUILDER_CPUS`. The worker now requires `SHIPYARD_KEK_ACTIVE` and access to Docker.
 - **Apps API:** `/v1/apps` create, list, show (by slug or ID), update, and delete. Every field is validated before it reaches the database: git branch rules, repository-relative paths without `..`, ports, and limits. All invalid fields are reported at once as `application/problem+json`.
 - **Environment API:** `GET /v1/apps/{app}/env` lists keys only; `PUT` and `DELETE /v1/apps/{app}/env/{key}` create new revisions. Values are secret (encrypted) by default.

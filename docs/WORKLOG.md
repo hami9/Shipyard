@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2) |
-| **Last completed** | P2.2: `routing.Render` (routes → full Caddy JSON), with golden files and a real-Caddy test |
-| **Next task** | P2.3: admin socket client (`GET` the config with its `Etag`, `POST /load` with `If-Match`, 412 handling) |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.3: `routing.Admin` (Etag, conditional whole-config replace via `POST /config/`, 412 retry); the worker syncs Caddy from the routes table at start |
+| **Next task** | P2.4: the `switching` phase (load, verify through Caddy with the `Host` header, then commit route and status in one transaction; failures re-render the previous state) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
 | **Last updated** | 2026-09-27 |
@@ -53,6 +53,45 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.3 Caddy admin client
+
+- **Phase / task:** P2.3: admin socket client
+- **Author:** Claude Code (desktop session)
+- **Goal:** Replace Caddy's config safely over the admin socket: read with an `Etag`, write conditionally, and handle 412 and rejections (ADR-0003, invariants 5 and 12).
+
+**Done**
+- **`routing.Admin`** (Unix socket only, no proxy, bounded responses, a 1-minute default deadline):
+  - `Config` returns the body and `Etag`, and requires the `Etag`.
+  - `Load(cfg, etag)` is a whole replace via **`POST /config/`** with `If-Match`. A 412 is `ErrConflict`; any other non-200 is a `LoadError{Status, Message}`, with Caddy's `{"error"}` extracted and bounded.
+  - `Apply(cfg)` reads, compares semantically (Caddy re-encodes its stored config), and reloads only if different. After a 412 it re-reads and retries, up to 3 attempts.
+- **Worker:** after `EnsureEdge`, `syncRoutes` runs `ListRoutes` → `Render` → `Apply` (reconciler step 3, at start). New config: `SHIPYARD_CADDY_CA` (``, `staging`, `internal`) and `SHIPYARD_ACME_EMAIL`. `make run-worker` and the e2e test use `internal`.
+
+**Problems / surprises → decision**
+- **`POST /load` ignores `If-Match`**, contradicting ADR-0003, SOURCES, ARCHITECTURE, and CLAUDE.md.
+  - Found by the first real-Caddy run: a load with a stale `Etag` succeeded.
+  - Confirmed in the source of Caddy v2.11.4: `handleLoad` never reads the header. Only `/config/…` requests (`handleConfig` → `changeConfig`) check it, returning 412.
+  - Stopped per CLAUDE.md §9, recorded `CADDY-ADMIN-SRC`, and corrected `CADDY-API`, ADR-0003 (dated note; the decision is unchanged), ARCHITECTURE §3/§5, ROADMAP, and CLAUDE.md §4.
+  - Then `Load` moved to `POST /config/`: the same replace, no-op-if-unchanged, and rollback (`changeConfig`), plus the 412.
+- A rejected config returns **500** via `/config/` (400 via `/load`).
+- The real-Caddy test keeps a check that `/load` still ignores `If-Match`, so a Caddy upgrade that changes this is noticed.
+
+**Verification** (WSL2, Caddy 2.11.4)
+- `make lint`, `make test`, `make test-integration`: all ok. 10 unit tests against a fake Caddy on a real Unix socket: Etag, If-Match, no reload when equal, a 412 retry with a fresh Etag, giving up after 3, the rejection message, a stale Etag, a missing socket, and context cancel. `-race -count=5`: ok.
+- **`TestAdminAgainstCaddy` (docker)**, against the real P2.1 edge:
+  - the Etag has the form `"/config/ …"`;
+  - the first `Apply` reloads and the second does not;
+  - **`Load` with a stale Etag → `ErrConflict`, and the config is unchanged**;
+  - `/load` with a stale `If-Match` → 200 (the vendor fact);
+  - a broken config → `LoadError` 500 "unknown module", and **the previous config keeps running**.
+- `TestRenderedConfigServes` still passes, and **`make test-e2e` passes (217 s)**: the worker starts with `syncRoutes`.
+  - This run was slower than earlier ones (111 s), and the real-Caddy test took 42 s instead of 6 s; nothing failed.
+- No leftovers.
+- **Merging PRs #1–#11** (requested by the owner) was **blocked by the permission classifier**. No PR was changed; all are still open with their original bases.
+
+**Next**
+- The owner merges #1–#12 in order. Each PR's base must be retargeted to `main` before its merge; use merge commits, not squash.
+- Then P2.4: the `switching` phase.
 
 ### 2026-09-27: P2.2 route renderer
 
