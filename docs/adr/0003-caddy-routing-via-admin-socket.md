@@ -67,6 +67,15 @@
   - **What is checked.** The worker requests `health_path` there with each hostname as `Host`. Caddy's routing is checked; certificate issuance stays Caddy's job.
   - **Scope.** Like the admin socket, the verify socket is reachable only by the worker's group.
 
+- **2026-09-28 (P2.5).** Domain details:
+  - **Several hostnames per app** (`POST`, `DELETE`, and `GET /v1/apps/{app}/domains`), where ARCHITECTURE v2 sketched one (`PUT …/domain`). The `routes` schema already allows it, and "one app per hostname" still holds (the unique hostname).
+  - **The preflight requires every A/AAAA record to be one of the configured public IPs.**
+  - **A new hostname targets the running deployment at once**, by the deterministic container name, without the API touching Docker or Caddy.
+    - Activation moves routes still on the superseded deployment (or on none) along with the app.
+    - The worker loads route changes on a periodic reconcile.
+  - **The reconciler's sync keeps a switch in progress** (`routing.Router` pending switches). Otherwise a sync during verification would revert Caddy to the old container, and the check would pass against it.
+  - The "staging CA toggle" is the worker's `SHIPYARD_CADDY_CA=staging`.
+
 ## Alternatives considered
 
 - **Caddy on the host (systemd):** workable, since the host can reach bridge IPs, but it loses name-based upstreams and couples Caddy to host networking. Kept as a fallback.

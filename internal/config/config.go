@@ -50,6 +50,10 @@ const (
 	EnvCaddyHTTPSPort     = "SHIPYARD_CADDY_HTTPS_PORT"
 	EnvCaddyCA            = "SHIPYARD_CADDY_CA"
 	EnvACMEEmail          = "SHIPYARD_ACME_EMAIL"
+	EnvReconcileInterval  = "SHIPYARD_RECONCILE_INTERVAL"
+	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
+	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
+	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
 )
 
 // Defaults.
@@ -57,15 +61,17 @@ const (
 	DefaultAPIListen       = "127.0.0.1:8080"
 	DefaultShutdownTimeout = 15 * time.Second
 	DefaultPollInterval    = 2 * time.Second
-	DefaultKEKDir          = "/etc/shipyard/kek"
-	DefaultWorkDir         = "/var/lib/shipyard/work"
-	DefaultSourceBaseURL   = "https://github.com"
-	DefaultBuilderName     = "shipyard"
-	DefaultBuilderMemory   = "2g"
-	DefaultBuilderCPUs     = 2.0
-	DefaultCaddyName       = "shipyard-caddy"
-	DefaultCaddyAdminDir   = "/run/shipyard/caddy"
-	minPollInterval        = 100 * time.Millisecond
+	// DefaultReconcileInterval is ARCHITECTURE §5's reconciler period.
+	DefaultReconcileInterval = time.Minute
+	DefaultKEKDir            = "/etc/shipyard/kek"
+	DefaultWorkDir           = "/var/lib/shipyard/work"
+	DefaultSourceBaseURL     = "https://github.com"
+	DefaultBuilderName       = "shipyard"
+	DefaultBuilderMemory     = "2g"
+	DefaultBuilderCPUs       = 2.0
+	DefaultCaddyName         = "shipyard-caddy"
+	DefaultCaddyAdminDir     = "/run/shipyard/caddy"
+	minPollInterval          = 100 * time.Millisecond
 )
 
 var (
@@ -75,6 +81,9 @@ var (
 	memoryRE = regexp.MustCompile(`^[1-9][0-9]*[bkmg]?$`)
 	// builderRE is a safe buildx builder name; it becomes a container name.
 	builderRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	// suffixRE is a domain suffix: DNS labels with at least one dot, the last
+	// one alphabetic (mirrors the routes.hostname CHECK).
+	suffixRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
 // LookupFunc has the signature of os.LookupEnv; tests pass a map lookup.
@@ -103,7 +112,19 @@ type Common struct {
 type API struct {
 	Common
 	// Listen is host:port or unix:/absolute/path.sock.
-	Listen string
+	Listen  string
+	Domains Domains
+}
+
+// Domains is the policy for hostnames operators add (ADR-0003).
+type Domains struct {
+	// Preflight requires every A/AAAA record of a new hostname to be one
+	// of PublicIPs. Adding a domain fails while it is on and PublicIPs is
+	// empty.
+	Preflight bool
+	PublicIPs []netip.Addr
+	// Suffixes, when set, allow only hostnames equal to or below one of them.
+	Suffixes []string
 }
 
 // Worker configures shipyard-worker.
@@ -111,6 +132,9 @@ type Worker struct {
 	Common
 	WorkerID     string
 	PollInterval time.Duration
+	// ReconcileInterval is how often expired leases are requeued and Caddy
+	// is re-synced from the routes table (so added or removed domains apply).
+	ReconcileInterval time.Duration
 	// WorkDir holds one checkout per running operation (mode 0700).
 	WorkDir string
 	// SourceBaseURL is where repositories are cloned from: https, or
@@ -150,21 +174,55 @@ func LoadAPI(lookup LookupFunc) (API, error) {
 	if err := validateListen(cfg.Listen, allowPublic); err != nil {
 		r.fail(EnvAPIListen, err)
 	}
+	cfg.Domains = r.domains()
 	return cfg, r.err()
+}
+
+func (r *reader) domains() Domains {
+	d := Domains{Preflight: r.boolean(EnvDNSPreflight, true)}
+	for _, s := range r.list(EnvPublicIPs) {
+		ip, err := netip.ParseAddr(s)
+		if err != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+			r.fail(EnvPublicIPs, fmt.Errorf("%q is not a public IP address", s))
+			continue
+		}
+		d.PublicIPs = append(d.PublicIPs, ip.Unmap())
+	}
+	for _, s := range r.list(EnvDomainSuffixes) {
+		h := strings.TrimPrefix(strings.ToLower(s), ".")
+		if !suffixRE.MatchString(h) {
+			r.fail(EnvDomainSuffixes, fmt.Errorf("%q is not a domain suffix such as example.com", s))
+			continue
+		}
+		d.Suffixes = append(d.Suffixes, h)
+	}
+	return d
+}
+
+// list splits a comma-separated value, dropping empty items.
+func (r *reader) list(key string) []string {
+	var out []string
+	for _, s := range strings.Split(r.str(key, ""), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // LoadWorker reads and validates the worker configuration.
 func LoadWorker(lookup LookupFunc) (Worker, error) {
 	r := reader{lookup: lookup}
 	cfg := Worker{
-		Common:        r.common(),
-		WorkerID:      r.str(EnvWorkerID, ""),
-		PollInterval:  r.duration(EnvWorkerPollInterval, DefaultPollInterval),
-		WorkDir:       r.str(EnvWorkDir, DefaultWorkDir),
-		SourceBaseURL: r.str(EnvSourceBaseURL, DefaultSourceBaseURL),
-		BuilderName:   r.str(EnvBuilderName, DefaultBuilderName),
-		BuilderMemory: strings.ToLower(r.str(EnvBuilderMemory, DefaultBuilderMemory)),
-		BuilderCPUs:   DefaultBuilderCPUs,
+		Common:            r.common(),
+		WorkerID:          r.str(EnvWorkerID, ""),
+		PollInterval:      r.duration(EnvWorkerPollInterval, DefaultPollInterval),
+		ReconcileInterval: r.duration(EnvReconcileInterval, DefaultReconcileInterval),
+		WorkDir:           r.str(EnvWorkDir, DefaultWorkDir),
+		SourceBaseURL:     r.str(EnvSourceBaseURL, DefaultSourceBaseURL),
+		BuilderName:       r.str(EnvBuilderName, DefaultBuilderName),
+		BuilderMemory:     strings.ToLower(r.str(EnvBuilderMemory, DefaultBuilderMemory)),
+		BuilderCPUs:       DefaultBuilderCPUs,
 	}
 	if !builderRE.MatchString(cfg.BuilderName) {
 		r.fail(EnvBuilderName, fmt.Errorf("%q must be lowercase letters, digits, '-' or '_'", cfg.BuilderName))
@@ -175,6 +233,9 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	}
 	if cfg.PollInterval < minPollInterval {
 		r.fail(EnvWorkerPollInterval, fmt.Errorf("must be at least %s", minPollInterval))
+	}
+	if cfg.ReconcileInterval < time.Second {
+		r.fail(EnvReconcileInterval, errors.New("must be at least 1s"))
 	}
 	if !filepath.IsAbs(cfg.WorkDir) {
 		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))

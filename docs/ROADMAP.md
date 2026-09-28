@@ -134,7 +134,10 @@ flowchart LR
   - Verification uses a plain-HTTP Caddy server on a Unix socket with the same routes, so it does not wait for certificates.
   - Only verified hostnames are committed.
   - `test/e2e` checks over HTTPS through Caddy which container serves.
-- [ ] **P2.5** Domain API: DNS preflight (A/AAAA must resolve to the host), unique hostnames, an optional suffix allow-list, and a toggle for the Let's Encrypt staging CA.
+- [x] **P2.5** Domain API: DNS preflight (A/AAAA must resolve to the host), unique hostnames, an optional suffix allow-list, and a toggle for the Let's Encrypt staging CA.
+  - `shipyard domain add|remove|list`, with several hostnames per app. A new hostname targets the running deployment.
+  - The worker's reconciler applies route changes.
+  - The staging toggle is `SHIPYARD_CADDY_CA=staging` (P2.3).
 - [ ] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
 - [ ] **P2.7** SSE:
   - Operation events with `id` and `Last-Event-ID` resume, and a keepalive every 15 s.

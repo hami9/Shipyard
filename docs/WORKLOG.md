@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.4: the `switching` phase (`routing.Router` with the verify socket; routes committed with activation; restore on every failure) |
-| **Next task** | P2.5: domain API (DNS preflight, unique hostnames, optional suffix allow-list, staging CA toggle) |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.5: the domain API (`domain add/remove/list`, DNS preflight, suffix allow-list), periodic Caddy reconcile, and pending switches kept across syncs |
+| **Next task** | P2.6: observation window, then graceful stop of the previous container with the per-app `stop_timeout` |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
 | **Last updated** | 2026-09-27 |
@@ -53,6 +53,62 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.5 domain API
+
+- **Phase / task:** P2.5: domain API
+- **Author:** Claude Code (desktop session)
+- **Goal:** Operators add and remove hostnames through the API and CLI, safely (DNS preflight, allow-list, uniqueness), and Caddy follows without the API touching it (invariant 1).
+
+**Done**
+- **`internal/app`:**
+  - `NormalizeHostname`: lowercase, trailing dot removed, exact FQDN; no wildcards, IPs, or single labels.
+  - `SuffixAllowed`: matches at a label boundary.
+  - `PointsHere`: every record must be ours, at least one record, v4-mapped addresses unmapped.
+  - `ContainerName`/`Upstream`: the deterministic convention. A worker test keeps it equal to `runtime.ContainerName`.
+- **API `/v1/apps/{app}/domains`** (list: read; add and remove: admin):
+  - normalize → allow-list (422) → preflight (NXDOMAIN or no records 422, a foreign record 422 naming it, lookup failure 503, preflight on without IPs 503) → `CreateRoute`;
+  - a duplicate is 409 "already used by an app".
+- **Store:**
+  - `CreateRoute`, under the app lock: it targets the active deployment, using the upstream its other routes use, or else the convention.
+  - `RoutesByApp`, `DeleteRoute`.
+  - `ActivateDeployment` also moves routes on the superseded deployment, or on none.
+- **Config:** `SHIPYARD_PUBLIC_IPS` (public only), `SHIPYARD_DOMAIN_SUFFIXES`, `SHIPYARD_DNS_PREFLIGHT`, and on the worker `SHIPYARD_RECONCILE_INTERVAL`.
+- **Worker:** the reconciler now also runs `Router.Sync` every interval. A deploy calls `Release` after commit or failure, so followers load right away.
+- **Client/CLI:** `domain add|remove|list`. The Makefile's `run-api` turns the preflight off.
+
+**Decisions** (dated note in ADR-0003; ARCHITECTURE §6/§7)
+- **Several hostnames per app**, where ARCHITECTURE v2 sketched `PUT …/domain` (one). The schema allows it, and one app per hostname still holds.
+- **A hostname added to a serving app targets the running deployment at once**, by convention. The alternative, a new operation kind with its own verification, needs a migration for little gain in the MVP.
+- **Route changes reach Caddy through the periodic reconcile** (default 60 s) plus a sync after each activation. No LISTEN/NOTIFY yet.
+
+**Problems / surprises**
+- **I found a race in my own P2.4 code while adding the periodic sync.**
+  - A `Sync` during a switch's verification would revert Caddy to the old container, and the check would then pass against it (invariant 5).
+  - Fix: `routing.Router` keeps pending switches in every render until the deploy's `Release`.
+  - `TestRouterSyncKeepsPendingSwitch` covers it: the failed switch stays through `Sync` until `Release`.
+  - The app port changed from `Restore` to `Release(app)`.
+- `TestActivateMovesVerifiedRoutes` from P2.4 expected an unverified route with no deployment to keep its target. With followers it now follows the app; the test was updated on purpose.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `config.go`), `make test`, `make test-integration`: all ok. `-race -count=5` on `app` and `routing`.
+  - Unit: hostname normalization (5 valid, 13 invalid), suffixes, `PointsHere` (7 cases), config (6 negative cases), the router regression test, and the container names agreeing.
+  - Integration:
+    - `TestDomainsAPI`: normalization, 403 for read tokens, 409, five 422 cases including a stray AAAA, 503 when DNS is down, list, delete, and a second delete (404).
+    - `TestDomainsPolicy`: allow-list; preflight on without IPs is 503; preflight off does no lookup.
+    - `TestDomainOnActiveDeployment`: the upstream is `shipyard-web-<dep>:3000`.
+    - `TestCreateRoute`, the updated `TestActivateMovesVerifiedRoutes`, and `TestCLIEndToEnd` with the domain commands.
+- `make test-docker` (all packages): all ok.
+- **`make test-e2e`: PASS (106 s):**
+  - the first hostname is added with `domain add` before the deploy;
+  - **a second is added while the app serves** ("serving deployment"), and **Caddy serves it from the first container** after the reconcile;
+  - after deploy 5, **both hostnames serve the second container**;
+  - `domain remove` → Caddy stops routing it.
+- No leftovers. Secret scan: see the PR.
+
+**Next**
+- The owner merges #1–#14 in order.
+- P2.6: the observation window, then a graceful stop of the previous container.
 
 ### 2026-09-28: P2.4 traffic switching
 

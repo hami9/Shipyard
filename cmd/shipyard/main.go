@@ -34,6 +34,11 @@ Environment (values are read from stdin and never printed):
   env unset APP KEY
   env list APP                Keys only
 
+Domains (DNS must point at the server first; Caddy picks changes up within a minute):
+  domain add APP HOSTNAME
+  domain remove APP HOSTNAME
+  domain list APP
+
 Deploys:
   deploy APP [--ref SHA] [--idempotency-key KEY]
   operation ID             Show an operation's status
@@ -75,7 +80,7 @@ func run(ctx context.Context, args []string, e env) int {
 		return 0
 	case "login":
 		err = cmdLogin(ctx, e, args[1:])
-	case "whoami", "app", "ps", "env", "deploy", "operation":
+	case "whoami", "app", "ps", "env", "domain", "deploy", "operation":
 		err = withClient(e, func(c *client.Client) error { return dispatch(ctx, e, c, args) })
 	default:
 		fmt.Fprintf(e.stderr, "unknown command %q\n\n%s", args[0], usage)
@@ -111,7 +116,7 @@ func withClient(e env, fn func(*client.Client) error) error {
 func dispatch(ctx context.Context, e env, c *client.Client, args []string) error {
 	cmd, rest := args[0], args[1:]
 	sub := ""
-	if (cmd == "app" || cmd == "env") && len(rest) > 0 {
+	if (cmd == "app" || cmd == "env" || cmd == "domain") && len(rest) > 0 {
 		sub, rest = rest[0], rest[1:]
 	}
 	switch cmd + " " + sub {
@@ -129,6 +134,12 @@ func dispatch(ctx context.Context, e env, c *client.Client, args []string) error
 		return cmdEnvUnset(ctx, e, c, rest)
 	case "env list":
 		return cmdEnvList(ctx, e, c, rest)
+	case "domain add":
+		return cmdDomainAdd(ctx, e, c, rest)
+	case "domain remove":
+		return cmdDomainRemove(ctx, e, c, rest)
+	case "domain list":
+		return cmdDomainList(ctx, e, c, rest)
 	case "deploy ":
 		return cmdDeploy(ctx, e, c, rest)
 	case "operation ":

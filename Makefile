@@ -76,9 +76,9 @@ dev-kek: ## Create the dev KEK in .dev/kek (once; never use it in production)
 	@f='$(SHIPYARD_KEK_DIR)/$(SHIPYARD_KEK_ACTIVE).key'; \
 	  if [ ! -f "$$f" ]; then (umask 077 && head -c 32 /dev/urandom > "$$f") && echo "created $$f"; fi
 
-run-api: dev-kek ## Run the API against the dev database (127.0.0.1:8080)
+run-api: dev-kek ## Run the API against the dev database (127.0.0.1:8080; no DNS preflight for domains)
 	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_KEK_DIR='$(SHIPYARD_KEK_DIR)' SHIPYARD_KEK_ACTIVE='$(SHIPYARD_KEK_ACTIVE)' \
-	  SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-api serve
+	  SHIPYARD_DNS_PREFLIGHT=false SHIPYARD_LOG_FORMAT=text $(GO) run ./cmd/shipyard-api serve
 
 run-worker: dev-kek ## Run the worker against the dev database (needs Docker and buildx; Caddy on 127.0.0.1:18081/18443)
 	SHIPYARD_DATABASE_URL='$(SHIPYARD_DATABASE_URL)' SHIPYARD_KEK_DIR='$(SHIPYARD_KEK_DIR)' SHIPYARD_KEK_ACTIVE='$(SHIPYARD_KEK_ACTIVE)' \

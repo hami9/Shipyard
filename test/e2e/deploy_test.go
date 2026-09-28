@@ -36,9 +36,10 @@ func TestPhase1ExitCriteria(t *testing.T) {
 
 	h.cli("", "app", "create", slug, "--repo", "e2e/demo", "--branch", "main", "--port", "8080", "--health-path", "/healthz")
 	h.cli("hello from e2e\n", "env", "set", slug, "GREETING")
-	// P2.4: a route for the app (the domain API arrives with P2.5).
-	const host = "app.e2e.example"
-	h.addRoute(host)
+	// P2.4/P2.5: a hostname for the app, through the domain API (the DNS
+	// preflight is off: the e2e hostnames have no public DNS).
+	const host, extra = "app.e2e.example", "extra.e2e.example"
+	h.cli("", "domain", "add", slug, host)
 
 	// 1. A pinned SHA deploys; replaying the Idempotency-Key is the same operation.
 	op1 := h.deploy("--ref", h.repo.good, "--idempotency-key", "e2e-1")
@@ -75,6 +76,14 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if got := h.viaCaddy(host, "/env?key=GREETING"); got != "hello from e2e" {
 		t.Fatalf("GREETING through caddy = %q", got)
 	}
+	// P2.5: a hostname added while the app serves targets the running
+	// container at once; the worker's reconciler loads it into Caddy.
+	if out := h.cli("", "domain", "add", slug, extra); !strings.Contains(out, "serving deployment") {
+		t.Fatalf("domain add:\n%s", out)
+	}
+	if got := h.viaCaddy(extra, "/read?path=/etc/hostname"); got != first[:12] {
+		t.Fatalf("%s through caddy = %q, want %s", extra, got, first[:12])
+	}
 
 	// 2. A broken Dockerfile at the branch head fails with the build log.
 	h.wantOp(h.deploy(), "failed", "missing-file")
@@ -106,9 +115,14 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if second == first {
 		t.Fatal("the second release did not replace the first")
 	}
-	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != second[:12] {
-		t.Fatalf("after the switch caddy serves %q, want the second container %s", got, second[:12])
+	for _, hn := range []string{host, extra} {
+		if got := h.viaCaddy(hn, "/read?path=/etc/hostname"); got != second[:12] {
+			t.Fatalf("after the switch caddy serves %q on %s, want the second container %s", got, hn, second[:12])
+		}
 	}
+	// A removed hostname leaves Caddy at the next sync: no route, no certificate.
+	h.cli("", "domain", "remove", slug, extra)
+	h.gone(extra)
 	if n := h.docker("ps", "-aq", "--filter", "label=io.shipyard.app="+slug); strings.Count(n, "\n") != 0 {
 		t.Fatalf("leftover containers of %s:\n%s", slug, n)
 	}
@@ -179,13 +193,13 @@ func start(t *testing.T) *harness {
 	token := run(t, tmp, common, h.bin+"/shipyard-api", "token", "create", "--name", "e2e")
 
 	addr := freeAddr(t)
-	h.spawn("api", append(common, "SHIPYARD_API_LISTEN="+addr), "shipyard-api", "serve")
+	h.spawn("api", append(common, "SHIPYARD_API_LISTEN="+addr, "SHIPYARD_DNS_PREFLIGHT=false"), "shipyard-api", "serve")
 	waitHTTP(t, "http://"+addr+"/readyz")
 	h.spawn("worker", append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
-		"SHIPYARD_WORKER_POLL_INTERVAL=200ms"), "shipyard-worker", "run")
+		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s"), "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=http://"+addr, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h
@@ -274,20 +288,29 @@ func (h *harness) deploy(args ...string) string {
 	return m[1]
 }
 
-// addRoute inserts a routes row for the app, as the domain API will (P2.5).
-func (h *harness) addRoute(hostname string) {
+// gone waits until Caddy no longer routes host to the app: the TLS handshake
+// fails, or a request no longer reaches the probe (Caddy may keep a cached
+// certificate; an unmatched request gets its empty default response).
+func (h *harness) gone(host string) {
 	h.t.Helper()
-	ctx, cancel := context.WithTimeout(h.t.Context(), 10*time.Second)
-	defer cancel()
-	pool, err := store.Open(ctx, h.dbURL)
-	if err != nil {
-		h.t.Fatal(err)
+	addr := strings.Fields(h.docker("port", h.caddy, "443/tcp"))[0]
+	hc := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}}
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		resp, err := hc.Get("https://" + host + "/env?key=GREETING")
+		if err != nil {
+			return
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(b) != "hello from e2e" {
+			return
+		}
 	}
-	defer pool.Close()
-	tag, err := pool.Exec(ctx, `INSERT INTO routes (app_id, hostname) SELECT id, $2 FROM apps WHERE slug = $1`, h.slug, hostname)
-	if err != nil || tag.RowsAffected() != 1 {
-		h.t.Fatalf("add route: %v", err)
-	}
+	h.t.Fatalf("caddy still routes %s to the app", host)
 }
 
 // viaCaddy GETs https://host/path through Caddy's published port. The e2e

@@ -52,10 +52,10 @@ type DeployStore interface {
 type Router interface {
 	// Switch loads a config with the app's routes on upstream and verifies
 	// each hostname through Caddy; it returns them (none: the app has no
-	// routes). After an error, Caddy may serve the candidate until Restore.
+	// routes). The switch stays loaded, even after an error, until Release.
 	Switch(ctx context.Context, appID, upstream, healthPath string) ([]string, error)
-	// Restore makes Caddy serve the routes table as committed.
-	Restore(ctx context.Context) (bool, error)
+	// Release ends the app's switch and loads the routes table as committed.
+	Release(ctx context.Context, appID string) (bool, error)
 }
 
 // Source puts the commit into the operation's workspace (internal/source).
@@ -272,7 +272,7 @@ func (r *deployRun) restoreRoutes(ctx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if _, err := r.Router.Restore(ctx); err != nil {
+	if _, err := r.Router.Release(ctx, r.app.ID); err != nil {
 		r.log.Error("could not restore caddy routes", slog.Any("err", err))
 		r.event(ctx, store.LevelError, "could not restore the previous routes: %v", err)
 		return
@@ -416,6 +416,13 @@ func (r *deployRun) activate(ctx context.Context) error {
 		return fmt.Errorf("activate: %w", err)
 	}
 	r.switched = false // committed: the routes table now names the candidate
+	// End the switch and load the committed table, which may include routes
+	// that followed the app in the commit (added during the switch).
+	if r.Router != nil {
+		if _, err := r.Router.Release(ctx, r.app.ID); err != nil {
+			r.log.Warn("caddy sync after activation failed; the reconciler retries", slog.Any("err", err))
+		}
+	}
 	r.event(ctx, store.LevelInfo, "deployment %s is active (commit %s)", r.dep.ID, r.dep.SourceCommitSHA)
 	if prev != nil && prev.ContainerID != "" {
 		err := r.Runtime.Stop(ctx, prev.ContainerID, r.app.StopTimeout)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hami9/shipyard/internal/store"
@@ -26,14 +27,20 @@ const (
 )
 
 // Router moves an app's traffic (ARCHITECTURE §5 step 7). Caddy's config is
-// always rendered from the routes table; a switch renders it with one app's
-// routes pointing at a candidate, which the caller commits to the table only
-// after the switch verified.
+// always rendered from the routes table plus the switches in progress: a
+// switch points one app's routes at its candidate until the deploy releases
+// it, after committing it to the table or failing. Keeping in-progress
+// switches in every render stops a concurrent Sync (the reconciler) from
+// reverting a candidate mid-verification, which would verify the old
+// container instead. One Router serves the worker process.
 type Router struct {
 	routes   RouteLister
 	admin    *Admin
 	settings Settings
 	verify   *http.Client
+
+	mu      sync.Mutex        // serializes renders and loads
+	pending map[string]string // app ID -> candidate upstream
 }
 
 // NewRouter returns a Router. Settings.VerifySocket is required.
@@ -44,7 +51,7 @@ func NewRouter(routes RouteLister, s Settings) (*Router, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	return &Router{routes: routes, admin: NewAdmin(s.AdminSocket), settings: s, verify: &http.Client{
+	return &Router{routes: routes, admin: NewAdmin(s.AdminSocket), settings: s, pending: map[string]string{}, verify: &http.Client{
 		Timeout: verifyTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -58,38 +65,29 @@ func NewRouter(routes RouteLister, s Settings) (*Router, error) {
 	}}, nil
 }
 
-// Restore makes Caddy serve exactly the routes table (Reconciler step 3,
-// and every failed switch). It reports whether it reloaded.
-func (r *Router) Restore(ctx context.Context) (bool, error) {
-	rows, err := r.routes.ListRoutes(ctx)
-	if err != nil {
-		return false, fmt.Errorf("list routes: %w", err)
-	}
-	return r.apply(ctx, FromStore(rows))
+// Sync makes Caddy serve the routes table, keeping switches in progress
+// (Reconciler step 3; worker start). It reports whether it reloaded.
+func (r *Router) Sync(ctx context.Context) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, changed, err := r.load(ctx, "")
+	return changed, err
 }
 
-// Switch loads a config in which the app's routes point at upstream, then
-// requests healthPath on each of its hostnames through Caddy with that Host
-// header. It returns the hostnames it verified; none means the app has no
-// routes and nothing was loaded. On error, Caddy may be serving the
-// candidate: the caller must Restore.
+// Switch points the app's routes at upstream, loads that, then requests
+// healthPath on each of its hostnames through Caddy with that Host header.
+// It returns the hostnames it verified; none means the app has no routes and
+// nothing changed. Unless it returns none, the switch stays in every render
+// until Release, whatever the outcome.
 func (r *Router) Switch(ctx context.Context, appID, upstream, healthPath string) ([]string, error) {
-	rows, err := r.routes.ListRoutes(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list routes: %w", err)
-	}
-	routes := FromStore(rows)
-	var hosts []string
-	for i, row := range rows {
-		if row.AppID == appID {
-			routes[i].Upstream = upstream
-			hosts = append(hosts, row.Hostname)
-		}
-	}
+	r.mu.Lock()
+	r.pending[appID] = upstream
+	hosts, _, err := r.load(ctx, appID)
 	if len(hosts) == 0 {
-		return nil, nil
+		delete(r.pending, appID)
 	}
-	if _, err := r.apply(ctx, routes); err != nil {
+	r.mu.Unlock()
+	if err != nil || len(hosts) == 0 {
 		return nil, err
 	}
 	for _, h := range hosts {
@@ -98,6 +96,40 @@ func (r *Router) Switch(ctx context.Context, appID, upstream, healthPath string)
 		}
 	}
 	return hosts, nil
+}
+
+// Release ends the app's switch and loads the table as it now is: the
+// candidate if the deploy committed it, the previous target if not.
+func (r *Router) Release(ctx context.Context, appID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, appID)
+	_, changed, err := r.load(ctx, "")
+	return changed, err
+}
+
+// load renders the routes table with the pending switches applied and loads
+// it. It returns the hostnames of app (if given). Call with r.mu held.
+func (r *Router) load(ctx context.Context, app string) ([]string, bool, error) {
+	rows, err := r.routes.ListRoutes(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("list routes: %w", err)
+	}
+	routes := FromStore(rows)
+	var hosts []string
+	for i, row := range rows {
+		if up, ok := r.pending[row.AppID]; ok {
+			routes[i].Upstream = up
+		}
+		if app != "" && row.AppID == app {
+			hosts = append(hosts, row.Hostname)
+		}
+	}
+	if app != "" && len(hosts) == 0 {
+		return nil, false, nil
+	}
+	changed, err := r.apply(ctx, routes)
+	return hosts, changed, err
 }
 
 func (r *Router) apply(ctx context.Context, routes []Route) (bool, error) {

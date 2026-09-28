@@ -49,7 +49,7 @@ func newCLIFixture(t *testing.T) *cliFixture {
 	}
 	keys, _ := secrets.NewKeyring("t", map[string][]byte{"t": secrets.GenerateKey()})
 	h := api.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)),
-		api.Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s})
+		api.Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s, Domains: s}) // DNS preflight off
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &cliFixture{t: t, url: srv.URL, token: plain, config: filepath.Join(t.TempDir(), "shipyard", "config.json")}
@@ -118,6 +118,20 @@ func TestCLIEndToEnd(t *testing.T) {
 	f.ok("", "env", "unset", "web", "LOG_LEVEL")
 	if code, _, errb := f.run("", "env", "unset", "web", "LOG_LEVEL"); code != 1 || !strings.Contains(errb, "404") {
 		t.Fatalf("unset missing key: %d %s", code, errb)
+	}
+
+	if out := f.ok("", "domain", "add", "web", "Web.Example.com"); !strings.Contains(out, "Added web.example.com to web (no active deployment yet") {
+		t.Fatalf("domain add:\n%s", out)
+	}
+	if out := f.ok("", "domain", "list", "web"); !regexp.MustCompile(`(?m)^web\.example\.com\s+-\s+skipped$`).MatchString(out) {
+		t.Fatalf("domain list:\n%s", out)
+	}
+	if code, _, errb := f.run("", "domain", "add", "api", "web.example.com"); code != 1 || !strings.Contains(errb, "already used by an app") {
+		t.Fatalf("duplicate domain: %d %s", code, errb)
+	}
+	f.ok("", "domain", "remove", "web", "web.example.com")
+	if code, _, errb := f.run("", "domain", "remove", "web", "web.example.com"); code != 1 || !strings.Contains(errb, "404") {
+		t.Fatalf("remove twice: %d %s", code, errb)
 	}
 
 	out = f.ok("", "deploy", "web")

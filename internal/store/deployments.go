@@ -145,9 +145,10 @@ func (s *Store) FailDeployment(ctx context.Context, id, owner, reason string) er
 // ActivateDeployment makes a healthy deployment the app's active one, points
 // the app's verified hostnames at upstream, ends the previous active
 // deployment as superseded, and completes the operation, in one transaction
-// (ARCHITECTURE §5 step 7). Only hostnames the switch verified move; a route
-// added meanwhile keeps its target. It returns the superseded deployment, if
-// any, so the caller can drain its container.
+// (ARCHITECTURE §5 step 7). The verified hostnames must all still exist.
+// Routes added meanwhile, which point at the previous deployment or at none,
+// follow; routes on an older deployment stay. It returns the superseded
+// deployment, if any, so the caller can drain its container.
 func (s *Store) ActivateDeployment(ctx context.Context, id, owner, upstream string, hostnames []string) (*Deployment, error) {
 	var prev *Deployment
 	err := s.InTx(ctx, func(tx *Store) error {
@@ -181,6 +182,20 @@ func (s *Store) ActivateDeployment(ctx context.Context, id, owner, upstream stri
 			// be committed as served.
 			if tag.RowsAffected() != int64(len(hostnames)) {
 				return fmt.Errorf("%w: routes changed during the switch", ErrConflict)
+			}
+		}
+		// A route added during the switch was attached to the then-active
+		// deployment, or to none on a first deploy (CreateRoute). It follows
+		// the app to the new one rather than stay on a container about to be
+		// drained or on "no active deployment". The worker's sync then loads it.
+		if upstream != "" {
+			var prevID *string
+			if prev != nil {
+				prevID = &prev.ID
+			}
+			if _, err := tx.q.Exec(ctx, `UPDATE routes SET deployment_id = $2, upstream = $3
+				WHERE app_id = $1 AND (deployment_id IS NULL OR deployment_id = $4)`, d.AppID, id, upstream, prevID); err != nil {
+				return mapError(err)
 			}
 		}
 		return tx.CompleteOperation(ctx, d.OperationID, owner)

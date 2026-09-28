@@ -23,7 +23,7 @@ import (
 
 // P2.4 against a real Caddy: a switch moves one app's hostname to a new
 // upstream on the app network, verified over the verify socket, and served
-// over HTTPS; Restore goes back to the table; an unreachable candidate
+// over HTTPS; Release goes back to the table; an unreachable candidate
 // fails verification.
 func TestRouterAgainstCaddy(t *testing.T) {
 	ctx := t.Context()
@@ -68,7 +68,7 @@ func TestRouterAgainstCaddy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Restore(ctx); err != nil {
+	if _, err := r.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// The verify socket is as private as the admin socket.
@@ -91,11 +91,11 @@ func TestRouterAgainstCaddy(t *testing.T) {
 		t.Fatalf("https after the switch = %d %q", code, body)
 	}
 
-	if _, err := r.Restore(ctx); err != nil {
+	if _, err := r.Release(ctx, "a1"); err != nil {
 		t.Fatal(err)
 	}
 	if got := viaVerify(t, verify, "web.test.example"); got != "v1" {
-		t.Fatalf("after Restore = %q", got)
+		t.Fatalf("after Release = %q", got)
 	}
 
 	// A candidate Caddy cannot reach (no such container) fails the check.
@@ -104,7 +104,7 @@ func TestRouterAgainstCaddy(t *testing.T) {
 		t.Fatalf("unreachable candidate: %v", err)
 	}
 	t.Logf("failed verification took %s", time.Since(start).Round(time.Millisecond))
-	if _, err := r.Restore(ctx); err != nil {
+	if _, err := r.Release(ctx, "a1"); err != nil {
 		t.Fatal(err)
 	}
 	if got := viaVerify(t, verify, "web.test.example"); got != "v1" {

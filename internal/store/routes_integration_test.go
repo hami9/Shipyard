@@ -9,6 +9,55 @@ import (
 	"github.com/hami9/shipyard/internal/store"
 )
 
+// P2.5: a new hostname targets the app's active deployment at once, reusing
+// the upstream its other routes use; duplicates conflict; delete is exact.
+func TestCreateRoute(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	app := f.app()
+	calls := 0
+	up := func(dep string) string { calls++; return "shipyard-web-" + dep + ":3000" }
+
+	// No active deployment yet: no target.
+	r, err := f.s.CreateRoute(ctx, store.NewRoute{AppID: app, Hostname: "a.example.com"}, up)
+	if err != nil || r.DeploymentID != nil || r.Upstream != "" || r.AppID != app || calls != 0 {
+		t.Fatalf("first route = %+v, %v (calls %d)", r, err, calls)
+	}
+	if _, err := f.s.CreateRoute(ctx, store.NewRoute{AppID: f.app(), Hostname: "a.example.com"}, up); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate hostname on another app: %v", err)
+	}
+
+	// Activate a deployment; a routes-less app's first route computes the upstream.
+	d := f.healthy(f.claimed(app, "w1"), "w1")
+	if _, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.s.CreateRoute(ctx, store.NewRoute{AppID: app, Hostname: "b.example.com"}, up)
+	if err != nil || b.DeploymentID == nil || *b.DeploymentID != d.ID || b.Upstream != "shipyard-web-"+d.ID+":3000" || calls != 1 {
+		t.Fatalf("route on the active deployment = %+v, %v (calls %d)", b, err, calls)
+	}
+	// Once a route carries the committed upstream, new ones reuse it.
+	f.sql(`UPDATE routes SET upstream = 'committed:8080' WHERE hostname = 'b.example.com'`)
+	c, err := f.s.CreateRoute(ctx, store.NewRoute{AppID: app, Hostname: "c.example.com"}, up)
+	if err != nil || c.Upstream != "committed:8080" || calls != 1 {
+		t.Fatalf("reused upstream = %+v, %v (calls %d)", c, err, calls)
+	}
+
+	rows, _ := f.s.RoutesByApp(ctx, app)
+	if len(rows) != 3 || rows[0].Hostname != "a.example.com" || rows[2].Hostname != "c.example.com" {
+		t.Fatalf("RoutesByApp = %+v", rows)
+	}
+	if err := f.s.DeleteRoute(ctx, app, "c.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.DeleteRoute(ctx, app, "c.example.com"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+	if err := f.s.DeleteRoute(ctx, f.app(), "a.example.com"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete through another app: %v", err)
+	}
+}
+
 // Activation commits the verified hostnames to the candidate in the same
 // transaction as the status change (ARCHITECTURE §5 step 7).
 func TestActivateMovesVerifiedRoutes(t *testing.T) {
@@ -25,7 +74,8 @@ func TestActivateMovesVerifiedRoutes(t *testing.T) {
 	if got, _ := f.s.DeploymentByID(ctx, d.ID); got.Status != store.DeploySwitching || got.SwitchingAt == nil {
 		t.Fatalf("switching = %+v", got)
 	}
-	// b was added after the switch verified: it must keep its target.
+	// b was added after the switch verified; with no deployment it follows
+	// the app to the new active one. The other app's route never moves.
 	if _, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "shipyard-web-1:3000", []string{"a.example.com"}); err != nil {
 		t.Fatal(err)
 	}
@@ -37,8 +87,11 @@ func TestActivateMovesVerifiedRoutes(t *testing.T) {
 	if a := byHost["a.example.com"]; a.DeploymentID == nil || *a.DeploymentID != d.ID || a.Upstream != "shipyard-web-1:3000" {
 		t.Errorf("a = %+v", a)
 	}
-	if b, c := byHost["b.example.com"], byHost["c.example.com"]; b.DeploymentID != nil || c.DeploymentID != nil {
-		t.Errorf("unverified or foreign routes moved: b=%+v c=%+v", b, c)
+	if b := byHost["b.example.com"]; b.DeploymentID == nil || *b.DeploymentID != d.ID || b.Upstream != "shipyard-web-1:3000" {
+		t.Errorf("a route without a deployment did not follow: b=%+v", b)
+	}
+	if c := byHost["c.example.com"]; c.DeploymentID != nil {
+		t.Errorf("another app's route moved: c=%+v", c)
 	}
 
 	// A verified hostname deleted before the commit aborts the whole commit.

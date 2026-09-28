@@ -26,6 +26,10 @@ type Deps struct {
 	Apps   AppStore
 	Env    EnvStore
 	Ops    OperationStore
+	// Domains, Resolver, and DomainPolicy serve /v1/apps/{app}/domains.
+	Domains      DomainStore
+	Resolver     Resolver
+	DomainPolicy DomainPolicy
 }
 
 // NewHandler returns the root handler with middleware applied. Health
@@ -38,6 +42,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	apps := &appHandlers{log: log, apps: d.Apps}
 	env := &envHandlers{appHandlers: apps, env: d.Env}
 	ops := &opHandlers{appHandlers: apps, ops: d.Ops}
+	domains := &domainHandlers{appHandlers: apps, routes: d.Domains, resolver: d.Resolver, policy: d.DomainPolicy}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
@@ -51,6 +56,9 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "GET /v1/apps/{app}/env", ScopeRead, env.list)
 	route(mux, "PUT /v1/apps/{app}/env/{key}", ScopeAdmin, env.set)
 	route(mux, "DELETE /v1/apps/{app}/env/{key}", ScopeAdmin, env.unset)
+	route(mux, "GET /v1/apps/{app}/domains", ScopeRead, domains.list)
+	route(mux, "POST /v1/apps/{app}/domains", ScopeAdmin, domains.add)
+	route(mux, "DELETE /v1/apps/{app}/domains/{hostname}", ScopeAdmin, domains.remove)
 	route(mux, "POST /v1/apps/{app}/deployments", ScopeDeploy, ops.deploy)
 	route(mux, "GET /v1/operations/{id}", ScopeRead, ops.get)
 	return withRequestID(withAccessLog(log, mux))
