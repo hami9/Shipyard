@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hami9/shipyard/internal/api"
 	"github.com/hami9/shipyard/internal/secrets"
@@ -26,6 +27,7 @@ type cliFixture struct {
 	url    string
 	token  string
 	config string
+	s      *store.Store
 	seen   bytes.Buffer // every byte the CLI printed, for leak checks
 }
 
@@ -49,10 +51,11 @@ func newCLIFixture(t *testing.T) *cliFixture {
 	}
 	keys, _ := secrets.NewKeyring("t", map[string][]byte{"t": secrets.GenerateKey()})
 	h := api.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)),
-		api.Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s, Domains: s}) // DNS preflight off
+		api.Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s, Domains: s, // DNS preflight off
+			StreamPoll: 20 * time.Millisecond})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return &cliFixture{t: t, url: srv.URL, token: plain, config: filepath.Join(t.TempDir(), "shipyard", "config.json")}
+	return &cliFixture{t: t, url: srv.URL, token: plain, config: filepath.Join(t.TempDir(), "shipyard", "config.json"), s: s}
 }
 
 // run executes the CLI and returns its exit code, stdout, and stderr.
@@ -152,6 +155,17 @@ func TestCLIEndToEnd(t *testing.T) {
 	}
 	if out := f.ok("", "operation", m[1]); !regexp.MustCompile(`status\s+cancelled`).MatchString(out) || !strings.Contains(out, "superseded by") {
 		t.Fatalf("operation:\n%s", out)
+	}
+	// P2.7: events streams the log to the end; a cancelled operation fails.
+	for _, msg := range []string{"fetching", "two\nlines"} {
+		if _, err := f.s.AppendOperationEvent(t.Context(), m[1], store.LevelWarn, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, errb = f.run("", "events", m[1])
+	if code != 1 || !strings.Contains(errb, "operation "+m[1]+" cancelled: superseded by") ||
+		!regexp.MustCompile(`(?m)^\d\d:\d\d:\d\d warn  fetching\n\d\d:\d\d:\d\d warn  two\n {15}lines\n$`).MatchString(out) {
+		t.Fatalf("events: exit %d\nstdout:\n%s\nstderr: %s", code, out, errb)
 	}
 
 	// Negative: neither the token nor the secret value was ever printed.

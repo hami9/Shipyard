@@ -262,13 +262,13 @@ The reconciler runs at worker start and then every 60 s by default.
 | CLI example | API operation |
 | --- | --- |
 | `shipyard app create --repo owner/repo --branch main --port 3000` | `POST /v1/apps` |
-| `shipyard deploy APP [--ref <commit-sha>] [--idempotency-key K]` | `POST /v1/apps/{id}/deployments` (`deploy` scope). 202 for a new operation; 200 with the original for a repeated key; 409 if the key was used for a different request. Client keys are stored as `api:<key>` so they never collide with `gh:` keys |
+| `shipyard deploy APP [--ref <commit-sha>] [--idempotency-key K] [--follow]` | `POST /v1/apps/{id}/deployments` (`deploy` scope). 202 for a new operation; 200 with the original for a repeated key; 409 if the key was used for a different request. Client keys are stored as `api:<key>` so they never collide with `gh:` keys. `--follow` then streams the events and exits non-zero unless the operation succeeded |
 | `shipyard operation ID` | `GET /v1/operations/{id}` |
 | `shipyard ps` | `GET /v1/apps` |
 | `shipyard login --url URL` (token read from stdin) | `GET /v1/whoami` to verify, then saves `~/.config/shipyard/config.json` with mode 0600 |
 | `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
 | `shipyard logs APP --follow` | `GET /v1/apps/{id}/logs` (SSE) |
-| `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (SSE, resumable) |
+| `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (`read` scope; SSE, resumable). Ends with an `end` event carrying the operation |
 | `shipyard rollback APP --to <deployment-id>` | `POST /v1/apps/{id}/rollbacks` |
 | `shipyard env set APP KEY [--plain]` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision. Body `{"value": …, "secret": true}`; secret by default |
 | `shipyard env unset APP KEY` | `DELETE /v1/apps/{id}/env/{key}` → new environment revision |
@@ -286,6 +286,13 @@ The reconciler runs at worker start and then every 60 s by default.
   - The server sends a `:` keepalive comment about every 15 s.
   - The API is served over HTTP/2 through Caddy, which avoids the browser limit of 6 connections that applies over HTTP/1.1 `[MDN-SSE]`. Caddy flushes `text/event-stream` immediately `[CADDY-RP]`.
   - Introduce WebSockets only when bidirectional interaction is needed.
+  - As implemented for operation events (P2.7a, `internal/api/events.go`):
+    - **Frames.** Each frame is `id: <seq>` with a JSON `data` line (`seq`, `ts`, `level`, `message`). The stream starts with `retry: 2000`.
+    - **Resume.** A malformed `Last-Event-ID` is 422.
+    - **Source.** The API polls PostgreSQL every 500 ms, with no LISTEN/NOTIFY yet.
+    - **End.** A finished operation ends with `event: end` after two empty polls, because the worker appends events just after it finishes (the drain plan).
+    - **Shutdown.** Streams close as soon as the API starts shutting down, so they do not hold it up, and clients resume on the next process.
+    - **Client.** The client reconnects with `Last-Event-ID`, treats 45 s of silence as a dead connection, and gives up after 5 failed reconnects in a row.
 - **Log limits.** Historical logs are bounded tails. Known secret values are redacted, but redaction cannot catch every secret an app prints.
 
 ## 7. Security and operational defaults

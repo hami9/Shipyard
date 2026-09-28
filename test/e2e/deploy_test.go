@@ -101,7 +101,17 @@ func TestPhase1ExitCriteria(t *testing.T) {
 
 	// 5. A healthy release supersedes the first, whose container is removed.
 	h.cli("", "env", "unset", slug, "PROBE_UNHEALTHY")
-	h.wantOp(h.deploy("--ref", h.repo.good), "succeeded", "")
+	// P2.7: --follow streams the events (SSE) to the end, including the one
+	// the worker appends after the operation has finished (the drain plan).
+	out := h.cli("", "deploy", slug, "--ref", h.repo.good, "--follow")
+	if m := h.opRE.FindStringSubmatch(out); m != nil {
+		h.ops = append(h.ops, m[1])
+	}
+	for _, want := range []string{"health check: GET /healthz", "verified through caddy: ", "is active", "keeps running through the observation window", "succeeded"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("deploy --follow lacks %q:\n%s", want, out)
+		}
+	}
 	// P2.6: the operation succeeds when the new release is active; the old
 	// one keeps running through the observation window (6s here), then the
 	// reconciler stops it gracefully and removes it.

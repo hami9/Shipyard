@@ -229,6 +229,7 @@ func cmdDeploy(ctx context.Context, e env, c *client.Client, args []string) erro
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	ref := fs.String("ref", "", "")
 	key := fs.String("idempotency-key", "", "")
+	follow := fs.Bool("follow", false, "")
 	pos, err := parse(fs, args, 1)
 	if err != nil {
 		return err
@@ -249,6 +250,37 @@ func cmdDeploy(ctx context.Context, e env, c *client.Client, args []string) erro
 	for _, id := range res.Superseded {
 		fmt.Fprintf(e.stdout, "cancelled older queued operation %s\n", id)
 	}
+	if *follow {
+		return followEvents(ctx, e, c, res.Operation.ID)
+	}
+	return nil
+}
+
+func cmdEvents(ctx context.Context, e env, c *client.Client, args []string) error {
+	pos, err := parse(flag.NewFlagSet("events", flag.ContinueOnError), args, 1)
+	if err != nil {
+		return err
+	}
+	return followEvents(ctx, e, c, pos[0])
+}
+
+// followEvents prints an operation's events until it ends, and fails unless
+// it succeeded, so `deploy --follow` can gate a CI job.
+func followEvents(ctx context.Context, e env, c *client.Client, id string) error {
+	op, err := c.FollowEvents(ctx, id, 0, func(ev client.Event) {
+		msg := strings.ReplaceAll(strings.TrimRight(ev.Message, "\n"), "\n", "\n"+strings.Repeat(" ", len("15:04:05 level ")))
+		fmt.Fprintf(e.stdout, "%s %-5s %s\n", ev.TS.Local().Format(time.TimeOnly), ev.Level, msg)
+	})
+	if err != nil {
+		return err
+	}
+	if op.Status != "succeeded" {
+		if op.LastError != "" {
+			return fmt.Errorf("operation %s %s: %s", op.ID, op.Status, op.LastError)
+		}
+		return fmt.Errorf("operation %s %s", op.ID, op.Status)
+	}
+	fmt.Fprintf(e.stdout, "operation %s succeeded\n", op.ID)
 	return nil
 }
 

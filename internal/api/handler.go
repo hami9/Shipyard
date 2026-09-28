@@ -30,6 +30,9 @@ type Deps struct {
 	Domains      DomainStore
 	Resolver     Resolver
 	DomainPolicy DomainPolicy
+	// StreamPoll and StreamKeepalive tune event streams; zero means the
+	// defaults (tests shorten them).
+	StreamPoll, StreamKeepalive time.Duration
 }
 
 // NewHandler returns the root handler with middleware applied. Health
@@ -41,7 +44,13 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	}
 	apps := &appHandlers{log: log, apps: d.Apps}
 	env := &envHandlers{appHandlers: apps, env: d.Env}
-	ops := &opHandlers{appHandlers: apps, ops: d.Ops}
+	ops := &opHandlers{appHandlers: apps, ops: d.Ops, poll: d.StreamPoll, keepalive: d.StreamKeepalive}
+	if ops.poll <= 0 {
+		ops.poll = defaultStreamPoll
+	}
+	if ops.keepalive <= 0 {
+		ops.keepalive = defaultStreamKeepalive
+	}
 	domains := &domainHandlers{appHandlers: apps, routes: d.Domains, resolver: d.Resolver, policy: d.DomainPolicy}
 
 	mux := http.NewServeMux()
@@ -61,6 +70,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "DELETE /v1/apps/{app}/domains/{hostname}", ScopeAdmin, domains.remove)
 	route(mux, "POST /v1/apps/{app}/deployments", ScopeDeploy, ops.deploy)
 	route(mux, "GET /v1/operations/{id}", ScopeRead, ops.get)
+	route(mux, "GET /v1/operations/{id}/events", ScopeRead, ops.events)
 	return withRequestID(withAccessLog(log, mux))
 }
 

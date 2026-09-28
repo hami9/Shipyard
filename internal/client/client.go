@@ -19,9 +19,10 @@ const requestTimeout = 30 * time.Second
 
 // Client calls one Shipyard API with one token.
 type Client struct {
-	base  string // scheme://host, without a trailing slash
-	token string
-	http  *http.Client
+	base   string // scheme://host, without a trailing slash
+	token  string
+	http   *http.Client
+	stream *http.Client // no overall timeout: event streams are long-lived
 }
 
 // New returns a client for rawURL, which is https://host[:port], http:// on a
@@ -59,6 +60,7 @@ func New(rawURL, token string) (*Client, error) {
 	default:
 		return nil, fmt.Errorf("unsupported API URL scheme %q (want https, http on loopback, or unix)", u.Scheme)
 	}
+	c.stream = &http.Client{Transport: c.http.Transport}
 	return c, nil
 }
 

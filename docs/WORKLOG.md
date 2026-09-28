@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.6: the observation window; the reconciler's janitor drains superseded containers with the app's `stop_timeout` and removes failed ones |
-| **Next task** | P2.7: SSE for operation events and logs |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); `event-stream` (P2.7a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.7a: operation events over SSE (resume, keepalive, end event), `shipyard events`, and `deploy --follow` |
+| **Next task** | P2.7b: `logs --follow` through a worker log socket that the API proxies (owner's choice, 2026-09-28); write the ADR first |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-28 |
@@ -53,6 +53,39 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.7a operation event stream
+
+- **Phase / task:** P2.7a: operation events as SSE (P2.7 split in two; P2.7b is logs)
+- **Author:** Claude Code (desktop session)
+- **Goal:** Operators and CI watch a deploy live, and a dropped connection loses nothing.
+
+**Done**
+- **API** `GET /v1/operations/{id}/events` (`read` scope):
+  - `id` = `seq` with JSON data; `retry: 2000`; a keepalive comment every 15 s.
+  - `Last-Event-ID` resume, and 422 if it is malformed.
+  - `event: end` with the operation once it has finished and two polls came back empty.
+- **Serve:** a `stopping` channel, closed by `RegisterOnShutdown` and passed in through `BaseContext`, ends open streams at shutdown. Ordinary requests still finish.
+- **Client:** `FollowEvents` parses SSE and reconnects with `Last-Event-ID`. A 45 s idle timeout drops a dead connection. It gives up after 5 failed reconnects in a row; any event or keepalive resets that count.
+- **CLI:** `events ID`, and `deploy --follow` (exit 1 unless the operation succeeded).
+
+**Decisions**
+- **Split P2.7** (CLAUDE.md §2: each half is about 400 lines). For logs, the owner chose **a worker log socket that the API proxies** over copying logs into PostgreSQL. It changes a boundary, so P2.7b starts with an ADR.
+- **Poll, not LISTEN/NOTIFY:** one indexed query per stream every 500 ms, which is simple and negligible for a handful of operators.
+- **End after two empty polls:** `activate` appends "is active" and the drain plan after its commit, so ending at the first finished poll would drop them. The e2e run shows both arrive.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `api_test.go`), `make test`, `make test-integration`: all ok. `-race -count=5` on `api` and `client`; `-race -count=3` on the stream and CLI integration tests: ok.
+  - `TestOperationEventsStream`: headers, the retry line, multi-line messages, a keepalive, a live event, the end on cancellation, two resumes, and 5 negative cases (422 ×2, 404 ×2, 401).
+  - `TestServeEndsStreams`: shutdown returns at once while a stream is open, and an in-flight request still completes.
+  - `TestFollowEventsResumes`: data split across lines, a cut mid-event, and a resume at `Last-Event-ID: 2`. `TestFollowEventsErrors`: 404 is final, and a server that keeps failing is given up after 6 connections.
+  - `TestCLIEndToEnd`: `events` prints aligned multi-line events and fails with "cancelled: superseded by".
+- `make test-docker`: all ok.
+- **`make test-e2e`: PASS (122 s).** Deploy 5 runs with `deploy --follow`. Its output has the health check, the Caddy verification, "is active", the drain plan, and "succeeded".
+- No leftovers. Secret scan: see the PR.
+
+**Next**
+- Write the ADR for the worker log socket (path, mode, who connects, what it serves). Then P2.7b: a bounded tail, `--follow`, and best-effort redaction of the app's secret values.
 
 ### 2026-09-28: P2.6 observation window and drain
 
