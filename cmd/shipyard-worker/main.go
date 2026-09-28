@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
 	"github.com/hami9/shipyard/internal/queue"
+	"github.com/hami9/shipyard/internal/routing"
 	"github.com/hami9/shipyard/internal/runtime"
 	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/source"
@@ -104,11 +106,14 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		return fmt.Errorf("buildx builder: %w", err)
 	}
 
+	s := store.New(db)
 	if err := ensureEdge(ctx, cfg.Caddy, rt, log); err != nil {
 		return err
 	}
+	if err := syncRoutes(ctx, cfg.Caddy, s, log); err != nil {
+		return err
+	}
 
-	s := store.New(db)
 	deployer := &app.Deployer{
 		Store:   s,
 		Source:  sourceAdapter{&source.Fetcher{Root: cfg.WorkDir, BaseURL: cfg.SourceBaseURL}},
@@ -155,6 +160,30 @@ func ensureEdge(ctx context.Context, c config.Caddy, rt *runtime.Runtime, log *s
 	rt.Edge = c.Name
 	log.Info("caddy ready", slog.String("container", c.Name), slog.String("container_id", id[:12]),
 		slog.String("admin_socket", spec.AdminSocket()))
+	return nil
+}
+
+// syncRoutes makes Caddy serve exactly what the routes table says
+// (ARCHITECTURE §5, Reconciler step 3): render, then load only if the
+// running config differs, guarded by its Etag.
+func syncRoutes(ctx context.Context, c config.Caddy, s *store.Store, log *slog.Logger) error {
+	if !c.Enabled {
+		return nil
+	}
+	rows, err := s.ListRoutes(ctx)
+	if err != nil {
+		return fmt.Errorf("list routes: %w", err)
+	}
+	settings := routing.Settings{AdminSocket: filepath.Join(c.AdminDir, runtime.AdminSocketName), CA: c.CA, ACMEEmail: c.ACMEEmail}
+	cfg, err := routing.Render(settings, routing.FromStore(rows))
+	if err != nil {
+		return fmt.Errorf("render caddy config: %w", err)
+	}
+	changed, err := routing.NewAdmin(settings.AdminSocket).Apply(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("load caddy config: %w", err)
+	}
+	log.Info("caddy config in sync", slog.Int("routes", len(rows)), slog.Bool("reloaded", changed))
 	return nil
 }
 

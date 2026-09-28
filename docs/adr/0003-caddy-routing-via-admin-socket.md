@@ -23,7 +23,7 @@
   - The API process has no access to the socket.
 - **Config ownership:**
   - The worker renders the **complete** Caddy JSON config from the `routes` table: apps, the Shipyard API upstream, and `/hooks/github`.
-  - The worker applies it with `POST /load` and `If-Match: <etag>`. Caddy applies it atomically without downtime or rolls back `[CADDY-API]`.
+  - The worker applies it as a whole-config replace guarded by `If-Match: <etag>`. Caddy applies it atomically without downtime or rolls back `[CADDY-API]`. The endpoint is `POST /config/`, not `POST /load`: see the 2026-09-28 note.
   - Every change goes through this path, and nothing patches Caddy by hand.
 - **Verification:** after a load, request the route through Caddy with the app's `Host` header and require the health response before committing the new active deployment.
 - **Domains:**
@@ -54,6 +54,12 @@
   - **Admin address.** It is set by `CADDY_ADMIN`, the default admin address; a loaded config takes precedence over it `[CADDY-API]`. P2.2's renderer must therefore keep `admin.listen` on the socket.
   - **User.** Caddy runs as uid 0 with the worker's gid, `--cap-drop ALL` plus `NET_BIND_SERVICE`, and `no-new-privileges`. The official image's binary carries the `cap_net_bind_service=ep` file capability, so the container cannot even exec it without that capability `[CADDY-IMAGE]`.
   - **Resume.** `caddy run --resume` with a persistent `/config` volume serves the last loaded config after a restart, before the worker reloads it `[CADDY-CLI]`.
+
+- **2026-09-28 (P2.3).** The decision is unchanged, but the endpoint is corrected: **`POST /load` ignores `If-Match`**.
+  - The source shows it (`handleLoad` never reads the header), and so did a test: a stale `If-Match` loaded fine `[CADDY-ADMIN-SRC]`.
+  - The optimistic-concurrency guard this ADR relies on exists only on `/config/…` paths.
+  - The admin client (`routing.Admin`) therefore replaces the whole config with `POST /config/` and `If-Match`. That is the same replace, the same no-reload-if-unchanged, and the same rollback on failure (`changeConfig`), with a 412 on a concurrent change.
+  - One difference: a config that fails to load returns 500 there instead of 400.
 
 ## Alternatives considered
 

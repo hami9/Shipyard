@@ -168,10 +168,11 @@ func TestLoadWorkerCaddy(t *testing.T) {
 		t.Errorf("defaults = %+v", c)
 	}
 	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddy: "false", EnvCaddyName: "edge-2",
-		EnvCaddyImage: "caddy:2", EnvCaddyAdminDir: "/srv/caddy", EnvCaddyBind: "127.0.0.1", EnvCaddyHTTPPort: "0", EnvCaddyHTTPSPort: "8443"}))
+		EnvCaddyImage: "caddy:2", EnvCaddyAdminDir: "/srv/caddy", EnvCaddyBind: "127.0.0.1", EnvCaddyHTTPPort: "0", EnvCaddyHTTPSPort: "8443",
+		EnvCaddyCA: "staging", EnvACMEEmail: "ops@example.com"}))
 	c = cfg.Caddy
 	if err != nil || c.Enabled || c.Name != "edge-2" || c.Image != "caddy:2" || c.AdminDir != "/srv/caddy" ||
-		c.BindIP.String() != "127.0.0.1" || c.HTTPPort != 0 || c.HTTPSPort != 8443 {
+		c.BindIP.String() != "127.0.0.1" || c.HTTPPort != 0 || c.HTTPSPort != 8443 || c.CA != "staging" || c.ACMEEmail != "ops@example.com" {
 		t.Fatalf("cfg = %+v, %v", c, err)
 	}
 	for name, tc := range map[string]struct{ key, value string }{
@@ -183,6 +184,8 @@ func TestLoadWorkerCaddy(t *testing.T) {
 		"port out of range":   {EnvCaddyHTTPPort, "70000"},
 		"port not a number":   {EnvCaddyHTTPSPort, "https"},
 		"enabled not boolean": {EnvCaddy, "maybe"},
+		"unknown CA":          {EnvCaddyCA, "zerossl"},
+		"bad email":           {EnvACMEEmail, "ops at example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))

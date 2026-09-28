@@ -48,6 +48,8 @@ const (
 	EnvCaddyBind          = "SHIPYARD_CADDY_BIND"
 	EnvCaddyHTTPPort      = "SHIPYARD_CADDY_HTTP_PORT"
 	EnvCaddyHTTPSPort     = "SHIPYARD_CADDY_HTTPS_PORT"
+	EnvCaddyCA            = "SHIPYARD_CADDY_CA"
+	EnvACMEEmail          = "SHIPYARD_ACME_EMAIL"
 )
 
 // Defaults.
@@ -131,6 +133,10 @@ type Caddy struct {
 	// BindIP is where the ports are published; invalid means all interfaces.
 	BindIP              netip.Addr
 	HTTPPort, HTTPSPort int // 0 lets Docker choose (tests)
+	// CA is "" (Caddy's defaults), "staging" (Let's Encrypt staging), or
+	// "internal" (Caddy's local CA, for machines without public DNS).
+	CA        string
+	ACMEEmail string
 }
 
 // LoadAPI reads and validates the API configuration.
@@ -208,6 +214,14 @@ func (r *reader) caddy() Caddy {
 		AdminDir:  r.str(EnvCaddyAdminDir, DefaultCaddyAdminDir),
 		HTTPPort:  r.port(EnvCaddyHTTPPort, 80),
 		HTTPSPort: r.port(EnvCaddyHTTPSPort, 443),
+		CA:        r.str(EnvCaddyCA, ""),
+		ACMEEmail: r.str(EnvACMEEmail, ""),
+	}
+	if c.CA != "" && c.CA != "staging" && c.CA != "internal" {
+		r.fail(EnvCaddyCA, fmt.Errorf("%q must be empty, staging, or internal", c.CA))
+	}
+	if c.ACMEEmail != "" && (strings.Count(c.ACMEEmail, "@") != 1 || strings.ContainsAny(c.ACMEEmail, " \t\"\\")) {
+		r.fail(EnvACMEEmail, fmt.Errorf("%q is not an email address", c.ACMEEmail))
 	}
 	if !builderRE.MatchString(c.Name) || strings.HasPrefix(c.Name, "shipyard-app-") {
 		r.fail(EnvCaddyName, fmt.Errorf("%q must be lowercase letters, digits, '-' or '_', and not an app network name", c.Name))

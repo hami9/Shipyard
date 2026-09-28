@@ -164,6 +164,8 @@ The repository must be public (GitHub App tokens arrive in Phase 4), and its ima
 What `make run-worker` leaves running on your machine:
 - **The `shipyard` buildx builder** (2 GB, 2 CPUs), created on the first run and kept for later builds.
 - **The `shipyard-caddy` container**, with its network and its `-data` and `-config` volumes. It publishes only on `127.0.0.1:18081` (HTTP) and `127.0.0.1:18443` (HTTPS), and its admin socket is `.dev/caddy/caddy-admin.sock`.
+  - It uses Caddy's internal CA (`SHIPYARD_CADDY_CA=internal`), so nothing is ever requested from Let's Encrypt.
+  - At start, the worker loads the config rendered from the routes table. To inspect it: `curl --unix-socket .dev/caddy/caddy-admin.sock http://caddy/config/`.
   - Remove it with `docker rm -f shipyard-caddy`.
   - Set `SHIPYARD_CADDY=false` to skip it.
 
