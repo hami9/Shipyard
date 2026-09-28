@@ -8,11 +8,11 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); `event-stream` (P2.7a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.7a: operation events over SSE (resume, keepalive, end event), `shipyard events`, and `deploy --follow` |
-| **Next task** | P2.7b: `logs --follow` through a worker log socket that the API proxies (owner's choice, 2026-09-28); write the ADR first |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); `app-logs` (P2.7b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.7b: `shipyard logs [--follow]` through the worker's log socket (ADR-0008), with secret redaction, which now also covers failed-deploy output in events |
+| **Next task** | P2.8: the API listens on localhost or a Unix socket only and is published through Caddy over HTTPS (HTTP/2) |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-28 |
 
 ## Entry template
@@ -53,6 +53,50 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.7b app logs through the worker socket
+
+- **Phase / task:** P2.7b: `logs --follow` with a bounded tail and best-effort secret redaction
+- **Author:** Claude Code (desktop session)
+- **Goal:** Operators read the running release's output through the API, while the API still never touches Docker.
+
+**Done**
+- **ADR-0008** (the owner's choice): the worker serves `GET /logs` on `SHIPYARD_WORKER_SOCKET` (default `/run/shipyard-worker/logs.sock`, mode 0660, shared group), and the API proxies it as SSE.
+- **`runtime.StreamLogs`:**
+  - reads Docker logs with timestamps, optional follow, and a tail;
+  - splits frames into lines per stream, with CRLF trimmed and lines cut at about 16 KiB;
+  - stops when the consumer fails.
+- **`internal/applogs`:**
+  - `Server`: only the active deployment's container, named by the database; secrets are redacted, and nothing is streamed if they cannot be read; NDJSON with a final `end` line.
+  - `Client`: 404 becomes `ErrNoDeployment`, an unreachable socket becomes `ErrUnavailable`, and a stream without its end line becomes `ErrUnexpectedEOF`.
+- **`app.Redactor`:** every secret value of 6 or more characters, longest first, exact matches only. `secrets.Env.SecretValues` returns only the secret values.
+- **API** `GET /v1/apps/{app}/logs?tail=&follow=` (`read` scope): SSE with keepalives and `event: end` with the reason. It answers 404, 503, 502, or 422 as appropriate.
+- **Client and CLI:** the SSE reader is shared by events and logs. `shipyard logs APP [--tail N] [--follow|-f]` writes stdout and stderr lines to the matching output, like `docker logs`.
+- **Wiring:**
+  - the worker service gets `RuntimeDirectory=shipyard-worker` (0750);
+  - `make run-api` and `make run-worker` use `.dev/logs.sock`;
+  - the env example and the probe (`/say`) are updated.
+
+**Decisions**
+- **Redaction lives in the worker,** where secrets are already decrypted for deploys. Only secret values of at least 6 characters are redacted, because shorter ones would mangle normal output.
+- **Logs are not resumable** (no SSE `id`). A reconnect starts a fresh tail.
+- **Bug fixed while here (invariant 8):** a failed deploy copied the candidate's last output lines into the operation's events **unredacted**. A failing test came first (`TestDeployUnhealthy` saw `token s3cret rejected`). Those lines now go through the same redactor, and are withheld if the secrets cannot be read.
+- **Found, not fixed (open risk, and a separate task was offered):** the API user shares the `shipyard` group with the worker, so it can open the Caddy admin socket.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `config.go`), `make test`, `make test-integration`: all ok. `-race -count=5` on `applogs`, `client`, `app`, and `runtime`; `-race -count=3` on `TestAppLogs` and `TestOperationEvents`: ok.
+  - Unit tests:
+    - `TestLineWriter`: split frames, CRLF, truncation, a line without a timestamp, a double space;
+    - `TestLineWriterStops`, `TestRedactor` (6 cases);
+    - `TestLogsOverSocket`: over a real Unix socket; redacted; tail and follow; no deployment; bad ids; a tail over the maximum; unreadable secrets stream nothing; no socket;
+    - `TestStreamCutShort`, `TestParseTail`, the client's `TestLogs`, `TestWorkerSocket`.
+  - Integration: `TestAppLogs` (the SSE body exactly, keepalive while following, a worker cut, and 7 negative cases) and `TestEnvRevisions` with `SecretValues`.
+- **`make test-docker`: all ok.** `TestStreamLogs` shows the Engine 29.8.1 facts in `[DK-LOGS]`: an RFC3339Nano timestamp and one space before each line, stdout and stderr apart, `tail=1`, a live line under follow, follow ending when the container stops, and a consumer error.
+- **`make test-e2e`: PASS (151 s).** `shipyard logs` through the real API and worker socket shows `greeting is [REDACTED]` (the secret `GREETING`) and the probe's stderr startup line.
+- No leftovers. Secret scan: see the PR.
+
+**Next**
+- P2.8: the API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2).
 
 ### 2026-09-28: P2.7a operation event stream
 

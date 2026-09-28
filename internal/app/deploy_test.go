@@ -183,7 +183,7 @@ func (f *fakeRuntime) Remove(_ context.Context, id string) error {
 	return nil
 }
 func (f *fakeRuntime) Logs(context.Context, string, int) ([]string, error) {
-	return []string{"listening on :3000", "panic: boom"}, nil
+	return []string{"listening on :3000", "token s3cret rejected", "panic: boom"}, nil
 }
 
 type fakeEnv map[string]string
@@ -193,6 +193,15 @@ func (e fakeEnv) Resolve(_ context.Context, id string) (map[string]string, error
 		return nil, errors.New("unknown revision")
 	}
 	return e, nil
+}
+
+func (e fakeEnv) SecretValues(ctx context.Context, id string) ([]string, error) {
+	env, err := e.Resolve(ctx, id)
+	var out []string
+	for _, v := range env {
+		out = append(out, v)
+	}
+	return out, err
 }
 
 type harness struct {
@@ -422,6 +431,7 @@ func TestDeployBuildFailure(t *testing.T) {
 // and the active deployment is never touched.
 func TestDeployUnhealthy(t *testing.T) {
 	h := newHarness()
+	h.st.rev = &store.EnvRevision{ID: revID}
 	h.st.prev = &store.Deployment{ID: "dep-0", ContainerID: oldCtrID}
 	h.health = errors.New("health check did not pass within 1m0s: GET /healthz: status 500")
 	if err := h.run(t, `{}`); err != nil {
@@ -435,6 +445,10 @@ func TestDeployUnhealthy(t *testing.T) {
 	}
 	if !h.logged("panic: boom") {
 		t.Errorf("candidate output not captured: %v", h.st.events)
+	}
+	// Invariant 8: a secret the candidate printed is redacted (ADR-0008).
+	if h.logged("s3cret") || !h.logged("token [REDACTED] rejected") {
+		t.Errorf("candidate output not redacted: %v", h.st.events)
 	}
 }
 

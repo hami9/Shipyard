@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/hami9/shipyard/internal/api"
+	"github.com/hami9/shipyard/internal/applogs"
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
@@ -114,7 +115,9 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	}
 	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s,
 		Domains: s, Resolver: net.DefaultResolver,
-		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes}})
+		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes},
+		// App logs come from the worker's socket, never from Docker (ADR-0008).
+		Logs: api.LogClient{Client: applogs.NewClient(cfg.WorkerSocket)}})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 

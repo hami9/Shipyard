@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hami9/shipyard/internal/app"
+	"github.com/hami9/shipyard/internal/applogs"
 	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/health"
 	"github.com/hami9/shipyard/internal/runtime"
@@ -73,6 +74,12 @@ func (a runtimeAdapter) Remove(ctx context.Context, id string) error { return a.
 
 func (a runtimeAdapter) Logs(ctx context.Context, id string, tail int) ([]string, error) {
 	return a.r.Logs(ctx, id, tail)
+}
+
+func (a runtimeAdapter) StreamLogs(ctx context.Context, id string, tail int, follow bool, fn func(applogs.Line) error) error {
+	return a.r.StreamLogs(ctx, id, tail, follow, func(l runtime.LogLine) error {
+		return fn(applogs.Line{TS: l.TS, Stream: l.Stream, Text: l.Text})
+	})
 }
 
 func (a runtimeAdapter) ListManaged(ctx context.Context) ([]app.ManagedContainer, error) {

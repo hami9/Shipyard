@@ -125,6 +125,8 @@ type ContainerState struct {
 // EnvResolver decrypts an environment revision (internal/secrets).
 type EnvResolver interface {
 	Resolve(ctx context.Context, revisionID string) (map[string]string, error)
+	// SecretValues returns only the secret values, for redaction.
+	SecretValues(ctx context.Context, revisionID string) ([]string, error)
 }
 
 // HealthGate waits for the candidate to pass (internal/health); alive
@@ -432,6 +434,25 @@ func (r *deployRun) activate(ctx context.Context) error {
 	return nil
 }
 
+// redactor hides the deployment's secret values in the candidate's output
+// (invariant 8, ADR-0008). Without them, the output is withheld: showing a
+// secret is worse than showing nothing.
+func (r *deployRun) redactor(ctx context.Context) interface{ Redact(string) string } {
+	if r.dep.EnvRevisionID == nil {
+		return NewRedactor(nil)
+	}
+	secrets, err := r.Env.SecretValues(ctx, *r.dep.EnvRevisionID)
+	if err != nil {
+		r.log.Warn("cannot redact the candidate's output; withholding it", slog.Any("err", err))
+		return withheld{}
+	}
+	return NewRedactor(secrets)
+}
+
+type withheld struct{}
+
+func (withheld) Redact(string) string { return "(withheld: the secrets to redact could not be read)" }
+
 // fail records a failure: the candidate's last output, the candidate
 // removed, the deployment and the operation failed. Nothing here touches
 // the active deployment (invariant 5).
@@ -444,7 +465,7 @@ func (r *deployRun) fail(ctx context.Context, cause error) error {
 	r.restoreRoutes(ctx)
 	if r.dep.ContainerID != "" && r.dep.Status != store.DeployFailed {
 		if lines, err := r.Runtime.Logs(ctx, r.dep.ContainerID, logTail); err == nil && len(lines) > 0 {
-			r.event(ctx, store.LevelWarn, "last %d lines of the candidate's output:\n%s", len(lines), strings.Join(lines, "\n"))
+			r.event(ctx, store.LevelWarn, "last %d lines of the candidate's output:\n%s", len(lines), r.redactor(ctx).Redact(strings.Join(lines, "\n")))
 		}
 		if err := r.Runtime.Remove(ctx, r.dep.ContainerID); err != nil {
 			r.log.Warn("could not remove the candidate", slog.String("container_id", r.dep.ContainerID), slog.Any("err", err))

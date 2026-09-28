@@ -51,6 +51,25 @@ func TestFollowEventsResumes(t *testing.T) {
 	}
 }
 
+func TestLogs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/web/logs" || r.URL.RawQuery != "follow=true&tail=5" {
+			t.Errorf("%s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, ": logs\n\n")
+		fmt.Fprint(w, "data: {\"ts\":\"2026-09-28T12:00:00Z\",\"stream\":\"stderr\",\"line\":\"boom [REDACTED]\"}\n\n")
+		fmt.Fprint(w, "event: end\ndata: {\"reason\":\"the container stopped\"}\n\n")
+	}))
+	defer srv.Close()
+	c, _ := New(srv.URL, "shp_test")
+	var got []string
+	reason, err := c.Logs(t.Context(), "web", 5, true, func(l LogLine) { got = append(got, l.Stream+" "+l.Line) })
+	if err != nil || reason != "the container stopped" || !slices.Equal(got, []string{"stderr boom [REDACTED]"}) {
+		t.Fatalf("reason %q, lines %q, err %v", reason, got, err)
+	}
+}
+
 // An API error is final; a server that keeps failing is given up on.
 func TestFollowEventsErrors(t *testing.T) {
 	var conns atomic.Int32

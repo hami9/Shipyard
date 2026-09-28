@@ -52,6 +52,7 @@ const (
 	EnvACMEEmail          = "SHIPYARD_ACME_EMAIL"
 	EnvReconcileInterval  = "SHIPYARD_RECONCILE_INTERVAL"
 	EnvObservationWindow  = "SHIPYARD_OBSERVATION_WINDOW"
+	EnvWorkerSocket       = "SHIPYARD_WORKER_SOCKET"
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
 	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
@@ -75,7 +76,9 @@ const (
 	DefaultBuilderCPUs       = 2.0
 	DefaultCaddyName         = "shipyard-caddy"
 	DefaultCaddyAdminDir     = "/run/shipyard/caddy"
-	minPollInterval          = 100 * time.Millisecond
+	// DefaultWorkerSocket is in the worker's systemd RuntimeDirectory (ADR-0008).
+	DefaultWorkerSocket = "/run/shipyard-worker/logs.sock"
+	minPollInterval     = 100 * time.Millisecond
 )
 
 var (
@@ -110,6 +113,9 @@ type Common struct {
 	// do not need a KEK, so KEKActive is required only where it is used.
 	KEKDir    string
 	KEKActive string
+	// WorkerSocket is where the worker serves app logs and the API reads
+	// them (ADR-0008).
+	WorkerSocket string
 }
 
 // API configures shipyard-api.
@@ -418,9 +424,13 @@ func (r *reader) common() Common {
 		Log:             Log{Level: slog.LevelInfo, Format: logging.FormatJSON},
 		KEKDir:          r.str(EnvKEKDir, DefaultKEKDir),
 		KEKActive:       r.str(EnvKEKActive, ""),
+		WorkerSocket:    r.str(EnvWorkerSocket, DefaultWorkerSocket),
 	}
 	if c.DatabaseURL == "" {
 		r.fail(EnvDatabaseURL, errors.New("required"))
+	}
+	if !filepath.IsAbs(c.WorkerSocket) || filepath.Clean(c.WorkerSocket) != c.WorkerSocket {
+		r.fail(EnvWorkerSocket, fmt.Errorf("%q must be a clean absolute path", c.WorkerSocket))
 	}
 	if !filepath.IsAbs(c.KEKDir) {
 		r.fail(EnvKEKDir, fmt.Errorf("%q must be an absolute path", c.KEKDir))

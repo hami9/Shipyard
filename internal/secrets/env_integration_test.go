@@ -90,6 +90,10 @@ func TestEnvRevisions(t *testing.T) {
 	if err != nil || got["DATABASE_URL"] != "postgres://u:rotated@db/app" || got["LOG_LEVEL"] != "info" || len(got) != 2 {
 		t.Fatalf("Resolve r3 = %v, %v", got, err)
 	}
+	// Only secret values are returned for redaction; LOG_LEVEL is plain.
+	if vals, err := env.SecretValues(ctx, r3.ID); err != nil || len(vals) != 1 || vals[0] != "postgres://u:rotated@db/app" {
+		t.Fatalf("SecretValues r3 = %d values, %v", len(vals), err)
+	}
 	// Revisions are immutable: r2 still holds the old secret (rollback, ADR-0005).
 	old, err := env.Resolve(ctx, r2.ID)
 	if err != nil || old["DATABASE_URL"] != "postgres://u:hunter2@db/app" {

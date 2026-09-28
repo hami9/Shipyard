@@ -19,6 +19,10 @@ RestartSec=2s
 
 # Per-operation git workspaces live under /var/lib/shipyard-worker.
 StateDirectory=shipyard-worker
+# The log socket the API reads (ADR-0008): /run/shipyard-worker/logs.sock,
+# mode 0660. The directory lets the shared shipyard group in, nobody else.
+RuntimeDirectory=shipyard-worker
+RuntimeDirectoryMode=0750
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

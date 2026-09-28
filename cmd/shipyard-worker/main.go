@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,7 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hami9/shipyard/internal/api"
 	"github.com/hami9/shipyard/internal/app"
+	"github.com/hami9/shipyard/internal/applogs"
 	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
@@ -115,12 +119,19 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		return err
 	}
 
+	env := secrets.NewEnv(keys, s)
+	logSrv, err := serveLogs(cfg.WorkerSocket, &applogs.Server{Store: s, Secrets: env, Source: runtimeAdapter{rt}, Log: log}, log)
+	if err != nil {
+		return err
+	}
+	defer logSrv.Close()
+
 	deployer := &app.Deployer{
 		Store:   s,
 		Source:  sourceAdapter{&source.Fetcher{Root: cfg.WorkDir, BaseURL: cfg.SourceBaseURL}},
 		Builder: buildAdapter{builder},
 		Runtime: runtimeAdapter{rt},
-		Env:     secrets.NewEnv(keys, s),
+		Env:     env,
 		Health:  healthGate,
 		Log:     log,
 	}
@@ -143,6 +154,24 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	wg.Wait()
 	log.Info("worker stopped")
 	return nil
+}
+
+// serveLogs serves app logs to the API on a private Unix socket, mode 0660
+// for the shared group (ADR-0008). Closing the server drops open streams;
+// the API reports them as cut short.
+func serveLogs(path string, h http.Handler, log *slog.Logger) (*http.Server, error) {
+	ln, err := api.Listen("unix:" + path)
+	if err != nil {
+		return nil, fmt.Errorf("log socket: %w", err)
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("log socket stopped", slog.Any("err", err))
+		}
+	}()
+	log.Info("log socket ready", slog.String("path", path))
+	return srv, nil
 }
 
 // ensureEdge keeps the Caddy container running and joined to every app

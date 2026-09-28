@@ -197,6 +197,21 @@ func TestLoadWorkerReconcileInterval(t *testing.T) {
 	checkErr(t, err, EnvReconcileInterval)
 }
 
+func TestWorkerSocket(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.WorkerSocket != DefaultWorkerSocket {
+		t.Fatalf("default = %q, %v", cfg.WorkerSocket, err)
+	}
+	w, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerSocket: "/tmp/x/logs.sock"}))
+	if err != nil || w.WorkerSocket != "/tmp/x/logs.sock" {
+		t.Fatalf("set = %q, %v", w.WorkerSocket, err)
+	}
+	for _, bad := range []string{"logs.sock", "/run/../logs.sock", "/run//logs.sock"} {
+		_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerSocket: bad}))
+		checkErr(t, err, EnvWorkerSocket)
+	}
+}
+
 func TestLoadWorkerObservationWindow(t *testing.T) {
 	for _, tc := range []struct {
 		value string
