@@ -76,6 +76,14 @@
   - **The reconciler's sync keeps a switch in progress** (`routing.Router` pending switches). Otherwise a sync during verification would revert Caddy to the old container, and the check would pass against it.
   - The "staging CA toggle" is the worker's `SHIPYARD_CADDY_CA=staging`.
 
+- **2026-09-28 (P2.8).** How Caddy publishes the API:
+  - **Socket only.** The API listens on loopback or a Unix socket, and the public-listen override is gone. Caddy runs in a container and cannot reach the host's loopback, so publishing needs the socket (`SHIPYARD_API_LISTEN=unix:…`).
+  - **The mount.** The worker mounts the socket's directory into the edge, **read-only**, at the same path. Connecting to a socket works on a read-only mount, since Linux refuses writes there only for regular files, directories, and symlinks. The socket is `0660` in the shared `shipyard` group, which Caddy runs with.
+  - **The route.** `SHIPYARD_API_HOSTNAME` renders the API route: only `/v1/*` and `/hooks/github` reach `unix//<socket>` `[CADDY-RP]`, and everything else on that host is 404. HTTPS uses automatic certificates like the apps, and HTTP/2 is on by default `[CADDY-OPTIONS]`.
+  - **Reserved name.** The API refuses the hostname as an app domain (409), since the render would otherwise name one host twice and fail.
+  - **systemd.** The API's `RuntimeDirectory` is kept across stops (`RuntimeDirectoryPreserve=yes`), because a recreated directory would leave Caddy's mount stale `[SYSTEMD-EXEC]`. The worker starts after the API, so the directory exists when the edge is created. A missing directory is reported clearly, and the worker retries on restart.
+  - **Upgrades.** The new spec field is omitted when empty, so an edge without the API keeps its hash and is not recreated on upgrade.
+
 ## Alternatives considered
 
 - **Caddy on the host (systemd):** workable, since the host can reach bridge IPs, but it loses name-based upstreams and couples Caddy to host networking. Kept as a fallback.

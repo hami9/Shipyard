@@ -68,34 +68,67 @@ func TestLoadKEK(t *testing.T) {
 	}
 }
 
+// P2.8: loopback or a Unix socket only; there is no override any more.
 func TestLoadAPIListenValidation(t *testing.T) {
 	tests := []struct {
-		listen      string
-		allowPublic string
-		wantErr     string
+		listen  string
+		wantErr string
 	}{
-		{"127.0.0.1:8080", "", ""},
-		{"localhost:9000", "", ""},
-		{"[::1]:8080", "", ""},
-		{"unix:/run/shipyard/api.sock", "", ""},
-		{"0.0.0.0:8080", "", "not a loopback"},
-		{":8080", "", "not a loopback"},
-		{"10.0.0.5:8080", "", "not a loopback"},
-		{"api.example.com:8080", "", "not a loopback"},
-		{"10.0.0.5:8080", "true", ""},
-		{"unix:relative.sock", "", "must be absolute"},
-		{"127.0.0.1", "", "host:port"},
-		{"127.0.0.1:http", "", "invalid port"},
-		{"127.0.0.1:8080", "maybe", "invalid boolean"},
+		{"127.0.0.1:8080", ""},
+		{"localhost:9000", ""},
+		{"[::1]:8080", ""},
+		{"unix:/run/shipyard/api.sock", ""},
+		{"0.0.0.0:8080", "not a loopback"},
+		{":8080", "not a loopback"},
+		{"10.0.0.5:8080", "not a loopback"},
+		{"api.example.com:8080", "not a loopback"},
+		{"unix:relative.sock", "clean absolute path"},
+		{"unix:/run/../api.sock", "clean absolute path"},
+		{"unix:/run/a b.sock", "clean absolute path"},
+		{"127.0.0.1", "host:port"},
+		{"127.0.0.1:http", "invalid port"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.listen+"/"+tt.allowPublic, func(t *testing.T) {
-			kv := map[string]string{EnvDatabaseURL: testDB, EnvAPIListen: tt.listen}
-			if tt.allowPublic != "" {
-				kv[EnvAPIAllowPublic] = tt.allowPublic
-			}
-			_, err := LoadAPI(env(kv))
+		t.Run(tt.listen, func(t *testing.T) {
+			_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIListen: tt.listen}))
 			checkErr(t, err, tt.wantErr)
+		})
+	}
+	// The removed override no longer opens a public address.
+	_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIListen: "0.0.0.0:8080", "SHIPYARD_API_ALLOW_PUBLIC_LISTEN": "true"}))
+	checkErr(t, err, "not a loopback")
+}
+
+// P2.8: the API hostname Caddy publishes the API on; the worker needs the
+// API on a Unix socket in a directory of its own.
+func TestAPIHostname(t *testing.T) {
+	const sock = "unix:/run/shipyard-api/api.sock"
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIHostname: "Shipyard.Example.com.", EnvAPIListen: sock}))
+	if err != nil || cfg.APIHostname != "shipyard.example.com" || cfg.APISocket() != "/run/shipyard-api/api.sock" {
+		t.Fatalf("worker = %q %q, %v", cfg.APIHostname, cfg.APISocket(), err)
+	}
+	if a, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIHostname: "shipyard.example.com"})); err != nil || a.APIHostname != "shipyard.example.com" || a.APISocket() != "" {
+		t.Fatalf("api = %+v, %v", a.Common, err)
+	}
+	// Caddy disabled: nothing to publish, so TCP is fine.
+	if _, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIHostname: "shipyard.example.com", EnvCaddy: "false"})); err != nil {
+		t.Fatalf("caddy off: %v", err)
+	}
+	for name, kv := range map[string]map[string]string{
+		"tcp listen":       {EnvAPIHostname: "shipyard.example.com"},
+		"socket in /":      {EnvAPIHostname: "shipyard.example.com", EnvAPIListen: "unix:/api.sock"},
+		"admin dir":        {EnvAPIHostname: "shipyard.example.com", EnvAPIListen: "unix:/srv/caddy/api.sock", EnvCaddyAdminDir: "/srv/caddy"},
+		"single label":     {EnvAPIHostname: "shipyard", EnvAPIListen: sock},
+		"wildcard":         {EnvAPIHostname: "*.example.com", EnvAPIListen: sock},
+		"ip address":       {EnvAPIHostname: "203.0.113.7", EnvAPIListen: sock},
+		"port in the name": {EnvAPIHostname: "shipyard.example.com:443", EnvAPIListen: sock},
+	} {
+		t.Run(name, func(t *testing.T) {
+			kv[EnvDatabaseURL] = testDB
+			_, err := LoadWorker(env(kv))
+			if err == nil || (!strings.Contains(err.Error(), EnvAPIHostname) && !strings.Contains(err.Error(), EnvAPIListen)) {
+				t.Fatalf("err = %v", err)
+			}
 		})
 	}
 }

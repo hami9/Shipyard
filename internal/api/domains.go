@@ -33,6 +33,9 @@ type DomainPolicy struct {
 	PublicIPs []netip.Addr
 	// Suffixes, if set, is the allow-list of domains hostnames must be under.
 	Suffixes []string
+	// APIHostname is the API's own name on Caddy (P2.8); an app may not take
+	// it, or the rendered config would name one host twice.
+	APIHostname string
 }
 
 const dnsTimeout = 5 * time.Second
@@ -97,6 +100,10 @@ func (h *domainHandlers) add(w http.ResponseWriter, r *http.Request) {
 	if !app.SuffixAllowed(host, h.policy.Suffixes) {
 		writeError(w, r, h.log, app.FieldErrors{{Field: "hostname",
 			Detail: "is not under an allowed domain (" + strings.Join(h.policy.Suffixes, ", ") + ")"}})
+		return
+	}
+	if host == h.policy.APIHostname {
+		writeProblem(w, http.StatusConflict, "hostname "+host+" is reserved for the Shipyard API")
 		return
 	}
 	a, err := h.lookup(r)

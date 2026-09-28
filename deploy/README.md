@@ -15,7 +15,11 @@ Host configuration for running Shipyard on a single VPS. **This is a skeleton (P
 
 - **P2.1 Caddy container user and group.** The admin socket uses mode `0220` (owner and group may connect). The Caddy container must run with a group that the worker also belongs to, and `/run/caddy-admin` must be a bind mount shared with the host.
 - **P2.1 Config persistence.** Choose between Caddy `--resume` (serve the last config after a Caddy restart) and re-render from the DB only. Either way the DB stays the source of truth.
-- **P2.8 API socket.** Bind-mount `/run/shipyard-api` into the Caddy container and align group ownership.
+
+Settled: **P2.8 API socket.**
+- The API listens on `unix:/run/shipyard-api/api.sock`, with `SHIPYARD_API_LISTEN` set in `shipyard.env` because both services read it.
+- The worker mounts that directory read-only into the Caddy container, which runs with the `shipyard` group.
+- Set `SHIPYARD_API_HOSTNAME` to publish the API over HTTPS. Point its A/AAAA records at the server first.
 
 ## Invariants these files must keep
 

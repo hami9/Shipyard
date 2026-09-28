@@ -3,7 +3,9 @@
 [Unit]
 Description=Shipyard deployment worker
 Documentation=https://github.com/hami9/shipyard/blob/main/docs/ARCHITECTURE.md
-After=network-online.target postgresql.service docker.service
+# After the API, so its socket directory exists when the Caddy container
+# (which mounts it) is created or started (P2.8).
+After=network-online.target postgresql.service docker.service shipyard-api.service
 Wants=network-online.target
 Requires=docker.service
 

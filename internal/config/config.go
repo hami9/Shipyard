@@ -31,7 +31,7 @@ const (
 	EnvLogFormat          = "SHIPYARD_LOG_FORMAT"
 	EnvShutdownTimeout    = "SHIPYARD_SHUTDOWN_TIMEOUT"
 	EnvAPIListen          = "SHIPYARD_API_LISTEN"
-	EnvAPIAllowPublic     = "SHIPYARD_API_ALLOW_PUBLIC_LISTEN"
+	EnvAPIHostname        = "SHIPYARD_API_HOSTNAME"
 	EnvWorkerID           = "SHIPYARD_WORKER_ID"
 	EnvWorkerPollInterval = "SHIPYARD_WORKER_POLL_INTERVAL"
 	EnvKEKDir             = "SHIPYARD_KEK_DIR"
@@ -116,13 +116,28 @@ type Common struct {
 	// WorkerSocket is where the worker serves app logs and the API reads
 	// them (ADR-0008).
 	WorkerSocket string
+	// Listen is the API's address: loopback host:port or
+	// unix:/absolute/path.sock, never a public one (P2.8). The worker reads it
+	// too, to publish the API's socket through Caddy.
+	Listen string
+	// APIHostname, when set, is the public name Caddy serves the API on over
+	// HTTPS; it needs a Unix socket Listen. The API refuses it as an app
+	// domain.
+	APIHostname string
+}
+
+// APISocket is the path of the API's Unix socket, or "" for TCP.
+func (c Common) APISocket() string {
+	path, _ := strings.CutPrefix(c.Listen, "unix:")
+	if path == c.Listen {
+		return ""
+	}
+	return path
 }
 
 // API configures shipyard-api.
 type API struct {
 	Common
-	// Listen is host:port or unix:/absolute/path.sock.
-	Listen  string
 	Domains Domains
 }
 
@@ -180,14 +195,7 @@ type Caddy struct {
 // LoadAPI reads and validates the API configuration.
 func LoadAPI(lookup LookupFunc) (API, error) {
 	r := reader{lookup: lookup}
-	cfg := API{
-		Common: r.common(),
-		Listen: r.str(EnvAPIListen, DefaultAPIListen),
-	}
-	allowPublic := r.boolean(EnvAPIAllowPublic, false)
-	if err := validateListen(cfg.Listen, allowPublic); err != nil {
-		r.fail(EnvAPIListen, err)
-	}
+	cfg := API{Common: r.common()}
 	cfg.Domains = r.domains()
 	return cfg, r.err()
 }
@@ -242,6 +250,16 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 		r.fail(EnvBuilderName, fmt.Errorf("%q must be lowercase letters, digits, '-' or '_'", cfg.BuilderName))
 	}
 	cfg.Caddy = r.caddy()
+	// Caddy runs in a container: it reaches the API only through the API's
+	// socket, bind-mounted in; the host's loopback is out of its reach.
+	if cfg.APIHostname != "" && cfg.Caddy.Enabled {
+		switch dir := filepath.Dir(cfg.APISocket()); {
+		case cfg.APISocket() == "":
+			r.fail(EnvAPIHostname, fmt.Errorf("needs %s=unix:/path.sock, so Caddy can reach the API", EnvAPIListen))
+		case dir == cfg.Caddy.AdminDir || dir == "/":
+			r.fail(EnvAPIListen, fmt.Errorf("the API socket needs a directory of its own (not / or %s)", EnvCaddyAdminDir))
+		}
+	}
 	if cfg.WorkerID == "" {
 		cfg.WorkerID = defaultWorkerID()
 	}
@@ -348,10 +366,12 @@ func isLoopback(host string) bool {
 // validateListen enforces that the API is reachable only locally unless the
 // operator explicitly opts out: public traffic must arrive through Caddy
 // (ARCHITECTURE §7, CLAUDE.md invariant 11).
-func validateListen(addr string, allowPublic bool) error {
+// validateListen allows loopback TCP or a Unix socket only: the API is
+// reached through Caddy over HTTPS, never directly (P2.8).
+func validateListen(addr string) error {
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
-		if !filepath.IsAbs(path) {
-			return fmt.Errorf("unix socket path %q must be absolute", path)
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "|{} \t\n") {
+			return fmt.Errorf("unix socket path %q must be a clean absolute path", path)
 		}
 		return nil
 	}
@@ -362,13 +382,13 @@ func validateListen(addr string, allowPublic bool) error {
 	if p, err := strconv.Atoi(port); err != nil || p < 0 || p > 65535 {
 		return fmt.Errorf("invalid port %q", port)
 	}
-	if allowPublic || host == "localhost" {
+	if host == "localhost" {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return nil
 	}
-	return fmt.Errorf("%q is not a loopback address; the API must sit behind Caddy (set %s=true to override)", addr, EnvAPIAllowPublic)
+	return fmt.Errorf("%q is not a loopback address; the API is published through Caddy (%s), never directly", addr, EnvAPIHostname)
 }
 
 // reader accumulates every validation error so operators can fix the whole
@@ -425,9 +445,18 @@ func (r *reader) common() Common {
 		KEKDir:          r.str(EnvKEKDir, DefaultKEKDir),
 		KEKActive:       r.str(EnvKEKActive, ""),
 		WorkerSocket:    r.str(EnvWorkerSocket, DefaultWorkerSocket),
+		Listen:          r.str(EnvAPIListen, DefaultAPIListen),
+		APIHostname:     strings.TrimSuffix(strings.ToLower(r.str(EnvAPIHostname, "")), "."),
 	}
 	if c.DatabaseURL == "" {
 		r.fail(EnvDatabaseURL, errors.New("required"))
+	}
+	if err := validateListen(c.Listen); err != nil {
+		r.fail(EnvAPIListen, err)
+	}
+	// Same rules as an app hostname (the routes.hostname CHECK).
+	if c.APIHostname != "" && (!suffixRE.MatchString(c.APIHostname) || len(c.APIHostname) > 253) {
+		r.fail(EnvAPIHostname, fmt.Errorf("%q is not a hostname such as shipyard.example.com", c.APIHostname))
 	}
 	if !filepath.IsAbs(c.WorkerSocket) || filepath.Clean(c.WorkerSocket) != c.WorkerSocket {
 		r.fail(EnvWorkerSocket, fmt.Errorf("%q must be a clean absolute path", c.WorkerSocket))

@@ -63,6 +63,14 @@ type EdgeSpec struct {
 	// socket is 0660, so only that group (the worker's) can use it.
 	AdminDir string
 	GID      int
+	// APISocketDir, when set, is the host directory of the API's Unix
+	// socket, mounted read-only at the same path so Caddy can proxy the API
+	// (P2.8). The socket must be connectable by group GID. A read-only mount
+	// still allows connecting to a socket: Linux refuses writes on a
+	// read-only mount only for regular files, directories, and symlinks.
+	// omitempty keeps the hash of a spec without it, so an upgrade does not
+	// recreate an edge that publishes no API.
+	APISocketDir string `json:",omitempty"`
 	// Host side of the published ports. Port 0 lets Docker choose (tests);
 	// an invalid BindIP means all interfaces.
 	BindIP              netip.Addr
@@ -86,6 +94,9 @@ func (s EdgeSpec) Validate() error {
 		return bad("admin directory %q must be a clean absolute path", s.AdminDir)
 	case s.GID <= 0:
 		return bad("admin group %d must be a non-root group", s.GID)
+	case s.APISocketDir != "" && (!filepath.IsAbs(s.APISocketDir) || filepath.Clean(s.APISocketDir) != s.APISocketDir ||
+		strings.ContainsAny(s.APISocketDir, "|:,") || s.APISocketDir == "/" || s.APISocketDir == s.AdminDir):
+		return bad("API socket directory %q must be a clean absolute path of its own", s.APISocketDir)
 	case s.HTTPPort < 0 || s.HTTPPort > 65535 || s.HTTPSPort < 0 || s.HTTPSPort > 65535:
 		return bad("ports %d/%d", s.HTTPPort, s.HTTPSPort)
 	}
@@ -114,6 +125,17 @@ func (s EdgeSpec) createOptions() client.ContainerCreateOptions {
 	labels := s.labels()
 	labels[labelSpec] = s.hash()
 	pids := int64(edgePids)
+	mounts := []mount.Mount{
+		// Certificates and ACME state must persist [CADDY-HTTPS]; the
+		// autosaved config lives in /config.
+		{Type: mount.TypeVolume, Source: s.Name + "-data", Target: "/data"},
+		{Type: mount.TypeVolume, Source: s.Name + "-config", Target: "/config"},
+		// Host bind mounts: the socket directories, nothing else.
+		{Type: mount.TypeBind, Source: s.AdminDir, Target: s.AdminDir},
+	}
+	if s.APISocketDir != "" {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: s.APISocketDir, Target: s.APISocketDir, ReadOnly: true})
+	}
 	return client.ContainerCreateOptions{
 		Name: s.Name,
 		Config: &container.Config{
@@ -150,14 +172,7 @@ func (s EdgeSpec) createOptions() client.ContainerCreateOptions {
 			ReadonlyRootfs: true,
 			Tmpfs:          map[string]string{"/tmp": "rw,noexec,nosuid,size=16m"},
 			Resources:      container.Resources{Memory: edgeMemory, NanoCPUs: edgeCPUs * 1e9, PidsLimit: &pids},
-			Mounts: []mount.Mount{
-				// Certificates and ACME state must persist [CADDY-HTTPS]; the
-				// autosaved config lives in /config.
-				{Type: mount.TypeVolume, Source: s.Name + "-data", Target: "/data"},
-				{Type: mount.TypeVolume, Source: s.Name + "-config", Target: "/config"},
-				// The one host bind mount: the socket directory, nothing else.
-				{Type: mount.TypeBind, Source: s.AdminDir, Target: s.AdminDir},
-			},
+			Mounts:         mounts,
 		},
 	}
 }
@@ -172,6 +187,13 @@ func (r *Runtime) EnsureEdge(ctx context.Context, s EdgeSpec) (string, error) {
 	}
 	if err := prepareAdminDir(s.AdminDir, s.GID); err != nil {
 		return "", err
+	}
+	// The API owns its socket directory (systemd RuntimeDirectory); Docker
+	// would refuse to start the edge without it, less clearly.
+	if s.APISocketDir != "" {
+		if st, err := os.Stat(s.APISocketDir); err != nil || !st.IsDir() {
+			return "", fmt.Errorf("API socket directory %s is missing (is shipyard-api running?): %v", s.APISocketDir, err)
+		}
 	}
 	if _, err := r.ensureBridge(ctx, s.Name, s.labels()); err != nil {
 		return "", err

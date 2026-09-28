@@ -142,7 +142,9 @@ flowchart LR
 - SSE, split in two (each needs about 400 lines):
   - [x] **P2.7a** Operation events with `id` and `Last-Event-ID` resume, and a keepalive every 15 s. Also `shipyard events ID` and `deploy --follow`.
   - [x] **P2.7b** `logs --follow` with a bounded tail and best-effort secret redaction. The owner chose (2026-09-28) that the worker serves logs on a private Unix socket, and the API authenticates and proxies them (ADR-0008).
-- [ ] **P2.8** The API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2).
+- [x] **P2.8** The API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2).
+  - `SHIPYARD_API_HOSTNAME` publishes it. Caddy reaches the socket through a read-only bind mount.
+  - The public-listen override is removed (the owner's choice, 2026-09-28).
 
 **Exit criteria**
 
