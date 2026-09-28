@@ -51,7 +51,10 @@ test-integration: ## Integration tests against PostgreSQL (run `make dev-up` fir
 	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -race -tags integration ./...
 
 test-docker: ## Tests that need Docker Engine and buildx (owner's machine, not CI)
-	$(GO) test -race -tags docker -count=1 ./...
+	# -p 1: one package at a time. Each package's Caddy edge joins every app
+	# network on the host (as the one production edge must), so packages
+	# running in parallel would attach to each other's test networks.
+	$(GO) test -race -tags docker -count=1 -p 1 ./...
 
 test-e2e: ## End-to-end deploy through the real binaries (Docker, buildx, git; run `make dev-up` first)
 	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -tags e2e -count=1 -timeout 20m -v ./test/e2e

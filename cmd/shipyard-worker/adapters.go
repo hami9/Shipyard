@@ -61,7 +61,7 @@ func (a runtimeAdapter) Inspect(ctx context.Context, id string) (app.ContainerSt
 	if err != nil {
 		return app.ContainerState{}, err
 	}
-	return app.ContainerState{Running: st.Running, Restarting: st.Restarting, OOMKilled: st.OOMKilled,
+	return app.ContainerState{Name: st.Name, Running: st.Running, Restarting: st.Restarting, OOMKilled: st.OOMKilled,
 		ExitCode: st.ExitCode, RestartCount: st.RestartCount, IP: st.IP}, nil
 }
 

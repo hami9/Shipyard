@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.3: `routing.Admin` (Etag, conditional whole-config replace via `POST /config/`, 412 retry); the worker syncs Caddy from the routes table at start |
-| **Next task** | P2.4: the `switching` phase (load, verify through Caddy with the `Host` header, then commit route and status in one transaction; failures re-render the previous state) |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.4: the `switching` phase (`routing.Router` with the verify socket; routes committed with activation; restore on every failure) |
+| **Next task** | P2.5: domain API (DNS preflight, unique hostnames, optional suffix allow-list, staging CA toggle) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
 | **Last updated** | 2026-09-27 |
@@ -53,6 +53,54 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.4 traffic switching
+
+- **Phase / task:** P2.4: the `switching` phase
+- **Author:** Claude Code (desktop session)
+- **Goal:** A healthy candidate takes over the app's hostnames only after Caddy verifiably routes to it, and any failure restores the previous routes (invariant 5, ARCHITECTURE §5 step 7).
+
+**Done**
+- **The renderer's `Settings.VerifySocket`** adds a `verify` server: the same routes, plain HTTP, on `caddy-verify.sock|0660`, with `automatic_https.skip` for all hosts. That shape comes from `caddy adapt`. There are two new golden files.
+- **`routing.Router`:**
+  - `Switch(appID, upstream, healthPath)` renders the table with that app's routes on the candidate, applies it, then requests `health_path` for each hostname through the verify socket: 5 attempts 0.5 s apart, 2xx/3xx, no redirects or proxy. It returns the verified hostnames; with none, it loads nothing.
+  - `Restore` re-renders the table as committed. The worker's startup sync now uses it.
+- **Store:**
+  - `MarkSwitching`, and `switching_at` read back.
+  - `ActivateDeployment(…, upstream, hostnames)` moves **only the verified hostnames**, in the activation transaction. A verified route that vanished returns `ErrConflict` and rolls everything back.
+- **`internal/app` (`switchTraffic`):**
+  - The `switch` phase runs after the health gate. The upstream is `<container name>:<port>`, since `runtime.State` now carries the name.
+  - **Restore comes before removing the candidate** on failure. A lost lease or shutdown also restores, but records nothing.
+  - With no routes, it logs "no routes yet".
+- **Worker:** one `Router` for both the startup sync and deploys. `make test-docker` now runs `-p 1` (see below).
+
+**Decisions** (dated note in ADR-0003; ARCHITECTURE §5)
+- **Verify on a private plain-HTTP Caddy listener, not over public HTTPS.** Routing is proven through Caddy by `Host` header, with no dependence on ACME timing for a first deploy.
+- Commit only verified hostnames.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4)
+- `make lint`, `make test`, `make test-integration`: all ok. `-race -count=5` on `app` and `routing`: ok.
+  - Unit: 5 new use-case tests (switch, switch failure restores before remove, activation failure restores, lost lease after the switch restores but records nothing, no routes), 4 Router tests against a fake Caddy whose verify server answers from the loaded config, and 2 new rejection cases.
+  - Integration: `TestActivateMovesVerifiedRoutes` (only verified and own routes move; a vanished route aborts the commit, leaving the deployment not active and the operation running).
+- **`make test-docker` (all packages, `-p 1`): all ok.** `TestRouterAgainstCaddy` with the real Caddy and v1/v2 upstreams on an app network:
+  - the verify socket is 0660;
+  - v1, then after `Switch` **v2 through both the verify socket and public HTTPS**, then v1 again after `Restore`;
+  - an unreachable candidate → `status 502` after 3.5 s, and v1 again after `Restore`.
+- **`make test-e2e`: PASS (105 s).** A route row is added before the first deploy, and **HTTPS through the worker's Caddy** reads the serving container's `/etc/hostname`:
+  - the first container after deploy 1;
+  - still the first after the broken, off-branch, and unhealthy deploys;
+  - the second after deploy 5;
+  - the injected secret env through Caddy.
+- No leftovers.
+
+**Problems / surprises**
+- **Parallel docker test packages interfered.** Each package's edge joins every app network on the host, as the one production edge must. With `routing` and `runtime` run together, a network got a foreign edge endpoint, so a network removal and an edge `docker restart` failed and one test network was left behind (removed afterwards).
+  - Alone, the edge tests pass twice in a row.
+  - Fix: `make test-docker` uses `-p 1`. Nothing changes in production.
+
+**Next**
+- The owner merges #1–#13 in order (retarget each to `main`, merge commits).
+- P2.5: the domain API.
 
 ### 2026-09-28: P2.3 Caddy admin client
 

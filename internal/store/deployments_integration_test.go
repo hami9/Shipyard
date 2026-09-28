@@ -67,7 +67,7 @@ func TestDeploymentLifecycle(t *testing.T) {
 	if _, err := f.s.ActiveDeployment(ctx, app); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("active before activation: %v", err)
 	}
-	prev, err := f.s.ActivateDeployment(ctx, d.ID, "w1")
+	prev, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "", nil)
 	if err != nil || prev != nil {
 		t.Fatalf("first activation: prev=%v err=%v", prev, err)
 	}
@@ -78,7 +78,7 @@ func TestDeploymentLifecycle(t *testing.T) {
 	// A second release supersedes the first in the same transaction.
 	op2 := f.claimed(app, "w1")
 	d2 := f.healthy(op2, "w1")
-	prev, err = f.s.ActivateDeployment(ctx, d2.ID, "w1")
+	prev, err = f.s.ActivateDeployment(ctx, d2.ID, "w1", "", nil)
 	if err != nil || prev == nil || prev.ID != d.ID || prev.Status != store.DeploySuperseded || prev.EndedAt == nil {
 		t.Fatalf("second activation: prev=%+v err=%v", prev, err)
 	}
@@ -118,7 +118,7 @@ func TestDeploymentWritesNeedTheLease(t *testing.T) {
 			t.Errorf("%s by another worker: %v", name, err)
 		}
 	}
-	if _, err := f.s.ActivateDeployment(ctx, d.ID, "w2"); !errors.Is(err, store.ErrLeaseLost) {
+	if _, err := f.s.ActivateDeployment(ctx, d.ID, "w2", "", nil); !errors.Is(err, store.ErrLeaseLost) {
 		t.Fatalf("activate by another worker: %v", err)
 	}
 

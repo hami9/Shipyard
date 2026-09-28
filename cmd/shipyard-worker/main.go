@@ -110,7 +110,8 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	if err := ensureEdge(ctx, cfg.Caddy, rt, log); err != nil {
 		return err
 	}
-	if err := syncRoutes(ctx, cfg.Caddy, s, log); err != nil {
+	router, err := syncRoutes(ctx, cfg.Caddy, s, log)
+	if err != nil {
 		return err
 	}
 
@@ -122,6 +123,9 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		Env:     secrets.NewEnv(keys, s),
 		Health:  healthGate,
 		Log:     log,
+	}
+	if router != nil { // a nil *routing.Router must not become a non-nil interface
+		deployer.Router = router
 	}
 	q := queue.New(s, log, cfg.WorkerID, 0, cfg.PollInterval)
 
@@ -165,26 +169,27 @@ func ensureEdge(ctx context.Context, c config.Caddy, rt *runtime.Runtime, log *s
 
 // syncRoutes makes Caddy serve exactly what the routes table says
 // (ARCHITECTURE §5, Reconciler step 3): render, then load only if the
-// running config differs, guarded by its Etag.
-func syncRoutes(ctx context.Context, c config.Caddy, s *store.Store, log *slog.Logger) error {
+// running config differs, guarded by its Etag. It returns the router that
+// deploys use to switch traffic; nil when Caddy is disabled.
+func syncRoutes(ctx context.Context, c config.Caddy, s *store.Store, log *slog.Logger) (*routing.Router, error) {
 	if !c.Enabled {
-		return nil
+		return nil, nil
 	}
-	rows, err := s.ListRoutes(ctx)
+	router, err := routing.NewRouter(s, routing.Settings{
+		AdminSocket:  filepath.Join(c.AdminDir, runtime.AdminSocketName),
+		VerifySocket: filepath.Join(c.AdminDir, routing.VerifySocketName),
+		CA:           c.CA,
+		ACMEEmail:    c.ACMEEmail,
+	})
 	if err != nil {
-		return fmt.Errorf("list routes: %w", err)
+		return nil, fmt.Errorf("caddy router: %w", err)
 	}
-	settings := routing.Settings{AdminSocket: filepath.Join(c.AdminDir, runtime.AdminSocketName), CA: c.CA, ACMEEmail: c.ACMEEmail}
-	cfg, err := routing.Render(settings, routing.FromStore(rows))
+	changed, err := router.Restore(ctx)
 	if err != nil {
-		return fmt.Errorf("render caddy config: %w", err)
+		return nil, fmt.Errorf("caddy config: %w", err)
 	}
-	changed, err := routing.NewAdmin(settings.AdminSocket).Apply(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("load caddy config: %w", err)
-	}
-	log.Info("caddy config in sync", slog.Int("routes", len(rows)), slog.Bool("reloaded", changed))
-	return nil
+	log.Info("caddy config in sync", slog.Bool("reloaded", changed))
+	return router, nil
 }
 
 // process runs one claimed operation while holding its lease.

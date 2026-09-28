@@ -37,6 +37,13 @@ const StagingDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory
 // address config paths under it.
 const ServerName = "shipyard"
 
+// VerifyServerName names the plain-HTTP verification server (Settings.VerifySocket),
+// and VerifySocketName its socket's file name next to the admin socket.
+const (
+	VerifyServerName = "verify"
+	VerifySocketName = "caddy-verify.sock"
+)
+
 // NoDeploymentBody answers a hostname whose app has nothing active yet.
 const NoDeploymentBody = "no active deployment\n"
 
@@ -63,6 +70,12 @@ type Settings struct {
 	APIUpstream string // host:port or unix//absolute/path
 	CA          string // CADefault, CAStaging, or CAInternal
 	ACMEEmail   string
+	// VerifySocket, when set, adds a plain-HTTP server on this Unix socket
+	// with exactly the same routes and no automatic HTTPS. The worker checks
+	// a route through Caddy there, by Host header, before it commits a
+	// switch (ARCHITECTURE §5 step 7): it proves the routing without waiting
+	// for a certificate.
+	VerifySocket string
 }
 
 // Caddy's JSON config, only the parts Shipyard uses. Field names follow
@@ -83,8 +96,12 @@ type (
 		Servers map[string]server `json:"servers"`
 	}
 	server struct {
-		Listen []string `json:"listen"`
-		Routes []route  `json:"routes"`
+		Listen         []string   `json:"listen"`
+		Routes         []route    `json:"routes"`
+		AutomaticHTTPS *autoHTTPS `json:"automatic_https,omitempty"`
+	}
+	autoHTTPS struct {
+		Skip []string `json:"skip,omitempty"`
 	}
 	route struct {
 		Match    []match   `json:"match,omitempty"`
@@ -140,8 +157,10 @@ func Render(s Settings, routes []Route) ([]byte, error) {
 	slices.SortFunc(routes, func(a, b Route) int { return strings.Compare(a.Hostname, b.Hostname) })
 	seen := map[string]bool{s.APIHostname: s.APIHostname != ""}
 	var out []route
+	var hosts []string
 	if s.APIHostname != "" {
 		out = append(out, apiRoute(s))
+		hosts = append(hosts, s.APIHostname)
 	}
 	for _, r := range routes {
 		if !hostnameRE.MatchString(r.Hostname) || len(r.Hostname) > 253 {
@@ -159,12 +178,25 @@ func Render(s Settings, routes []Route) ([]byte, error) {
 			h = handler{Handler: "reverse_proxy", Upstreams: []upstream{{Dial: r.Upstream}}}
 		}
 		out = append(out, route{Match: []match{{Host: []string{r.Hostname}}}, Handle: []handler{h}, Terminal: true})
+		hosts = append(hosts, r.Hostname)
+	}
+	servers := map[string]server{
+		// Only :443 is listed: automatic HTTPS adds the :80 listener for
+		// redirects and HTTP challenges [CADDY-HTTPS].
+		ServerName: {Listen: []string{":443"}, Routes: orEmpty(out)},
+	}
+	if s.VerifySocket != "" {
+		// The same routes over plain HTTP on a socket; skipping every host
+		// there is how `caddy adapt` expresses an http:// site [CADDY-JSON].
+		v := server{Listen: []string{"unix/" + s.VerifySocket + "|0660"}, Routes: orEmpty(out)}
+		if len(hosts) > 0 {
+			v.AutomaticHTTPS = &autoHTTPS{Skip: slices.Sorted(slices.Values(hosts))}
+		}
+		servers[VerifyServerName] = v
 	}
 	cfg := config{
 		Admin: admin{Listen: "unix/" + s.AdminSocket + "|0660"},
-		// Only :443 is listed: automatic HTTPS adds the :80 listener for
-		// redirects and HTTP challenges [CADDY-HTTPS].
-		Apps: apps{HTTP: httpApp{Servers: map[string]server{ServerName: {Listen: []string{":443"}, Routes: orEmpty(out)}}}},
+		Apps:  apps{HTTP: httpApp{Servers: servers}},
 	}
 	if is := s.issuers(); is != nil {
 		cfg.Apps.TLS = &tlsApp{Automation: automation{Policies: []policy{{Issuers: is}}}}
@@ -208,8 +240,10 @@ func (s Settings) validate() error {
 		return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, a...))
 	}
 	switch {
-	case !filepath.IsAbs(s.AdminSocket) || filepath.Clean(s.AdminSocket) != s.AdminSocket || strings.ContainsAny(s.AdminSocket, "|,: \t\n"):
+	case !cleanSocket(s.AdminSocket):
 		return bad("admin socket %q must be a clean absolute path", s.AdminSocket)
+	case s.VerifySocket != "" && (!cleanSocket(s.VerifySocket) || s.VerifySocket == s.AdminSocket):
+		return bad("verify socket %q must be a clean absolute path other than the admin socket", s.VerifySocket)
 	case s.APIHostname != "" && !hostnameRE.MatchString(s.APIHostname):
 		return bad("API hostname %q", s.APIHostname)
 	case s.APIHostname != "" && s.APIUpstream == "":
@@ -247,6 +281,12 @@ func checkDial(d string, allowUnix bool) error {
 		return fmt.Errorf("%q: invalid host", d)
 	}
 	return nil
+}
+
+// cleanSocket accepts a clean absolute path without characters that Caddy's
+// network addresses give meaning to (the |mode suffix, ports, lists).
+func cleanSocket(p string) bool {
+	return filepath.IsAbs(p) && filepath.Clean(p) == p && !strings.ContainsAny(p, "|,: \t\n")
 }
 
 // FromStore turns routes table rows into renderer input.
