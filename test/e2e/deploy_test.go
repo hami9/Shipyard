@@ -102,8 +102,12 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	// 5. A healthy release supersedes the first, whose container is removed.
 	h.cli("", "env", "unset", slug, "PROBE_UNHEALTHY")
 	h.wantOp(h.deploy("--ref", h.repo.good), "succeeded", "")
-	// The operation succeeds when the new release is active; the old one is
-	// drained right after (SIGTERM, then removal).
+	// P2.6: the operation succeeds when the new release is active; the old
+	// one keeps running through the observation window (6s here), then the
+	// reconciler stops it gracefully and removes it.
+	if got := h.docker("inspect", "--format", "{{.State.Running}}", first); got != "true" {
+		t.Fatalf("the superseded container stopped before its observation window: running=%s", got)
+	}
 	gone := false
 	for deadline := time.Now().Add(30 * time.Second); !gone && time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 		gone = exec.Command("docker", "inspect", first).Run() != nil
@@ -199,7 +203,7 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
-		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s"), "shipyard-worker", "run")
+		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s"), "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=http://"+addr, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h

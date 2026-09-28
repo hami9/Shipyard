@@ -409,3 +409,42 @@ func TestRefusesUnmanaged(t *testing.T) {
 		t.Fatalf("create over a foreign container: err = %v", err)
 	}
 }
+
+// The janitor sees Shipyard's app containers, running or not, and nothing
+// else: not foreign containers, not ones with a forged managed label.
+func TestListManaged(t *testing.T) {
+	r := newRuntime(t)
+	ctx := t.Context()
+	app := testApp(t)
+	running := spec(app, probeImage)
+	runningID := startHardened(t, r, running)
+	created := spec(app, probeImage)
+	createdID, err := r.Create(ctx, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := "shipyard-test-forged-" + app
+	dockerOut(t, "create", "--name", forged, "--network", "none", "--label", labelManaged+"=true",
+		"--label", labelApp+"="+app, "--label", labelDeployment+"=not-a-uuid", probeImage)
+	t.Cleanup(func() { exec.Command("docker", "rm", "--force", forged).Run() })
+
+	list, err := r.ListManaged(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Managed{}
+	for _, m := range list {
+		if m.App == app {
+			got[m.ID] = m
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("listed %v, want the two app containers", got)
+	}
+	if m := got[runningID]; m.DeploymentID != running.DeploymentID || !m.Running {
+		t.Errorf("running = %+v", m)
+	}
+	if m := got[createdID]; m.DeploymentID != created.DeploymentID || m.Running {
+		t.Errorf("created = %+v", m)
+	}
+}

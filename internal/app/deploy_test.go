@@ -259,8 +259,8 @@ func TestDeploySwitchesTraffic(t *testing.T) {
 	if h.st.upstream != "shipyard-web-dep-1:3000" || !slices.Equal(h.st.hosts, []string{"web.example.com"}) || h.st.dep.Status != store.DeployActive {
 		t.Errorf("activation upstream=%q hosts=%v status=%s", h.st.upstream, h.st.hosts, h.st.dep.Status)
 	}
-	// The old container drains only after the switch was committed.
-	if want := []string{"start ctr-dep-1", "switch", "release app-1", "stop old-container 7s", "remove old-container"}; !slices.Equal(h.rt.calls, want) {
+	// The old container stays for the observation window (P2.6).
+	if want := []string{"start ctr-dep-1", "switch", "release app-1"}; !slices.Equal(h.rt.calls, want) {
 		t.Errorf("calls = %v, want %v", h.rt.calls, want)
 	}
 	if !h.logged("verified through caddy: web.example.com") {
@@ -366,9 +366,13 @@ func TestDeployHappyPath(t *testing.T) {
 	if h.st.dep.ContainerID != "ctr-dep-1" || h.probed != "http://172.20.0.5:3000/healthz" {
 		t.Errorf("container id %q, probed %q", h.st.dep.ContainerID, h.probed)
 	}
-	// The superseded container is drained with the app's stop timeout.
-	if want := []string{"start ctr-dep-1", "stop old-container 7s", "remove old-container"}; !slices.Equal(h.rt.calls, want) {
+	// The superseded container keeps running; the janitor drains it with the
+	// app's stop timeout after the observation window (P2.6).
+	if want := []string{"start ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
 		t.Errorf("runtime calls = %v, want %v", h.rt.calls, want)
+	}
+	if !h.logged("previous deployment dep-0 keeps running through the observation window") || !h.logged("stop timeout 7s") {
+		t.Errorf("events = %v", h.st.events)
 	}
 	if !h.logged("#1 building") || !h.logged("is active") {
 		t.Errorf("events = %v", h.st.events)

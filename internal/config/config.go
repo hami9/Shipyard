@@ -51,6 +51,7 @@ const (
 	EnvCaddyCA            = "SHIPYARD_CADDY_CA"
 	EnvACMEEmail          = "SHIPYARD_ACME_EMAIL"
 	EnvReconcileInterval  = "SHIPYARD_RECONCILE_INTERVAL"
+	EnvObservationWindow  = "SHIPYARD_OBSERVATION_WINDOW"
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
 	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
@@ -63,6 +64,9 @@ const (
 	DefaultPollInterval    = 2 * time.Second
 	// DefaultReconcileInterval is ARCHITECTURE §5's reconciler period.
 	DefaultReconcileInterval = time.Minute
+	// DefaultObservationWindow is how long a superseded container keeps
+	// running after a switch (ARCHITECTURE §5 step 8).
+	DefaultObservationWindow = 5 * time.Minute
 	DefaultKEKDir            = "/etc/shipyard/kek"
 	DefaultWorkDir           = "/var/lib/shipyard/work"
 	DefaultSourceBaseURL     = "https://github.com"
@@ -135,6 +139,10 @@ type Worker struct {
 	// ReconcileInterval is how often expired leases are requeued and Caddy
 	// is re-synced from the routes table (so added or removed domains apply).
 	ReconcileInterval time.Duration
+	// ObservationWindow keeps a superseded deployment's container running
+	// after a switch before the reconciler stops it gracefully. 0 stops it
+	// at the next reconcile.
+	ObservationWindow time.Duration
 	// WorkDir holds one checkout per running operation (mode 0700).
 	WorkDir string
 	// SourceBaseURL is where repositories are cloned from: https, or
@@ -236,6 +244,16 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	}
 	if cfg.ReconcileInterval < time.Second {
 		r.fail(EnvReconcileInterval, errors.New("must be at least 1s"))
+	}
+	cfg.ObservationWindow = DefaultObservationWindow
+	if s := r.str(EnvObservationWindow, ""); s != "" {
+		// Unlike the other durations, 0 is valid: no observation window.
+		d, err := time.ParseDuration(s)
+		if err != nil || d < 0 || d > 24*time.Hour {
+			r.fail(EnvObservationWindow, fmt.Errorf("%q must be a duration between 0s and 24h", s))
+		} else {
+			cfg.ObservationWindow = d
+		}
 	}
 	if !filepath.IsAbs(cfg.WorkDir) {
 		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))

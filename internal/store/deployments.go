@@ -17,6 +17,7 @@ const (
 	DeployActive         = "active"
 	DeploySuperseded     = "superseded"
 	DeployFailed         = "failed"
+	DeployCancelled      = "cancelled"
 )
 
 // Deployment is one attempt to release a commit of an app.
@@ -148,7 +149,8 @@ func (s *Store) FailDeployment(ctx context.Context, id, owner, reason string) er
 // (ARCHITECTURE §5 step 7). The verified hostnames must all still exist.
 // Routes added meanwhile, which point at the previous deployment or at none,
 // follow; routes on an older deployment stay. It returns the superseded
-// deployment, if any, so the caller can drain its container.
+// deployment, if any; the reconciler drains its container after the
+// observation window (ended_at is its start).
 func (s *Store) ActivateDeployment(ctx context.Context, id, owner, upstream string, hostnames []string) (*Deployment, error) {
 	var prev *Deployment
 	err := s.InTx(ctx, func(tx *Store) error {

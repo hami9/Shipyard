@@ -75,6 +75,18 @@ func (a runtimeAdapter) Logs(ctx context.Context, id string, tail int) ([]string
 	return a.r.Logs(ctx, id, tail)
 }
 
+func (a runtimeAdapter) ListManaged(ctx context.Context) ([]app.ManagedContainer, error) {
+	list, err := a.r.ListManaged(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]app.ManagedContainer, len(list))
+	for i, c := range list {
+		out[i] = app.ManagedContainer{ID: c.ID, App: c.App, DeploymentID: c.DeploymentID, Running: c.Running}
+	}
+	return out, nil
+}
+
 func healthGate(ctx context.Context, url string, timeout time.Duration, alive func(context.Context) error) error {
 	return health.Wait(ctx, health.Config{URL: url, Timeout: timeout}, alive)
 }
