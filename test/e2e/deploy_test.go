@@ -93,6 +93,14 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if resp, body := h.apiViaCaddy("/readyz"); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("/readyz through caddy: %s %s", resp.Status, body)
 	}
+	// Invariant 12: Caddy reached the API through the shared group, but its
+	// own sockets are in the edge group, which the API does not have.
+	for _, name := range []string{"caddy-admin.sock", "caddy-verify.sock"} {
+		fi, err := os.Stat(filepath.Join(h.admin, name))
+		if err != nil || int(fi.Sys().(*syscall.Stat_t).Gid) != h.edge || h.edge == os.Getegid() {
+			t.Fatalf("%s: %v, %v; want group %d, not %d", name, fi, err, h.edge, os.Getegid())
+		}
+	}
 	// SSE through Caddy: the finished deploy's events stream to their end.
 	resp, body = h.apiViaCaddy("/v1/operations/" + op1 + "/events")
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" ||
@@ -177,6 +185,8 @@ type harness struct {
 	bin    string
 	slug   string
 	caddy  string // the worker's edge container
+	admin  string // Caddy's admin directory
+	edge   int    // its group: one of ours, not the one the API shares
 	dbURL  string
 	repo   repo
 	env    []string // for the CLI
@@ -196,6 +206,7 @@ func start(t *testing.T) *harness {
 		status: regexp.MustCompile(`(?m)^status\s+(\S+)`)}
 	builder := "shipyard-e2e-" + strings.ToLower(rand.Text()[:8])
 	h.caddy = builder + "-caddy"
+	h.admin, h.edge = filepath.Join(tmp, "caddy"), edgeGroup(t)
 
 	// Docker cleanup runs after the processes stop (cleanups run last first).
 	t.Cleanup(func() {
@@ -232,7 +243,7 @@ func start(t *testing.T) *harness {
 	h.dbURL = dbURL
 	t.Cleanup(func() { h.dumpEvents(dbURL) }) // before the database is dropped
 	// P2.8: the API listens on a Unix socket in a directory of its own, which
-	// the worker mounts into Caddy; Caddy runs with this process's group.
+	// the worker mounts into Caddy; Caddy gets this process's group for it.
 	apiDir := filepath.Join(tmp, "api")
 	if err := os.Mkdir(apiDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -250,7 +261,7 @@ func start(t *testing.T) *harness {
 	waitUnix(t, apiSock)
 	h.spawn("worker", append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
-		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
+		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+h.admin, fmt.Sprintf("SHIPYARD_CADDY_GROUP=%d", h.edge),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s"), "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
@@ -477,6 +488,22 @@ func run(t *testing.T, dir string, env []string, name string, args ...string) st
 
 // cleanEnv is the test's environment without SHIPYARD_* variables, so a
 // developer's own settings never leak into the processes under test.
+// edgeGroup picks a supplementary group of this process for Caddy's admin
+// directory: the worker refuses its primary group, which the API shares.
+func edgeGroup(t *testing.T) int {
+	groups, err := os.Getgroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range groups {
+		if g > 0 && g != os.Getegid() {
+			return g
+		}
+	}
+	t.Fatalf("the e2e test needs a supplementary group (e.g. docker) besides the primary one; groups = %v", groups)
+	return 0
+}
+
 func cleanEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {

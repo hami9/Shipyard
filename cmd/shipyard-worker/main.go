@@ -175,7 +175,7 @@ func serveLogs(path string, h http.Handler, log *slog.Logger) (*http.Server, err
 }
 
 // ensureEdge keeps the Caddy container running and joined to every app
-// network, with its admin API on a socket only the worker's group can use
+// network, with its admin API on a socket only SHIPYARD_CADDY_GROUP can use
 // (ADR-0003). Routes are loaded from Phase 2 on (P2.2–P2.4). With an API
 // hostname, the API's socket directory is mounted in too (P2.8).
 func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log *slog.Logger) error {
@@ -184,10 +184,19 @@ func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log
 		log.Warn("caddy is disabled; apps get no routes", slog.String("env", config.EnvCaddy))
 		return nil
 	}
-	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: os.Getegid(),
+	groups, err := os.Getgroups()
+	if err != nil {
+		return fmt.Errorf("caddy: worker groups: %w", err)
+	}
+	gid, err := edgeGID(c.Group, lookupGID, os.Getegid(), groups)
+	if err != nil {
+		return fmt.Errorf("caddy: %w", err)
+	}
+	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: gid,
 		BindIP: c.BindIP, HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort}
 	if cfg.APIHostname != "" {
-		spec.APISocketDir = filepath.Dir(cfg.APISocket())
+		// The API's socket is in the group the worker shares with it.
+		spec.APISocketDir, spec.APIGID = filepath.Dir(cfg.APISocket()), os.Getegid()
 	}
 	if spec.Image == "" {
 		spec.Image = runtime.DefaultEdgeImage

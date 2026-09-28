@@ -84,6 +84,14 @@
   - **systemd.** The API's `RuntimeDirectory` is kept across stops (`RuntimeDirectoryPreserve=yes`), because a recreated directory would leave Caddy's mount stale `[SYSTEMD-EXEC]`. The worker starts after the API, so the directory exists when the edge is created. A missing directory is reported clearly, and the worker retries on restart.
   - **Upgrades.** The new spec field is omitted when empty, so an edge without the API keeps its hash and is not recreated on upgrade.
 
+- **2026-09-28 (admin group).** The decision is unchanged, and now enforced: "the API process has no access to the socket" held only in code. Approved by the owner on 2026-09-28.
+  - **The drift.** P2.1 made the admin directory group-owned by the worker's *primary* group, and in the systemd units that is `shipyard`, which the API shares for the log socket (ADR-0008). So the API user could connect to the admin and verify sockets.
+  - **The fix.** A dedicated group, `SHIPYARD_CADDY_GROUP` (default `shipyard-edge`), owns the directory. Only `shipyard-worker` has it, through `SupplementaryGroups=`. This decision originally named `shipyard-worker` as the group; a separate group keeps the worker's primary group free for what it shares with the API.
+  - **Fail closed.** At start, the worker resolves the group (name or gid) and refuses to start if it is the worker's primary group, root's, or a group the worker is not in.
+  - **Caddy's groups.** Caddy runs as `0:<admin gid>`. With an API hostname, it also gets the API socket's group (`shipyard`) as a supplementary group (`GroupAdd`) `[DK-RUN]`. Caddy may reach the API, but the API gains nothing of Caddy's.
+  - **The directory.** It comes from systemd-tmpfiles (`deploy/tmpfiles/shipyard.conf`, `root:shipyard-edge 2770`), because `ProtectSystem=strict` left the worker unable to create it under `/run`, and a `RuntimeDirectory` would leave Caddy's bind mount stale after a worker restart. The worker unit has `ReadWritePaths=/run/shipyard/caddy` so it can remove stale sockets `[SYSTEMD-EXEC][SYSTEMD-TMPFILES]`.
+  - **Upgrades.** The gid is part of the edge spec, so the edge is recreated once with the new group. The worker removes every stale socket in the directory before starting it.
+
 ## Alternatives considered
 
 - **Caddy on the host (systemd):** workable, since the host can reach bridge IPs, but it loses name-based upstreams and couples Caddy to host networking. Kept as a fallback.

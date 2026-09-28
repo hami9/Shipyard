@@ -165,7 +165,7 @@ The repository must be public (GitHub App tokens arrive in Phase 4), and its ima
 
 What `make run-worker` leaves running on your machine:
 - **The `shipyard` buildx builder** (2 GB, 2 CPUs), created on the first run and kept for later builds.
-- **The `shipyard-caddy` container**, with its network and its `-data` and `-config` volumes. It publishes only on `127.0.0.1:18081` (HTTP) and `127.0.0.1:18443` (HTTPS), and its admin socket is `.dev/caddy/caddy-admin.sock`.
+- **The `shipyard-caddy` container**, with its network and its `-data` and `-config` volumes. It publishes only on `127.0.0.1:18081` (HTTP) and `127.0.0.1:18443` (HTTPS), and its admin socket is `.dev/caddy/caddy-admin.sock`. The directory is group `docker` (`SHIPYARD_CADDY_GROUP=docker`), a supplementary group of yours: the worker refuses its primary group, which in production the API shares.
   - It uses Caddy's internal CA (`SHIPYARD_CADDY_CA=internal`), so nothing is ever requested from Let's Encrypt.
   - At start, the worker loads the config rendered from the routes table. To inspect it: `curl --unix-socket .dev/caddy/caddy-admin.sock http://caddy/config/`.
   - Remove it with `docker rm -f shipyard-caddy`.
@@ -183,7 +183,7 @@ Run `make help` for the full list.
 | `make lint test` | Required before every commit |
 | `make test-integration` | Needs `make dev-up`. Uses throwaway databases and drops them afterwards |
 | `make test-docker` | Tests that need Docker Engine and buildx (tag `docker`). CI does not run these; paste the output into the work log. Build tests create their own `shipyard-test-*` builder and remove it, with its images. Runtime tests build two small `shipyard-test/probe` images `FROM scratch` (nothing is pulled), run `shipyard-rt-*` containers on `shipyard-app-rt-*` networks, and probe them by bridge IP, so they need the §2.5 check to pass. Edge tests pull `caddy:2.11.4-alpine` once and run `shipyard-test-edge-*` Caddy containers on loopback-only random ports. Packages run one at a time (`-p 1`): an edge joins every app network on the host, so parallel packages would join each other's test networks. Everything is removed afterwards |
-| `make test-e2e` | Needs `make dev-up`, Docker, buildx, and git. Builds the three binaries, serves a test repository over local git HTTP, and deploys through the CLI. It covers a pinned SHA that becomes a hardened, healthy container, a broken Dockerfile, a SHA off the branch, an unhealthy release that leaves the running one alone, an `Idempotency-Key` replay, and a second release superseding the first. About 2 minutes. It uses its own `shipyard-e2e-*` builder and removes everything afterwards |
+| `make test-e2e` | Needs `make dev-up`, Docker, buildx, git, and a supplementary group besides your primary one (e.g. `docker`), for Caddy's admin directory. Builds the three binaries, serves a test repository over local git HTTP, and deploys through the CLI. It covers a pinned SHA that becomes a hardened, healthy container, a broken Dockerfile, a SHA off the branch, an unhealthy release that leaves the running one alone, an `Idempotency-Key` replay, and a second release superseding the first. About 2 minutes. It uses its own `shipyard-e2e-*` builder and removes everything afterwards |
 | `make run-api` / `make run-worker` | Run against the dev database with text logs. `run-api` first runs `make dev-kek`, which creates a dev-only KEK in the ignored `.dev/kek/` |
 | `make dev-reset` | Wipe the dev database volume |
 

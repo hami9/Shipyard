@@ -8,11 +8,11 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); `api-edge` (P2.8). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.8: the API is published through Caddy (`SHIPYARD_API_HOSTNAME`, HTTPS with HTTP/2) from its Unix socket; the public-listen override is removed |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); `edge-group` (Caddy admin group, on `api-edge`). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | Caddy admin group: the admin and verify sockets belong to `shipyard-edge`, which only the worker has, so the API user cannot reach Caddy (invariants 1 and 12). Lint and unit tests pass; **the owner's `make test-docker` and `make test-e2e` run is pending** |
 | **Next task** | Phase 2 exit criteria. One criterion needs the owner: it asks `logs --follow` to resume without loss, but ADR-0008 makes logs non-resumable (only `events` resumes). Then an e2e that probes continuously through a health-failing deploy, and a fault-injected route-verification failure through Caddy. After that, P3.1 |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-28 |
 
 ## Entry template
@@ -53,6 +53,44 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: Caddy admin socket group
+
+- **Phase / task:** P2 follow-up (not a roadmap item): the open risk "the API user can open the Caddy admin socket", found in P2.7b
+- **Author:** Claude Code (desktop session); design approved by the owner on 2026-09-28 before any code was written
+- **Goal:** Enforce invariants 1 and 12 with file permissions: the API user cannot connect to Caddy's admin or verify socket.
+
+**Done**
+- **Config:** `SHIPYARD_CADDY_GROUP`, a group name or numeric gid, default `shipyard-edge`.
+- **Worker:** `edgeGID` (`cmd/shipyard-worker/edge.go`) resolves the group and refuses the worker's primary group (shared with the API, ADR-0008), root's, or a group the worker is not in. `ensureEdge` passes it as `EdgeSpec.GID`.
+- **Edge:**
+  - `EdgeSpec.APIGID` (`omitempty`) gives Caddy the API socket's group through `GroupAdd`, and only when the API socket is mounted. P2.8 had relied on Caddy's primary gid being `shipyard`.
+  - Before starting a stopped or recreated edge, `removeSockets` clears every socket in the admin directory, not just the admin socket. A killed Caddy also leaves `caddy-verify.sock` behind, with the old group after an upgrade.
+- **Deploy:**
+  - The worker unit gets `SupplementaryGroups=docker shipyard-edge` and `ReadWritePaths=/run/shipyard/caddy`.
+  - New `deploy/tmpfiles/shipyard.conf` (`root:shipyard-edge 2770`).
+  - `deploy/README.md` gains a users-and-groups table, install steps, upgrade steps, and a boundary check. The stale P2.1 "open decisions" are rewritten as settled.
+- **Dev and e2e:** `make run-worker` uses `SHIPYARD_CADDY_GROUP=docker`. The e2e passes a supplementary gid of the runner, and asserts that both sockets are in it and not in the runner's primary group.
+
+**Decisions** (ADR-0003 dated note; the owner chose: dedicated group, fail closed, after P2.8)
+- **A dedicated `shipyard-edge` group,** rather than `docker` or the worker's own group. The primary group stays the one shared with the API.
+- **tmpfiles.d, not a `RuntimeDirectory`,** so Caddy's bind mount survives worker restarts, like P2.8's `RuntimeDirectoryPreserve=yes`.
+
+**Problems / surprises**
+- **The code had drifted from ADR-0003:** its Decision named group `shipyard-worker`, but P2.1 used the worker's primary group.
+- **The units could not have worked on a real host:** under `ProtectSystem=strict`, `/run` is read-only for the worker `[SYSTEMD-EXEC]`, so it could not create `/run/shipyard/caddy`. It is fixed by tmpfiles plus `ReadWritePaths=`.
+- **`SupplementaryGroups=` extends `/etc/group`** `[SYSTEMD-EXEC]`, so adding `shipyard-api` to `shipyard-edge` there would undo this. `deploy/README.md` says so.
+- The Windows checkout cannot run `make lint` or the config tests (CRLF files and `filepath.IsAbs`), so the checks ran in a Linux clone in WSL with the diff applied.
+
+**Verification** (WSL2 Ubuntu 24.04, go1.26.8, a clean clone of `edge-group` plus this diff)
+- `make lint`: ok (gofmt, `go vet` and staticcheck, untagged and with `integration,docker,e2e`).
+- `make test`: all 17 packages ok. New or extended tests: `TestEdgeGID` (3 accepted, 7 refused), `TestRemoveSockets`, `TestEdgeSpecValidate` (+3), `TestEdgeCreateOptions` (`GroupAdd`), `TestEdgeSpecHash` (+1), `TestLoadWorkerCaddy` (+3 refusals).
+- `make test-integration`: not run. No store or SQL change.
+- `make test-docker`, `make test-e2e`: **not run yet; the owner runs them** (CLAUDE.md §6).
+
+**Next**
+- Owner: in WSL on `edge-group`, run `make lint test test-docker test-e2e` and paste the output, then record it here.
+- Then the Phase 2 exit criteria (see Current status).
 
 ### 2026-09-28: P2.8 API published through Caddy
 

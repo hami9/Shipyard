@@ -13,7 +13,9 @@ Requires=docker.service
 Type=simple
 User=shipyard-worker
 Group=shipyard
-SupplementaryGroups=docker
+# shipyard-edge owns Caddy's admin directory (SHIPYARD_CADDY_GROUP): only
+# this service has it, the API does not (invariants 1 and 12, ADR-0003).
+SupplementaryGroups=docker shipyard-edge
 EnvironmentFile=/etc/shipyard/shipyard.env
 ExecStart=/usr/local/bin/shipyard-worker run
 Restart=on-failure
@@ -25,6 +27,11 @@ StateDirectory=shipyard-worker
 # mode 0660. The directory lets the shared shipyard group in, nobody else.
 RuntimeDirectory=shipyard-worker
 RuntimeDirectoryMode=0750
+# Caddy's admin directory comes from deploy/tmpfiles/shipyard.conf, not a
+# RuntimeDirectory: Caddy's bind mount must outlive worker restarts. The
+# worker removes stale sockets there, and ProtectSystem=strict makes /run
+# read-only otherwise [SYSTEMD-EXEC].
+ReadWritePaths=/run/shipyard/caddy
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

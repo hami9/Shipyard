@@ -268,14 +268,14 @@ func TestLoadWorkerCaddy(t *testing.T) {
 	}
 	c := cfg.Caddy
 	if !c.Enabled || c.Name != "shipyard-caddy" || c.Image != "" || c.AdminDir != "/run/shipyard/caddy" ||
-		c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 {
+		c.Group != "shipyard-edge" || c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 {
 		t.Errorf("defaults = %+v", c)
 	}
 	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddy: "false", EnvCaddyName: "edge-2",
-		EnvCaddyImage: "caddy:2", EnvCaddyAdminDir: "/srv/caddy", EnvCaddyBind: "127.0.0.1", EnvCaddyHTTPPort: "0", EnvCaddyHTTPSPort: "8443",
+		EnvCaddyImage: "caddy:2", EnvCaddyAdminDir: "/srv/caddy", EnvCaddyGroup: "1234", EnvCaddyBind: "127.0.0.1", EnvCaddyHTTPPort: "0", EnvCaddyHTTPSPort: "8443",
 		EnvCaddyCA: "staging", EnvACMEEmail: "ops@example.com"}))
 	c = cfg.Caddy
-	if err != nil || c.Enabled || c.Name != "edge-2" || c.Image != "caddy:2" || c.AdminDir != "/srv/caddy" ||
+	if err != nil || c.Enabled || c.Name != "edge-2" || c.Image != "caddy:2" || c.AdminDir != "/srv/caddy" || c.Group != "1234" ||
 		c.BindIP.String() != "127.0.0.1" || c.HTTPPort != 0 || c.HTTPSPort != 8443 || c.CA != "staging" || c.ACMEEmail != "ops@example.com" {
 		t.Fatalf("cfg = %+v, %v", c, err)
 	}
@@ -284,6 +284,9 @@ func TestLoadWorkerCaddy(t *testing.T) {
 		"bad name":            {EnvCaddyName, "Caddy!"},
 		"relative admin dir":  {EnvCaddyAdminDir, "run/caddy"},
 		"permission suffix":   {EnvCaddyAdminDir, "/run/caddy|0777"},
+		"group with space":    {EnvCaddyGroup, "shipyard edge"},
+		"uppercase group":     {EnvCaddyGroup, "Edge"},
+		"negative gid":        {EnvCaddyGroup, "-1"},
 		"bind not an ip":      {EnvCaddyBind, "localhost"},
 		"port out of range":   {EnvCaddyHTTPPort, "70000"},
 		"port not a number":   {EnvCaddyHTTPSPort, "https"},

@@ -91,8 +91,8 @@ Shipyard runs on one host. The pieces interact as follows:
 | Process | Runs as | May reach | Must never reach |
 | --- | --- | --- | --- |
 | Caddy | Container attached to every app network. It alone publishes 80/tcp, 443/tcp, and 443/udp. | App containers, the API listener | Docker socket |
-| `shipyard-api` | systemd service, dedicated unprivileged user, **not** in the `docker` group | PostgreSQL, key file (to seal secrets) | Docker socket, Caddy admin socket |
-| `shipyard-worker` | systemd service in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]` | Docker socket, Caddy admin socket, PostgreSQL, GitHub, key file | — |
+| `shipyard-api` | systemd service, dedicated unprivileged user, **not** in the `docker` group | PostgreSQL, key file (to seal secrets) | Docker socket, Caddy admin socket (not in `shipyard-edge`) |
+| `shipyard-worker` | systemd service in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]`, and the `shipyard-edge` group | Docker socket, Caddy admin socket, PostgreSQL, GitHub, key file | — |
 | PostgreSQL | Host service on localhost or a Unix socket, or a container with **no** published port | — | Public network |
 | BuildKit | Container managed by `buildx` (`docker-container` driver) with CPU and memory limits | Internet, for dependency downloads | Shipyard credentials, Docker socket |
 | App containers | One user-defined bridge network per app, with hardened flags (§7) | Their own network, Caddy, outbound internet | Docker socket, host network, other apps' networks |
@@ -360,8 +360,11 @@ The reconciler runs at worker start and then every 60 s by default.
   - **Startup.** At every start, the worker ensures the `shipyard-caddy` container, its `shipyard-caddy` bridge network, and its `-data` and `-config` volumes. It then joins the container to every app network; new app networks are joined as they are created.
   - **Recreation.** A label holding a hash of the spec (image, ports, socket directory, group) makes a changed spec recreate the container. The volumes are kept.
   - **Image.** The official image, pinned by digest. It runs `caddy run --resume`, so a restart serves the last loaded config.
-  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by the worker's group with mode `2770`. It is bind-mounted at the same path, and is the only host path Caddy sees.
-  - **User.** Caddy runs as `0:<worker gid>`, so it can create the socket there without `CAP_DAC_OVERRIDE`.
+  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by `SHIPYARD_CADDY_GROUP` (default `shipyard-edge`) with mode `2770`. It is bind-mounted at the same path.
+    - **The group is the worker's alone.** The worker and the API share their primary group `shipyard` for the log socket (ADR-0008), so the admin group must be another one: the worker resolves it at start and refuses its primary group, or a group it is not in. This enforces invariants 1 and 12 with file permissions, not only in code.
+    - **The directory** comes from `deploy/tmpfiles/shipyard.conf` (`root:shipyard-edge 2770`), recreated at boot. A worker `RuntimeDirectory` would be removed on stop and leave Caddy's bind mount stale. The worker unit makes it writable with `ReadWritePaths=` under `ProtectSystem=strict` `[SYSTEMD-EXEC][SYSTEMD-TMPFILES]`.
+    - **Stale sockets.** Before starting a stopped or recreated edge, the worker removes every socket in the directory (admin and verify): a killed Caddy leaves them behind, with a group that may be stale.
+  - **User.** Caddy runs as `0:<admin gid>`, so it can create its sockets there without `CAP_DAC_OVERRIDE`. With an API hostname, it also gets the API socket's group (`shipyard`) as a supplementary group, and nothing else `[DK-RUN]`.
   - **Hardening.** `--cap-drop ALL` plus `NET_BIND_SERVICE`, `no-new-privileges`, a read-only root filesystem with a small `/tmp` tmpfs, 512 MiB, 1 CPU, 512 pids, the `local` log driver, and `unless-stopped`.
   - **The capability is required.** The image's binary has `cap_net_bind_service=ep`: without the capability, even its exec fails.
   - **Ports.** 80/tcp, 443/tcp, and 443/udp are published on all interfaces by default. The bind address and ports are configurable for development and tests.

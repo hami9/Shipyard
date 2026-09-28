@@ -22,6 +22,11 @@ func TestEdgeSpecValidate(t *testing.T) {
 	if err := validEdge().Validate(); err != nil {
 		t.Fatal(err)
 	}
+	withAPI := validEdge()
+	withAPI.APISocketDir, withAPI.APIGID = "/run/shipyard-api", 991
+	if err := withAPI.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	for name, mutate := range map[string]func(*EdgeSpec){
 		"empty name":           func(s *EdgeSpec) { s.Name = "" },
 		"app network name":     func(s *EdgeSpec) { s.Name = "shipyard-app-web" },
@@ -36,6 +41,9 @@ func TestEdgeSpecValidate(t *testing.T) {
 		"API dir is root":      func(s *EdgeSpec) { s.APISocketDir = "/" },
 		"API dir is admin dir": func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard/caddy" },
 		"API dir with colon":   func(s *EdgeSpec) { s.APISocketDir = "/run/api:rw" },
+		"API dir, no group":    func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
+		"API group, no dir":    func(s *EdgeSpec) { s.APIGID = 991 },
+		"negative API group":   func(s *EdgeSpec) { s.APISocketDir, s.APIGID = "/run/shipyard-api", -1 },
 		"port too high":        func(s *EdgeSpec) { s.HTTPSPort = 70000 },
 		"negative port":        func(s *EdgeSpec) { s.HTTPPort = -1 },
 	} {
@@ -83,6 +91,10 @@ func TestEdgeCreateOptions(t *testing.T) {
 		h.Memory != edgeMemory || h.NanoCPUs != 1e9 || *h.PidsLimit != edgePids || string(h.NetworkMode) != "shipyard-caddy" {
 		t.Errorf("host config: %+v", h)
 	}
+	// Only the admin directory's group: nothing shared with the API.
+	if len(h.GroupAdd) != 0 {
+		t.Errorf("group add = %v", h.GroupAdd)
+	}
 	if len(h.Binds) != 0 {
 		t.Errorf("binds = %v", h.Binds)
 	}
@@ -103,12 +115,21 @@ func TestEdgeCreateOptions(t *testing.T) {
 		t.Errorf("loopback, random port: %v", b)
 	}
 
-	// P2.8: the API's socket directory, read-only, at the same path.
-	s.APISocketDir = "/run/shipyard-api"
-	ms := s.createOptions().HostConfig.Mounts
+	// P2.8: the API's socket directory, read-only, at the same path, and
+	// the API's group as a supplementary group, so Caddy can connect.
+	s.APISocketDir, s.APIGID = "/run/shipyard-api", 991
+	h = s.createOptions().HostConfig
+	ms := h.Mounts
 	if last := ms[len(ms)-1]; len(ms) != 4 || last.Type != mount.TypeBind || last.Source != "/run/shipyard-api" ||
 		last.Target != "/run/shipyard-api" || !last.ReadOnly {
 		t.Errorf("mounts with the API = %+v", ms)
+	}
+	if !slices.Equal(h.GroupAdd, []string{"991"}) || s.createOptions().Config.User != "0:990" {
+		t.Errorf("with the API: group add = %v, user = %s", h.GroupAdd, s.createOptions().Config.User)
+	}
+	s.APIGID = s.GID // a dev setup with one group: nothing to add
+	if g := s.createOptions().HostConfig.GroupAdd; len(g) != 0 {
+		t.Errorf("same group: group add = %v", g)
 	}
 }
 
@@ -116,12 +137,13 @@ func TestEdgeCreateOptions(t *testing.T) {
 func TestEdgeSpecHash(t *testing.T) {
 	a := validEdge()
 	for name, mutate := range map[string]func(*EdgeSpec){
-		"image": func(s *EdgeSpec) { s.Image = "caddy:2" },
-		"port":  func(s *EdgeSpec) { s.HTTPSPort = 8443 },
-		"dir":   func(s *EdgeSpec) { s.AdminDir = "/run/other" },
-		"group": func(s *EdgeSpec) { s.GID = 991 },
-		"bind":  func(s *EdgeSpec) { s.BindIP = netip.MustParseAddr("10.0.0.1") },
-		"api":   func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
+		"image":     func(s *EdgeSpec) { s.Image = "caddy:2" },
+		"port":      func(s *EdgeSpec) { s.HTTPSPort = 8443 },
+		"dir":       func(s *EdgeSpec) { s.AdminDir = "/run/other" },
+		"group":     func(s *EdgeSpec) { s.GID = 991 },
+		"bind":      func(s *EdgeSpec) { s.BindIP = netip.MustParseAddr("10.0.0.1") },
+		"api":       func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
+		"api group": func(s *EdgeSpec) { s.APIGID = 991 },
 	} {
 		b := validEdge()
 		mutate(&b)
@@ -134,7 +156,7 @@ func TestEdgeSpecHash(t *testing.T) {
 	}
 	// An edge without the API keeps the hash it had before P2.8, so an
 	// upgrade does not recreate it: the field is omitted when empty.
-	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") {
+	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") || strings.Contains(string(b), "APIGID") {
 		t.Errorf("spec JSON = %s", b)
 	}
 }

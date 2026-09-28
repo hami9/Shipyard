@@ -45,6 +45,7 @@ const (
 	EnvCaddyName          = "SHIPYARD_CADDY_NAME"
 	EnvCaddyImage         = "SHIPYARD_CADDY_IMAGE"
 	EnvCaddyAdminDir      = "SHIPYARD_CADDY_ADMIN_DIR"
+	EnvCaddyGroup         = "SHIPYARD_CADDY_GROUP"
 	EnvCaddyBind          = "SHIPYARD_CADDY_BIND"
 	EnvCaddyHTTPPort      = "SHIPYARD_CADDY_HTTP_PORT"
 	EnvCaddyHTTPSPort     = "SHIPYARD_CADDY_HTTPS_PORT"
@@ -76,6 +77,8 @@ const (
 	DefaultBuilderCPUs       = 2.0
 	DefaultCaddyName         = "shipyard-caddy"
 	DefaultCaddyAdminDir     = "/run/shipyard/caddy"
+	// DefaultCaddyGroup owns the admin directory; only the worker is in it.
+	DefaultCaddyGroup = "shipyard-edge"
 	// DefaultWorkerSocket is in the worker's systemd RuntimeDirectory (ADR-0008).
 	DefaultWorkerSocket = "/run/shipyard-worker/logs.sock"
 	minPollInterval     = 100 * time.Millisecond
@@ -88,6 +91,8 @@ var (
 	memoryRE = regexp.MustCompile(`^[1-9][0-9]*[bkmg]?$`)
 	// builderRE is a safe buildx builder name; it becomes a container name.
 	builderRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	// groupRE is a Unix group name (the useradd convention) or a numeric gid.
+	groupRE = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}|[0-9]{1,10})$`)
 	// suffixRE is a domain suffix: DNS labels with at least one dot, the last
 	// one alphabetic (mirrors the routes.hostname CHECK).
 	suffixRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -182,7 +187,10 @@ type Caddy struct {
 	Enabled  bool
 	Name     string
 	Image    string // empty: the pinned default in internal/runtime
-	AdminDir string // holds the admin socket; group = the worker's group
+	AdminDir string // holds the admin and verify sockets
+	// Group owns AdminDir: a name or gid that only the worker has, never
+	// the primary group it shares with the API (invariants 1 and 12).
+	Group string
 	// BindIP is where the ports are published; invalid means all interfaces.
 	BindIP              netip.Addr
 	HTTPPort, HTTPSPort int // 0 lets Docker choose (tests)
@@ -315,6 +323,7 @@ func (r *reader) caddy() Caddy {
 		Name:      r.str(EnvCaddyName, DefaultCaddyName),
 		Image:     r.str(EnvCaddyImage, ""),
 		AdminDir:  r.str(EnvCaddyAdminDir, DefaultCaddyAdminDir),
+		Group:     r.str(EnvCaddyGroup, DefaultCaddyGroup),
 		HTTPPort:  r.port(EnvCaddyHTTPPort, 80),
 		HTTPSPort: r.port(EnvCaddyHTTPSPort, 443),
 		CA:        r.str(EnvCaddyCA, ""),
@@ -331,6 +340,9 @@ func (r *reader) caddy() Caddy {
 	}
 	if !filepath.IsAbs(c.AdminDir) || filepath.Clean(c.AdminDir) != c.AdminDir || strings.ContainsAny(c.AdminDir, "|:,") {
 		r.fail(EnvCaddyAdminDir, fmt.Errorf("%q must be a clean absolute path", c.AdminDir))
+	}
+	if !groupRE.MatchString(c.Group) {
+		r.fail(EnvCaddyGroup, fmt.Errorf("%q must be a group name or a numeric gid", c.Group))
 	}
 	if s := r.str(EnvCaddyBind, ""); s != "" {
 		ip, err := netip.ParseAddr(s)

@@ -22,9 +22,10 @@ All notable changes to Shipyard are recorded here.
   - There is no public route until Phase 2.
 - **Caddy edge:** at start, the worker keeps a Caddy container (`caddy:2.11.4-alpine`, pinned by digest) running.
   - It is the only container that publishes ports (80/tcp, 443/tcp, 443/udp), and it joins every app network.
-  - Its admin API is available only on a Unix socket (mode 0660) that the worker's group can use.
+  - Its admin API is available only on a Unix socket (mode 0660) in a directory owned by `SHIPYARD_CADDY_GROUP` (default `shipyard-edge`), a group only the worker has. The API user cannot connect to it. The worker refuses to start if that group is its primary group (shared with the API) or one it is not in.
+  - **Install:** create the `shipyard-edge` group, install `deploy/tmpfiles/shipyard.conf` (it creates `/run/shipyard/caddy`), and use the updated worker unit (`SupplementaryGroups=docker shipyard-edge`, `ReadWritePaths=/run/shipyard/caddy`). See `deploy/README.md`.
   - Certificates and the last loaded config persist in volumes, and a restart resumes that config.
-  - Configured with `SHIPYARD_CADDY`, `SHIPYARD_CADDY_NAME`, `SHIPYARD_CADDY_IMAGE`, `SHIPYARD_CADDY_ADMIN_DIR`, `SHIPYARD_CADDY_BIND`, `SHIPYARD_CADDY_HTTP_PORT`, and `SHIPYARD_CADDY_HTTPS_PORT`.
+  - Configured with `SHIPYARD_CADDY`, `SHIPYARD_CADDY_NAME`, `SHIPYARD_CADDY_IMAGE`, `SHIPYARD_CADDY_ADMIN_DIR`, `SHIPYARD_CADDY_GROUP`, `SHIPYARD_CADDY_BIND`, `SHIPYARD_CADDY_HTTP_PORT`, and `SHIPYARD_CADDY_HTTPS_PORT`.
 - **Caddy config from the database:** at start, the worker renders Caddy's whole config from the routes table. It loads the config only if it differs, as a conditional replace (`If-Match`) that fails safely on a concurrent change. The admin API always stays on its socket. A config Caddy rejects leaves the running one in place. Certificates are configured with `SHIPYARD_CADDY_CA` (default, `staging`, or `internal`) and `SHIPYARD_ACME_EMAIL`.
 - **Traffic switching:** once a candidate is healthy, the worker points the app's hostnames at it in Caddy. It verifies each hostname through Caddy (a private plain-HTTP listener with the same routes), and only then commits the new routes together with the active deployment. If loading, verifying, or committing fails, the previous routes are restored before the candidate is removed, so the running release keeps serving.
 - **Domains:** `shipyard domain add|remove|list APP [HOSTNAME]` and `/v1/apps/{app}/domains`. An app can have several hostnames; each hostname belongs to one app.
