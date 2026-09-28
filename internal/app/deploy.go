@@ -404,9 +404,10 @@ func (r *deployRun) healthGate(ctx context.Context, id string) error {
 	return nil
 }
 
-// activate commits the new active deployment, then drains the one it
-// replaced. With no route yet (Phase 2), nothing is served from the old one,
-// so it stops right away instead of after an observation window.
+// activate commits the new active deployment. The one it replaced keeps
+// running through the observation window; the reconciler's janitor then
+// stops it gracefully and removes it (ARCHITECTURE §5 step 8), which also
+// survives a worker restart.
 func (r *deployRun) activate(ctx context.Context) error {
 	if err := r.phase(ctx, PhaseActivate); err != nil {
 		return err
@@ -425,15 +426,8 @@ func (r *deployRun) activate(ctx context.Context) error {
 	}
 	r.event(ctx, store.LevelInfo, "deployment %s is active (commit %s)", r.dep.ID, r.dep.SourceCommitSHA)
 	if prev != nil && prev.ContainerID != "" {
-		err := r.Runtime.Stop(ctx, prev.ContainerID, r.app.StopTimeout)
-		if err == nil {
-			err = r.Runtime.Remove(ctx, prev.ContainerID)
-		}
-		if err != nil {
-			// The deploy succeeded; the reconciler removes leftovers later.
-			r.log.Warn("could not remove superseded deployment", slog.String("superseded_id", prev.ID), slog.Any("err", err))
-			r.event(ctx, store.LevelWarn, "could not remove superseded deployment %s: %v", prev.ID, err)
-		}
+		r.event(ctx, store.LevelInfo, "previous deployment %s keeps running through the observation window, then stops gracefully (stop timeout %s)",
+			prev.ID, r.app.StopTimeout)
 	}
 	return nil
 }

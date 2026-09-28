@@ -197,6 +197,22 @@ func TestLoadWorkerReconcileInterval(t *testing.T) {
 	checkErr(t, err, EnvReconcileInterval)
 }
 
+func TestLoadWorkerObservationWindow(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{{"", 5 * time.Minute}, {"0", 0}, {"0s", 0}, {"90s", 90 * time.Second}, {"24h", 24 * time.Hour}} {
+		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvObservationWindow: tc.value}))
+		if err != nil || cfg.ObservationWindow != tc.want {
+			t.Errorf("%q = %s, %v; want %s", tc.value, cfg.ObservationWindow, err, tc.want)
+		}
+	}
+	for _, bad := range []string{"-1s", "soon", "25h"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvObservationWindow: bad}))
+		checkErr(t, err, EnvObservationWindow)
+	}
+}
+
 func TestLoadWorkerCaddy(t *testing.T) {
 	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
 	if err != nil {

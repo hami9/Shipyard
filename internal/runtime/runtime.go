@@ -398,6 +398,35 @@ func (r *Runtime) Remove(ctx context.Context, id string) error {
 	return nil
 }
 
+// Managed is one of Shipyard's app containers, as the reconciler sees it.
+type Managed struct {
+	ID           string
+	App          string
+	DeploymentID string
+	Running      bool
+}
+
+// ListManaged returns every app container Shipyard created (running or not),
+// by label; the edge and foreign containers are not included.
+func (r *Runtime) ListManaged(ctx context.Context) ([]Managed, error) {
+	res, err := r.cli.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: make(client.Filters).Add("label", labelManaged+"=true"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	var out []Managed
+	for _, c := range res.Items {
+		app, dep := c.Labels[labelApp], c.Labels[labelDeployment]
+		if !slugRE.MatchString(app) || !uuidRE.MatchString(dep) {
+			continue
+		}
+		out = append(out, Managed{ID: c.ID, App: app, DeploymentID: dep, Running: c.State == container.StateRunning})
+	}
+	return out, nil
+}
+
 // maxLogBytes bounds what Logs reads, whatever the line lengths.
 const maxLogBytes = 256 << 10
 

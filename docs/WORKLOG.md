@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.5: the domain API (`domain add/remove/list`, DNS preflight, suffix allow-list), periodic Caddy reconcile, and pending switches kept across syncs |
-| **Next task** | P2.6: observation window, then graceful stop of the previous container with the per-app `stop_timeout` |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.6: the observation window; the reconciler's janitor drains superseded containers with the app's `stop_timeout` and removes failed ones |
+| **Next task** | P2.7: SSE for operation events and logs |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A worker stopped during a drain leaves the superseded container running until the reconciler's container step (Phase 2) |
-| **Last updated** | 2026-09-27 |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
+| **Last updated** | 2026-09-28 |
 
 ## Entry template
 
@@ -53,6 +53,37 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.6 observation window and drain
+
+- **Phase / task:** P2.6: observation window, then graceful stop of the previous container with the per-app `stop_timeout`
+- **Author:** Claude Code (desktop session)
+- **Goal:** Keep the previous release running after a switch, then stop it gracefully, driven by the database so a worker restart loses nothing.
+
+**Done**
+- **Deploy:** activation no longer stops the previous container. It logs the window and the app's stop timeout to the operation's events.
+- **`app.Janitor`** (Reconciler step 2, run after the Caddy sync), with the database deciding:
+  - a `superseded` deployment past `ended_at` + window: `docker stop` with the app's `stop_timeout`, then removal;
+  - `failed`/`cancelled`: removed;
+  - active, in-progress, or within the window: kept.
+  - It carries on past a failing container. A database error removes nothing.
+- **`runtime.ListManaged`:** app containers by the `io.shipyard.managed` label, running or not. It skips containers with an invalid slug or deployment label, and the edge.
+- **Config:** `SHIPYARD_OBSERVATION_WINDOW` (default 5m, 0s–24h, 0 allowed).
+
+**Decisions**
+- **A container whose deployment is not in this database is never removed.** My first draft removed it as an orphan. The e2e case showed that an e2e or test worker would then delete the owner's development containers on the same engine. Cost: a deleted app's containers stay (app delete cascades its deployments). This is recorded as an open risk, and the fix is an installation label.
+- **The drain lives in the reconciler, not the deploy.** A 5-minute wait inside the operation would hold the app's operation slot and the lease. No schema change: `ended_at` is the window's start.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `config.go` and `janitor_test.go`), `make test`, `make test-integration`: all ok. `-race -count=5` on `app` and `config`: ok.
+  - `TestJanitorSweep` (9 containers: drain at and past the window, kept within it, failed removed, foreign kept, exited not stopped again), `TestJanitorCarriesOn`, `TestLoadWorkerObservationWindow` (5 valid, 3 invalid), and the deploy tests updated (no stop/remove at activation; the event is logged).
+- `make test-docker`: all ok, including the new `TestListManaged` (a running and a created container listed, a forged label skipped).
+- **`make test-e2e`: PASS (134 s).** With a 6 s window, the first container is still running right after deploy 5 succeeds, then removed by the reconciler within 30 s. Both hostnames serve the second container.
+- No leftovers. Secret scan: clean (see the PR).
+
+**Next**
+- The owner merges #1–#15 in order.
+- P2.7: SSE for operation events (`id`, `Last-Event-ID`) and logs.
 
 ### 2026-09-28: P2.5 domain API
 

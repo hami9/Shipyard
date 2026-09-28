@@ -200,6 +200,10 @@ stateDiagram-v2
      - **Lost lease or shutdown.** The routes are restored, but nothing is recorded; the next owner resumes and switches again.
      - **Restore fails too.** The next worker start restores (Reconciler step 3).
 8. **Observe and drain.** Keep the previous container for an observation window (default 5 min). Then run `docker stop` with the app's `stop_timeout`, which sends `SIGTERM` and later `SIGKILL` (Docker's default is 10 s `[DK-RUN]`), and remove the container. The image stays, subject to retention.
+   - As implemented (P2.6, `app.Janitor`, Reconciler step 2):
+     - **No drain in the deploy.** Activation leaves the previous container running and logs the window and stop timeout to the operation's events.
+     - **Who drains.** The reconciler does, after its Caddy sync. A `superseded` deployment whose `ended_at` plus the window has passed is stopped with its app's `stop_timeout`, then removed. The decision comes from the database, so a worker restart loses nothing.
+     - **Setting.** `SHIPYARD_OBSERVATION_WINDOW` (0 to 24h; 0 drains at the next reconcile). The drain happens within one reconcile interval after the window ends.
 
 **As implemented in Phase 1 (P1.11, `internal/app/deploy.go`; routing arrives in Phase 2)**
 
@@ -211,8 +215,7 @@ stateDiagram-v2
   - With an image already recorded, nothing is fetched or rebuilt.
   - The container is re-created idempotently: same name, same image.
 - **Activation.** Superseding the previous active deployment, marking this one active, and completing the operation commit in one transaction.
-  - With no route yet, the previous container is drained right away, with no observation window.
-  - If the worker stops during the drain, the old container stays until the reconciler's container step (Phase 2) removes it.
+  - Phase 1 drained the previous container right away. Since P2.6 it stays for the observation window (step 8).
 - **Failure.** A deploy failure is final, with no automatic retry.
   - The candidate's last 50 output lines go to the operation's events.
   - The candidate is removed, and the deployment and the operation are marked failed.
@@ -246,6 +249,11 @@ The reconciler runs at worker start and then every 60 s by default.
 
 1. Re-queue operations whose leases expired, incrementing `attempt`. Once `max_attempts` is exceeded, mark them failed.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
+   - Since P2.6 (`app.Janitor`, run after step 3):
+     - superseded containers are drained once their observation window is over (§5 step 8);
+     - containers of `failed` or `cancelled` deployments are removed;
+     - a container whose deployment is not in this database is left alone. It belongs to another Shipyard database on the same engine (a test run or a development worker), and Shipyard removes only what it can show it owns.
+   - Not yet: recreating a missing active container, and removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
 3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
 

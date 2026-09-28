@@ -138,7 +138,7 @@ flowchart LR
   - `shipyard domain add|remove|list`, with several hostnames per app. A new hostname targets the running deployment.
   - The worker's reconciler applies route changes.
   - The staging toggle is `SHIPYARD_CADDY_CA=staging` (P2.3).
-- [ ] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
+- [x] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
 - [ ] **P2.7** SSE:
   - Operation events with `id` and `Last-Event-ID` resume, and a keepalive every 15 s.
   - `logs --follow` with a bounded tail and best-effort secret redaction.
