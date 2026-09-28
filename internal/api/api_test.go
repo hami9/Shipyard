@@ -214,3 +214,55 @@ func TestServeShutsDownGracefully(t *testing.T) {
 		t.Fatal("Serve did not return after cancel")
 	}
 }
+
+// A long-lived stream ends when shutdown starts instead of holding it up
+// until the timeout; an ordinary request still finishes.
+func TestServeEndsStreams(t *testing.T) {
+	ln, err := Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, slowDone := make(chan struct{}), make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /stream", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		http.NewResponseController(w).Flush()
+		started <- struct{}{}
+		<-stopping(r.Context())
+	})
+	mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		time.Sleep(300 * time.Millisecond)
+		if r.Context().Err() == nil {
+			close(slowDone)
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, mux, 30*time.Second, logging.New(io.Discard, slog.LevelInfo, logging.FormatJSON))
+	}()
+	for _, path := range []string{"/stream", "/slow"} {
+		go func() {
+			if resp, err := http.Get("http://" + ln.Addr().String() + path); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}()
+		<-started
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the open stream held up shutdown")
+	}
+	select {
+	case <-slowDone:
+	default:
+		t.Fatal("an in-flight request was cut short")
+	}
+}

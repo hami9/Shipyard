@@ -16,6 +16,7 @@ import (
 type OperationStore interface {
 	EnqueueOperation(ctx context.Context, n store.NewOperation) (store.Enqueued, error)
 	OperationByID(ctx context.Context, id string) (store.Operation, error)
+	OperationEvents(ctx context.Context, opID string, afterSeq int64, limit int) ([]store.OperationEvent, error)
 }
 
 // Client keys are namespaced so they can never collide with the webhook
@@ -47,7 +48,8 @@ func toOperationJSON(o store.Operation) operationJSON {
 
 type opHandlers struct {
 	*appHandlers
-	ops OperationStore
+	ops             OperationStore
+	poll, keepalive time.Duration // event streams
 }
 
 // deploy admits a deploy request. It answers 202 for a new operation and
