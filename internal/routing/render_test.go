@@ -46,6 +46,10 @@ func TestRenderGolden(t *testing.T) {
 	}{
 		// Production shape: API through Caddy, default CAs.
 		"full": {Settings{AdminSocket: sock, APIHostname: "shipyard.example.com", APIUpstream: "unix//run/shipyard/api/api.sock"}, apps},
+		// What the worker renders: the verification server added.
+		"verify": {Settings{AdminSocket: sock, VerifySocket: "/run/shipyard/caddy/caddy-verify.sock",
+			APIHostname: "shipyard.example.com", APIUpstream: "unix//run/shipyard/api/api.sock"}, apps},
+		"verify-empty": {Settings{AdminSocket: sock, VerifySocket: "/run/shipyard/caddy/caddy-verify.sock"}, nil},
 		// A fresh install: only the admin socket, nothing served.
 		"empty":    {Settings{AdminSocket: sock}, nil},
 		"staging":  {Settings{AdminSocket: sock, CA: CAStaging, ACMEEmail: "ops@example.com"}, apps[:1]},
@@ -106,25 +110,27 @@ func TestRenderRejects(t *testing.T) {
 		s      Settings
 		routes []Route
 	}{
-		"relative admin socket":     {Settings{AdminSocket: "caddy.sock"}, nil},
-		"admin socket with perms":   {Settings{AdminSocket: sock + "|0666"}, nil},
-		"admin socket unclean":      {Settings{AdminSocket: "/run/../tmp/x.sock"}, nil},
-		"uppercase hostname":        {ok, []Route{{Hostname: "Web.example.com"}}},
-		"single-label hostname":     {ok, []Route{{Hostname: "localhost"}}},
-		"wildcard hostname":         {ok, []Route{{Hostname: "*.example.com"}}},
-		"placeholder hostname":      {ok, []Route{{Hostname: "{http.request.host}"}}},
-		"duplicate hostname":        {ok, []Route{{Hostname: "a.example.com"}, {Hostname: "a.example.com"}}},
-		"app on the API hostname":   {Settings{AdminSocket: sock, APIHostname: "a.example.com", APIUpstream: "api:80"}, []Route{{Hostname: "a.example.com"}}},
-		"upstream without port":     {ok, []Route{{Hostname: "a.example.com", Upstream: "web"}}},
-		"upstream port range":       {ok, []Route{{Hostname: "a.example.com", Upstream: "web:80-90"}}},
-		"upstream port zero":        {ok, []Route{{Hostname: "a.example.com", Upstream: "web:0"}}},
-		"upstream network prefix":   {ok, []Route{{Hostname: "a.example.com", Upstream: "tcp/web:80"}}},
-		"upstream placeholder":      {ok, []Route{{Hostname: "a.example.com", Upstream: "{env.X}:80"}}},
-		"app upstream on a socket":  {ok, []Route{{Hostname: "a.example.com", Upstream: "unix//var/run/docker.sock"}}},
-		"API host without upstream": {Settings{AdminSocket: sock, APIHostname: "api.example.com"}, nil},
-		"API relative socket":       {Settings{AdminSocket: sock, APIHostname: "api.example.com", APIUpstream: "unix/api.sock"}, nil},
-		"unknown CA":                {Settings{AdminSocket: sock, CA: "zerossl"}, nil},
-		"bad email":                 {Settings{AdminSocket: sock, ACMEEmail: "not-an-email"}, nil},
+		"relative admin socket":      {Settings{AdminSocket: "caddy.sock"}, nil},
+		"admin socket with perms":    {Settings{AdminSocket: sock + "|0666"}, nil},
+		"admin socket unclean":       {Settings{AdminSocket: "/run/../tmp/x.sock"}, nil},
+		"uppercase hostname":         {ok, []Route{{Hostname: "Web.example.com"}}},
+		"single-label hostname":      {ok, []Route{{Hostname: "localhost"}}},
+		"wildcard hostname":          {ok, []Route{{Hostname: "*.example.com"}}},
+		"placeholder hostname":       {ok, []Route{{Hostname: "{http.request.host}"}}},
+		"duplicate hostname":         {ok, []Route{{Hostname: "a.example.com"}, {Hostname: "a.example.com"}}},
+		"app on the API hostname":    {Settings{AdminSocket: sock, APIHostname: "a.example.com", APIUpstream: "api:80"}, []Route{{Hostname: "a.example.com"}}},
+		"upstream without port":      {ok, []Route{{Hostname: "a.example.com", Upstream: "web"}}},
+		"upstream port range":        {ok, []Route{{Hostname: "a.example.com", Upstream: "web:80-90"}}},
+		"upstream port zero":         {ok, []Route{{Hostname: "a.example.com", Upstream: "web:0"}}},
+		"upstream network prefix":    {ok, []Route{{Hostname: "a.example.com", Upstream: "tcp/web:80"}}},
+		"upstream placeholder":       {ok, []Route{{Hostname: "a.example.com", Upstream: "{env.X}:80"}}},
+		"app upstream on a socket":   {ok, []Route{{Hostname: "a.example.com", Upstream: "unix//var/run/docker.sock"}}},
+		"API host without upstream":  {Settings{AdminSocket: sock, APIHostname: "api.example.com"}, nil},
+		"API relative socket":        {Settings{AdminSocket: sock, APIHostname: "api.example.com", APIUpstream: "unix/api.sock"}, nil},
+		"unknown CA":                 {Settings{AdminSocket: sock, CA: "zerossl"}, nil},
+		"verify on the admin socket": {Settings{AdminSocket: sock, VerifySocket: sock}, nil},
+		"verify socket relative":     {Settings{AdminSocket: sock, VerifySocket: "verify.sock"}, nil},
+		"bad email":                  {Settings{AdminSocket: sock, ACMEEmail: "not-an-email"}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if out, err := Render(tc.s, tc.routes); !errors.Is(err, ErrInvalid) || out != nil {
