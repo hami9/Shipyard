@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
-// Deployment statuses (ARCHITECTURE §5). "switching" arrives with routing.
+// Deployment statuses (ARCHITECTURE §5).
 const (
 	DeployBuilding       = "building"
 	DeployStarting       = "starting"
 	DeployHealthChecking = "health_checking"
+	DeploySwitching      = "switching"
 	DeployActive         = "active"
 	DeploySuperseded     = "superseded"
 	DeployFailed         = "failed"
@@ -33,6 +35,7 @@ type Deployment struct {
 	BuildingAt       *time.Time
 	StartingAt       *time.Time
 	HealthCheckingAt *time.Time
+	SwitchingAt      *time.Time
 	ActiveAt         *time.Time
 	EndedAt          *time.Time
 	CreatedAt        time.Time
@@ -48,13 +51,13 @@ type NewDeployment struct {
 
 const deployColumns = `id, app_id, operation_id, kind, source_commit_sha, coalesce(image_id, ''),
 	build_metadata, env_revision_id, coalesce(container_id, ''), status, coalesce(failure_reason, ''),
-	building_at, starting_at, health_checking_at, active_at, ended_at, created_at, updated_at`
+	building_at, starting_at, health_checking_at, switching_at, active_at, ended_at, created_at, updated_at`
 
 func scanDeployment(row interface{ Scan(...any) error }) (Deployment, error) {
 	var d Deployment
 	err := row.Scan(&d.ID, &d.AppID, &d.OperationID, &d.Kind, &d.SourceCommitSHA, &d.ImageID,
 		&d.BuildMetadata, &d.EnvRevisionID, &d.ContainerID, &d.Status, &d.FailureReason,
-		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt)
+		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.SwitchingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt)
 	return d, mapError(err)
 }
 
@@ -96,7 +99,7 @@ func (s *Store) ActiveDeployment(ctx context.Context, appID string) (Deployment,
 func (s *Store) ownedDeploymentUpdate(ctx context.Context, set, id, owner string, args ...any) error {
 	tag, err := s.q.Exec(ctx, `UPDATE deployments d SET `+set+` FROM operations o
 		WHERE d.id = $1 AND o.id = d.operation_id AND o.lease_owner = $2 AND o.status = 'running'
-		  AND d.status IN ('building', 'starting', 'health_checking')`, append([]any{id, owner}, args...)...)
+		  AND d.status IN ('building', 'starting', 'health_checking', 'switching')`, append([]any{id, owner}, args...)...)
 	if err != nil {
 		return mapError(err)
 	}
@@ -124,6 +127,12 @@ func (s *Store) MarkHealthChecking(ctx context.Context, id, owner string) error 
 		health_checking_at = coalesce(d.health_checking_at, now())`, id, owner)
 }
 
+// MarkSwitching records that the healthy candidate's routes are being loaded
+// and verified (ARCHITECTURE §5 step 7).
+func (s *Store) MarkSwitching(ctx context.Context, id, owner string) error {
+	return s.ownedDeploymentUpdate(ctx, `status = 'switching', switching_at = coalesce(d.switching_at, now())`, id, owner)
+}
+
 // FailDeployment ends a deployment as failed. The reason must not contain
 // secrets; it is shown to operators.
 func (s *Store) FailDeployment(ctx context.Context, id, owner, reason string) error {
@@ -133,11 +142,13 @@ func (s *Store) FailDeployment(ctx context.Context, id, owner, reason string) er
 	return s.ownedDeploymentUpdate(ctx, `status = 'failed', failure_reason = $3, ended_at = now()`, id, owner, reason)
 }
 
-// ActivateDeployment makes a healthy deployment the app's active one, ends
-// the previous active one as superseded, and completes the operation, in one
-// transaction. It returns the superseded deployment, if any, so the caller
-// can drain its container.
-func (s *Store) ActivateDeployment(ctx context.Context, id, owner string) (*Deployment, error) {
+// ActivateDeployment makes a healthy deployment the app's active one, points
+// the app's verified hostnames at upstream, ends the previous active
+// deployment as superseded, and completes the operation, in one transaction
+// (ARCHITECTURE §5 step 7). Only hostnames the switch verified move; a route
+// added meanwhile keeps its target. It returns the superseded deployment, if
+// any, so the caller can drain its container.
+func (s *Store) ActivateDeployment(ctx context.Context, id, owner, upstream string, hostnames []string) (*Deployment, error) {
 	var prev *Deployment
 	err := s.InTx(ctx, func(tx *Store) error {
 		d, err := tx.DeploymentByID(ctx, id)
@@ -159,6 +170,18 @@ func (s *Store) ActivateDeployment(ctx context.Context, id, owner string) (*Depl
 		}
 		if err := tx.ownedDeploymentUpdate(ctx, `status = 'active', active_at = now()`, id, owner); err != nil {
 			return err
+		}
+		if len(hostnames) > 0 {
+			tag, err := tx.q.Exec(ctx, `UPDATE routes SET deployment_id = $2, upstream = $3
+				WHERE app_id = $1 AND hostname = ANY($4::text[])`, d.AppID, id, upstream, hostnames)
+			if err != nil {
+				return mapError(err)
+			}
+			// A verified hostname that vanished (deleted meanwhile) must not
+			// be committed as served.
+			if tag.RowsAffected() != int64(len(hostnames)) {
+				return fmt.Errorf("%w: routes changed during the switch", ErrConflict)
+			}
 		}
 		return tx.CompleteOperation(ctx, d.OperationID, owner)
 	})

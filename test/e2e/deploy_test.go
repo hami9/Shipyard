@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -35,6 +36,9 @@ func TestPhase1ExitCriteria(t *testing.T) {
 
 	h.cli("", "app", "create", slug, "--repo", "e2e/demo", "--branch", "main", "--port", "8080", "--health-path", "/healthz")
 	h.cli("hello from e2e\n", "env", "set", slug, "GREETING")
+	// P2.4: a route for the app (the domain API arrives with P2.5).
+	const host = "app.e2e.example"
+	h.addRoute(host)
 
 	// 1. A pinned SHA deploys; replaying the Idempotency-Key is the same operation.
 	op1 := h.deploy("--ref", h.repo.good, "--idempotency-key", "e2e-1")
@@ -63,6 +67,14 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if ports := h.docker("port", first); ports != "" {
 		t.Fatalf("the app container publishes ports: %s", ports)
 	}
+	// P2.4: HTTPS through Caddy reaches this container (its hostname is its
+	// short ID) and carries the injected environment.
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != first[:12] {
+		t.Fatalf("caddy serves %q, want the first container %s", got, first[:12])
+	}
+	if got := h.viaCaddy(host, "/env?key=GREETING"); got != "hello from e2e" {
+		t.Fatalf("GREETING through caddy = %q", got)
+	}
 
 	// 2. A broken Dockerfile at the branch head fails with the build log.
 	h.wantOp(h.deploy(), "failed", "missing-file")
@@ -73,6 +85,9 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	h.wantOp(h.deploy("--ref", h.repo.good), "failed", "status 500")
 	if now := h.onlyRunning(); now != first {
 		t.Fatalf("a failed deploy replaced the running container: %s -> %s", first, now)
+	}
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != first[:12] {
+		t.Fatalf("after failed deploys caddy serves %q, want %s", got, first[:12])
 	}
 
 	// 5. A healthy release supersedes the first, whose container is removed.
@@ -87,8 +102,12 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if !gone {
 		t.Fatal("the superseded container was not removed")
 	}
-	if second := h.onlyRunning(); second == first {
+	second := h.onlyRunning()
+	if second == first {
 		t.Fatal("the second release did not replace the first")
+	}
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != second[:12] {
+		t.Fatalf("after the switch caddy serves %q, want the second container %s", got, second[:12])
 	}
 	if n := h.docker("ps", "-aq", "--filter", "label=io.shipyard.app="+slug); strings.Count(n, "\n") != 0 {
 		t.Fatalf("leftover containers of %s:\n%s", slug, n)
@@ -100,6 +119,7 @@ type harness struct {
 	bin    string
 	slug   string
 	caddy  string // the worker's edge container
+	dbURL  string
 	repo   repo
 	env    []string // for the CLI
 	ops    []string // every operation deployed, for dumpEvents
@@ -151,6 +171,7 @@ func start(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	dbURL := storetest.NewDatabase(t)
+	h.dbURL = dbURL
 	t.Cleanup(func() { h.dumpEvents(dbURL) }) // before the database is dropped
 	common := append(cleanEnv(), "SHIPYARD_DATABASE_URL="+dbURL,
 		"SHIPYARD_KEK_DIR="+kek, "SHIPYARD_KEK_ACTIVE=e2e", "SHIPYARD_LOG_FORMAT=text")
@@ -251,6 +272,52 @@ func (h *harness) deploy(args ...string) string {
 	}
 	h.ops = append(h.ops, m[1])
 	return m[1]
+}
+
+// addRoute inserts a routes row for the app, as the domain API will (P2.5).
+func (h *harness) addRoute(hostname string) {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(h.t.Context(), 10*time.Second)
+	defer cancel()
+	pool, err := store.Open(ctx, h.dbURL)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer pool.Close()
+	tag, err := pool.Exec(ctx, `INSERT INTO routes (app_id, hostname) SELECT id, $2 FROM apps WHERE slug = $1`, h.slug, hostname)
+	if err != nil || tag.RowsAffected() != 1 {
+		h.t.Fatalf("add route: %v", err)
+	}
+}
+
+// viaCaddy GETs https://host/path through Caddy's published port. The e2e
+// Caddy uses its internal CA, so the certificate is not verified here.
+func (h *harness) viaCaddy(host, path string) string {
+	h.t.Helper()
+	out := h.docker("port", h.caddy, "443/tcp")
+	addr := strings.Fields(out)[0]
+	hc := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}}
+	var last error
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		resp, err := hc.Get("https://" + host + path)
+		if err != nil {
+			last = err
+			continue
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			last = fmt.Errorf("%s: %s", resp.Status, b)
+			continue
+		}
+		return strings.TrimSpace(string(b))
+	}
+	h.t.Fatalf("https://%s%s through caddy: %v", host, path, last)
+	return ""
 }
 
 // dumpEvents prints every operation's event log when the test failed.

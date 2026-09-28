@@ -192,6 +192,13 @@ stateDiagram-v2
    - Apply it as a whole-config replace, `POST /config/` with `If-Match: <etag>` (`routing.Admin.Apply`). Caddy applies it atomically with zero downtime, or rolls back `[CADDY-API]`. `/load` would ignore `If-Match` `[CADDY-ADMIN-SRC]`.
    - Verify the route through Caddy using the app's `Host` header.
    - Only then commit, in one transaction: the route's `deployment_id`, the candidate as `active`, and the previous deployment as `superseded`.
+   - As implemented (P2.4, `routing.Router` and `deploy.switchTraffic`):
+     - **Order.** The deployment is marked `switching`. The rendered config points the app's routes at `<candidate container name>:<internal_port>`, which Caddy resolves on the app network `[DK-BRIDGE]`. That config is loaded.
+     - **Verification.** Each hostname gets `health_path` requested on Caddy's **verify server**: a plain-HTTP server on `caddy-verify.sock`, next to the admin socket (mode 0660), with the same routes and automatic HTTPS skipped. It proves the routing through Caddy without waiting for a certificate.
+     - **Commit.** Only the verified hostnames are committed. A route added meanwhile keeps its target, and a verified route deleted meanwhile aborts the commit.
+     - **Failure.** On a failed load, verification, or commit, Caddy is first restored from the routes table, then the candidate is removed.
+     - **Lost lease or shutdown.** The routes are restored, but nothing is recorded; the next owner resumes and switches again.
+     - **Restore fails too.** The next worker start restores (Reconciler step 3).
 8. **Observe and drain.** Keep the previous container for an observation window (default 5 min). Then run `docker stop` with the app's `stop_timeout`, which sends `SIGTERM` and later `SIGKILL` (Docker's default is 10 s `[DK-RUN]`), and remove the container. The image stays, subject to retention.
 
 **As implemented in Phase 1 (P1.11, `internal/app/deploy.go`; routing arrives in Phase 2)**
@@ -222,7 +229,7 @@ stateDiagram-v2
 | Fetch, ancestry, or build fails | None | Mark failed, keep bounded logs, clean the workspace. |
 | Candidate exits or fails health | None | Mark failed, capture the last log lines, remove the candidate. |
 | Config load rejected | None (Caddy kept the old config) | Mark failed and remove the candidate. |
-| Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), load it, mark failed. |
+| Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), load it, then remove the candidate, mark failed. |
 | Worker crash in any phase | Unchanged, or equal to the DB | The lease expires and the reconciler resumes or compensates using the phase, labels, and the `routes` table. |
 
 ### Rollback

@@ -61,6 +61,12 @@
   - The admin client (`routing.Admin`) therefore replaces the whole config with `POST /config/` and `If-Match`. That is the same replace, the same no-reload-if-unchanged, and the same rollback on failure (`changeConfig`), with a 412 on a concurrent change.
   - One difference: a config that fails to load returns 500 there instead of 400.
 
+- **2026-09-28 (P2.4).** How "request the route through Caddy with the app's `Host` header" is done:
+  - **The problem with public HTTPS.** Doing it over the public HTTPS listener would tie a first deploy's success to ACME timing, because the certificate may not exist yet.
+  - **The verify server.** The rendered config therefore adds a second server, `verify`, on a Unix socket next to the admin socket (`caddy-verify.sock`, `0660`, same directory and group). It has exactly the same routes over plain HTTP, with automatic HTTPS skipped for its hosts, as `caddy adapt` expresses an `http://` site `[CADDY-JSON]`.
+  - **What is checked.** The worker requests `health_path` there with each hostname as `Host`. Caddy's routing is checked; certificate issuance stays Caddy's job.
+  - **Scope.** Like the admin socket, the verify socket is reachable only by the worker's group.
+
 ## Alternatives considered
 
 - **Caddy on the host (systemd):** workable, since the host can reach bridge IPs, but it loses name-based upstreams and couples Caddy to host networking. Kept as a fallback.

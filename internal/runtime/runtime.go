@@ -189,6 +189,7 @@ func (s Spec) labels() map[string]string {
 // it keeps restarting, and where to probe it.
 type State struct {
 	ID           string
+	Name         string // resolvable on the app network (Docker's embedded DNS) [DK-BRIDGE]
 	App          string
 	DeploymentID string
 	Status       string // created, running, restarting, exited, …
@@ -345,6 +346,7 @@ func (r *Runtime) Inspect(ctx context.Context, id string) (State, error) {
 	}
 	st := State{
 		ID:           c.ID,
+		Name:         strings.TrimPrefix(c.Name, "/"),
 		App:          c.Config.Labels[labelApp],
 		DeploymentID: c.Config.Labels[labelDeployment],
 		RestartCount: c.RestartCount,

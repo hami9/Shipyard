@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ const (
 	PhaseBuild    = "build"
 	PhaseStart    = "start"
 	PhaseHealth   = "health"
+	PhaseSwitch   = "switch"
 	PhaseActivate = "activate"
 )
 
@@ -40,8 +43,19 @@ type DeployStore interface {
 	RecordImage(ctx context.Context, id, owner, imageID string, metadata json.RawMessage) error
 	RecordContainer(ctx context.Context, id, owner, containerID string) error
 	MarkHealthChecking(ctx context.Context, id, owner string) error
+	MarkSwitching(ctx context.Context, id, owner string) error
 	FailDeployment(ctx context.Context, id, owner, reason string) error
-	ActivateDeployment(ctx context.Context, id, owner string) (*store.Deployment, error)
+	ActivateDeployment(ctx context.Context, id, owner, upstream string, hostnames []string) (*store.Deployment, error)
+}
+
+// Router moves an app's traffic through Caddy (internal/routing).
+type Router interface {
+	// Switch loads a config with the app's routes on upstream and verifies
+	// each hostname through Caddy; it returns them (none: the app has no
+	// routes). After an error, Caddy may serve the candidate until Restore.
+	Switch(ctx context.Context, appID, upstream, healthPath string) ([]string, error)
+	// Restore makes Caddy serve the routes table as committed.
+	Restore(ctx context.Context) (bool, error)
 }
 
 // Source puts the commit into the operation's workspace (internal/source).
@@ -102,6 +116,7 @@ type Container struct {
 
 // ContainerState is what the health gate watches.
 type ContainerState struct {
+	Name                           string // resolvable by Caddy on the app network
 	Running, Restarting, OOMKilled bool
 	ExitCode, RestartCount         int
 	IP                             netip.Addr
@@ -117,8 +132,7 @@ type EnvResolver interface {
 type HealthGate func(ctx context.Context, url string, timeout time.Duration, alive func(context.Context) error) error
 
 // Deployer runs deploy operations (ARCHITECTURE §5): fetch, build, start,
-// health-check, activate. Routing arrives in Phase 2, so an active
-// deployment is not yet reachable from outside.
+// health-check, switch traffic, activate.
 type Deployer struct {
 	Store   DeployStore
 	Source  Source
@@ -126,7 +140,10 @@ type Deployer struct {
 	Runtime Runtime
 	Env     EnvResolver
 	Health  HealthGate
-	Log     *slog.Logger
+	// Router is nil when Caddy is disabled: deployments then activate
+	// without routes.
+	Router Router
+	Log    *slog.Logger
 }
 
 // logTail is how many lines of a failed candidate's output are kept.
@@ -148,6 +165,8 @@ func (d *Deployer) Run(ctx context.Context, op store.Operation, owner string) er
 	}
 	if errors.Is(err, store.ErrLeaseLost) || ctx.Err() != nil {
 		r.log.Warn("deploy interrupted; it resumes after the lease expires", slog.Any("err", err))
+		// Caddy must not keep serving an uncommitted candidate meanwhile.
+		r.restoreRoutes(ctx)
 		return err
 	}
 	return r.fail(ctx, err)
@@ -160,6 +179,11 @@ type deployRun struct {
 	log   *slog.Logger
 	app   store.App
 	dep   store.Deployment
+	// switched is true from the moment a candidate config may be loaded in
+	// Caddy until the routes table commits it.
+	switched bool
+	upstream string
+	hosts    []string
 }
 
 func (r *deployRun) execute(ctx context.Context) error {
@@ -197,7 +221,64 @@ func (r *deployRun) execute(ctx context.Context) error {
 	if err := r.healthGate(ctx, id); err != nil {
 		return err
 	}
+	if err := r.switchTraffic(ctx, id); err != nil {
+		return err
+	}
 	return r.activate(ctx)
+}
+
+// switchTraffic loads the candidate into Caddy for the app's hostnames and
+// verifies it there (ARCHITECTURE §5 step 7). The routes table is committed
+// only by activate, so until then the database still names the old target.
+func (r *deployRun) switchTraffic(ctx context.Context, id string) error {
+	if r.Router == nil {
+		return nil
+	}
+	if err := r.phase(ctx, PhaseSwitch); err != nil {
+		return err
+	}
+	if err := r.Store.MarkSwitching(ctx, r.dep.ID, r.owner); err != nil {
+		return fmt.Errorf("record switch: %w", err)
+	}
+	st, err := r.Runtime.Inspect(ctx, id)
+	if err != nil {
+		return fmt.Errorf("switch traffic: %w", err)
+	}
+	if st.Name == "" {
+		return errors.New("switch traffic: the candidate has no container name")
+	}
+	r.upstream = net.JoinHostPort(st.Name, strconv.Itoa(r.app.InternalPort))
+	r.switched = true
+	hosts, err := r.Router.Switch(ctx, r.app.ID, r.upstream, r.app.HealthPath)
+	if err != nil {
+		return fmt.Errorf("switch traffic: %w", err)
+	}
+	r.hosts = hosts
+	if len(hosts) == 0 {
+		r.switched = false // nothing was loaded
+		r.event(ctx, store.LevelInfo, "no routes yet; add a domain to serve this app")
+		return nil
+	}
+	r.event(ctx, store.LevelInfo, "verified through caddy: %s", strings.Join(hosts, ", "))
+	return nil
+}
+
+// restoreRoutes puts Caddy back on the committed routes after a switch that
+// will not be committed. It runs even when ctx has ended (shutdown, lost
+// lease); if it fails, the next worker start restores (Reconciler step 3).
+func (r *deployRun) restoreRoutes(ctx context.Context) {
+	if !r.switched || r.Router == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if _, err := r.Router.Restore(ctx); err != nil {
+		r.log.Error("could not restore caddy routes", slog.Any("err", err))
+		r.event(ctx, store.LevelError, "could not restore the previous routes: %v", err)
+		return
+	}
+	r.switched = false
+	r.event(ctx, store.LevelWarn, "routes restored to the previous deployment")
 }
 
 // fetchAndBuild creates the deployment once the commit is known, then builds
@@ -330,10 +411,11 @@ func (r *deployRun) activate(ctx context.Context) error {
 	if err := r.phase(ctx, PhaseActivate); err != nil {
 		return err
 	}
-	prev, err := r.Store.ActivateDeployment(ctx, r.dep.ID, r.owner)
+	prev, err := r.Store.ActivateDeployment(ctx, r.dep.ID, r.owner, r.upstream, r.hosts)
 	if err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
+	r.switched = false // committed: the routes table now names the candidate
 	r.event(ctx, store.LevelInfo, "deployment %s is active (commit %s)", r.dep.ID, r.dep.SourceCommitSHA)
 	if prev != nil && prev.ContainerID != "" {
 		err := r.Runtime.Stop(ctx, prev.ContainerID, r.app.StopTimeout)
@@ -356,6 +438,9 @@ func (r *deployRun) fail(ctx context.Context, cause error) error {
 	reason := cause.Error()
 	r.log.Warn("deploy failed", slog.String("reason", firstLine(reason)))
 	r.event(ctx, store.LevelError, "deploy failed: %s", reason)
+	// Routes first, so traffic is back on the previous deployment before
+	// the candidate disappears.
+	r.restoreRoutes(ctx)
 	if r.dep.ContainerID != "" && r.dep.Status != store.DeployFailed {
 		if lines, err := r.Runtime.Logs(ctx, r.dep.ContainerID, logTail); err == nil && len(lines) > 0 {
 			r.event(ctx, store.LevelWarn, "last %d lines of the candidate's output:\n%s", len(lines), strings.Join(lines, "\n"))

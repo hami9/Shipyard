@@ -35,6 +35,10 @@ type fakeStore struct {
 	opReason string
 	prev     *store.Deployment
 	lostAt   string // a phase at which the lease is lost
+	// activation
+	activateErr error
+	upstream    string
+	hosts       []string
 }
 
 func (s *fakeStore) AppByID(context.Context, string) (store.App, error) { return s.app, nil }
@@ -86,9 +90,36 @@ func (s *fakeStore) FailDeployment(_ context.Context, _, _, reason string) error
 	s.dep.Status, s.dep.FailureReason = store.DeployFailed, reason
 	return nil
 }
-func (s *fakeStore) ActivateDeployment(context.Context, string, string) (*store.Deployment, error) {
+func (s *fakeStore) MarkSwitching(context.Context, string, string) error {
+	s.dep.Status = store.DeploySwitching
+	return nil
+}
+func (s *fakeStore) ActivateDeployment(_ context.Context, _, _, upstream string, hosts []string) (*store.Deployment, error) {
+	if s.activateErr != nil {
+		return nil, s.activateErr
+	}
 	s.dep.Status, s.opStatus = store.DeployActive, store.OpSucceeded
+	s.upstream, s.hosts = upstream, hosts
 	return s.prev, nil
+}
+
+// fakeRouter records into the runtime's call log, so tests can check the
+// order of routing and container actions.
+type fakeRouter struct {
+	rt        *fakeRuntime
+	hosts     []string
+	switchErr error
+	args      string
+}
+
+func (f *fakeRouter) Switch(_ context.Context, appID, upstream, path string) ([]string, error) {
+	f.args = appID + " " + upstream + " " + path
+	f.rt.calls = append(f.rt.calls, "switch")
+	return f.hosts, f.switchErr
+}
+func (f *fakeRouter) Restore(context.Context) (bool, error) {
+	f.rt.calls = append(f.rt.calls, "restore")
+	return true, nil
 }
 
 type fakeSource struct {
@@ -181,7 +212,7 @@ func newHarness() *harness {
 			HealthTimeout: time.Minute, CPULimit: 0.5, MemoryLimit: 64 << 20, StopTimeout: 7 * time.Second}},
 		src: &fakeSource{},
 		bld: &fakeBuilder{},
-		rt:  &fakeRuntime{state: ContainerState{Running: true, IP: netip.MustParseAddr("172.20.0.5")}},
+		rt:  &fakeRuntime{state: ContainerState{Name: "shipyard-web-dep-1", Running: true, IP: netip.MustParseAddr("172.20.0.5")}},
 	}
 	h.d = &Deployer{Store: h.st, Source: h.src, Builder: h.bld, Runtime: h.rt, Env: fakeEnv{"API_KEY": "s3cret"},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -202,6 +233,108 @@ func (h *harness) run(t *testing.T, payload string) error {
 
 func (h *harness) logged(s string) bool {
 	return slices.ContainsFunc(h.st.events, func(e string) bool { return strings.Contains(e, s) })
+}
+
+func (h *harness) withRouter(hosts ...string) *fakeRouter {
+	r := &fakeRouter{rt: h.rt, hosts: hosts}
+	h.d.Router = r
+	return r
+}
+
+// P2.4: a healthy candidate is loaded into Caddy and verified, then its
+// hostnames are committed with the activation.
+func TestDeploySwitchesTraffic(t *testing.T) {
+	h := newHarness()
+	h.st.prev = &store.Deployment{ID: "dep-0", ContainerID: oldCtrID}
+	r := h.withRouter("web.example.com")
+	if err := h.run(t, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{PhaseFetch, PhaseBuild, PhaseStart, PhaseHealth, PhaseSwitch, PhaseActivate}; !slices.Equal(h.st.phases, want) {
+		t.Errorf("phases = %v", h.st.phases)
+	}
+	if r.args != "app-1 shipyard-web-dep-1:3000 /healthz" {
+		t.Errorf("Switch(%s)", r.args)
+	}
+	if h.st.upstream != "shipyard-web-dep-1:3000" || !slices.Equal(h.st.hosts, []string{"web.example.com"}) || h.st.dep.Status != store.DeployActive {
+		t.Errorf("activation upstream=%q hosts=%v status=%s", h.st.upstream, h.st.hosts, h.st.dep.Status)
+	}
+	// The old container drains only after the switch was committed.
+	if want := []string{"start ctr-dep-1", "switch", "stop old-container 7s", "remove old-container"}; !slices.Equal(h.rt.calls, want) {
+		t.Errorf("calls = %v, want %v", h.rt.calls, want)
+	}
+	if !h.logged("verified through caddy: web.example.com") {
+		t.Errorf("events = %v", h.st.events)
+	}
+}
+
+// Invariant 5: a failed switch puts Caddy back on the committed routes
+// before the candidate is removed, and the previous deployment keeps serving.
+func TestDeploySwitchFailureRestores(t *testing.T) {
+	h := newHarness()
+	h.st.prev = &store.Deployment{ID: "dep-0", ContainerID: oldCtrID}
+	r := h.withRouter("web.example.com")
+	r.switchErr = errors.New("verify web.example.com through caddy: GET /healthz: status 502")
+	if err := h.run(t, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"start ctr-dep-1", "switch", "restore", "remove ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
+		t.Errorf("calls = %v, want %v", h.rt.calls, want)
+	}
+	if h.st.dep.Status != store.DeployFailed || !strings.Contains(h.st.opReason, "switch traffic") || h.st.upstream != "" {
+		t.Errorf("dep = %+v, op reason %q, committed upstream %q", h.st.dep, h.st.opReason, h.st.upstream)
+	}
+	if !h.logged("routes restored") {
+		t.Errorf("events = %v", h.st.events)
+	}
+}
+
+// A commit that fails after a verified switch (a route vanished) restores.
+func TestDeployActivationFailureRestores(t *testing.T) {
+	h := newHarness()
+	h.withRouter("web.example.com")
+	h.st.activateErr = store.ErrConflict
+	if err := h.run(t, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"start ctr-dep-1", "switch", "restore", "remove ctr-dep-1"}; !slices.Equal(h.rt.calls, want) {
+		t.Errorf("calls = %v", h.rt.calls)
+	}
+	if h.st.opStatus != store.OpFailed {
+		t.Errorf("op = %s", h.st.opStatus)
+	}
+}
+
+// Losing the lease after the switch restores the committed routes but
+// records nothing: the next owner resumes and switches again.
+func TestDeployLeaseLostAfterSwitch(t *testing.T) {
+	h := newHarness()
+	h.withRouter("web.example.com")
+	h.st.activateErr = store.ErrLeaseLost
+	if err := h.run(t, `{}`); !errors.Is(err, store.ErrLeaseLost) {
+		t.Fatalf("err = %v", err)
+	}
+	if want := []string{"start ctr-dep-1", "switch", "restore"}; !slices.Equal(h.rt.calls, want) {
+		t.Errorf("calls = %v (the candidate must stay for the resume)", h.rt.calls)
+	}
+	if h.st.opStatus != "" || h.st.dep.Status == store.DeployFailed {
+		t.Errorf("recorded after losing the lease: op %q dep %s", h.st.opStatus, h.st.dep.Status)
+	}
+}
+
+// An app without routes activates with nothing to switch or restore.
+func TestDeployWithoutRoutes(t *testing.T) {
+	h := newHarness()
+	h.withRouter() // no hostnames
+	if err := h.run(t, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if h.st.dep.Status != store.DeployActive || h.st.hosts != nil || slices.Contains(h.rt.calls, "restore") {
+		t.Errorf("status %s hosts %v calls %v", h.st.dep.Status, h.st.hosts, h.rt.calls)
+	}
+	if !h.logged("no routes yet") {
+		t.Errorf("events = %v", h.st.events)
+	}
 }
 
 func TestDeployHappyPath(t *testing.T) {

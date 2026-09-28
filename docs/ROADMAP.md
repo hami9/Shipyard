@@ -130,7 +130,10 @@ flowchart LR
 - [x] **P2.3** Admin socket client: `GET` the config with its `Etag`, then `POST /load` with `If-Match`. Handle 412 and other errors.
   - Changed to `POST /config/`, because `/load` ignores `If-Match` (ADR-0003 note of 2026-09-28).
   - The worker renders and applies the routes table at start.
-- [ ] **P2.4** The `switching` phase: load, then verify through Caddy with the `Host` header, then commit route and status in one transaction. Failure paths re-render the previous state.
+- [x] **P2.4** The `switching` phase: load, then verify through Caddy with the `Host` header, then commit route and status in one transaction. Failure paths re-render the previous state.
+  - Verification uses a plain-HTTP Caddy server on a Unix socket with the same routes, so it does not wait for certificates.
+  - Only verified hostnames are committed.
+  - `test/e2e` checks over HTTPS through Caddy which container serves.
 - [ ] **P2.5** Domain API: DNS preflight (A/AAAA must resolve to the host), unique hostnames, an optional suffix allow-list, and a toggle for the Let's Encrypt staging CA.
 - [ ] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
 - [ ] **P2.7** SSE:

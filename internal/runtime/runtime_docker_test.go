@@ -225,7 +225,7 @@ func TestHardenedContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Running || st.App != app || st.DeploymentID != s.DeploymentID || !st.IP.IsValid() {
+	if !st.Running || st.App != app || st.DeploymentID != s.DeploymentID || !st.IP.IsValid() || st.Name != ContainerName(app, s.DeploymentID) {
 		t.Fatalf("state = %+v", st)
 	}
 
