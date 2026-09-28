@@ -111,10 +111,10 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 
 	s := store.New(db)
-	if err := ensureEdge(ctx, cfg.Caddy, rt, log); err != nil {
+	if err := ensureEdge(ctx, cfg, rt, log); err != nil {
 		return err
 	}
-	router, err := syncRoutes(ctx, cfg.Caddy, s, log)
+	router, err := syncRoutes(ctx, cfg, s, log)
 	if err != nil {
 		return err
 	}
@@ -176,14 +176,19 @@ func serveLogs(path string, h http.Handler, log *slog.Logger) (*http.Server, err
 
 // ensureEdge keeps the Caddy container running and joined to every app
 // network, with its admin API on a socket only the worker's group can use
-// (ADR-0003). Routes are loaded from Phase 2 on (P2.2–P2.4).
-func ensureEdge(ctx context.Context, c config.Caddy, rt *runtime.Runtime, log *slog.Logger) error {
+// (ADR-0003). Routes are loaded from Phase 2 on (P2.2–P2.4). With an API
+// hostname, the API's socket directory is mounted in too (P2.8).
+func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log *slog.Logger) error {
+	c := cfg.Caddy
 	if !c.Enabled {
 		log.Warn("caddy is disabled; apps get no routes", slog.String("env", config.EnvCaddy))
 		return nil
 	}
 	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: os.Getegid(),
 		BindIP: c.BindIP, HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort}
+	if cfg.APIHostname != "" {
+		spec.APISocketDir = filepath.Dir(cfg.APISocket())
+	}
 	if spec.Image == "" {
 		spec.Image = runtime.DefaultEdgeImage
 	}
@@ -200,17 +205,23 @@ func ensureEdge(ctx context.Context, c config.Caddy, rt *runtime.Runtime, log *s
 // syncRoutes makes Caddy serve exactly what the routes table says
 // (ARCHITECTURE §5, Reconciler step 3): render, then load only if the
 // running config differs, guarded by its Etag. It returns the router that
-// deploys use to switch traffic; nil when Caddy is disabled.
-func syncRoutes(ctx context.Context, c config.Caddy, s *store.Store, log *slog.Logger) (*routing.Router, error) {
+// deploys use to switch traffic; nil when Caddy is disabled. With an API
+// hostname, Caddy serves the API there over HTTPS from its socket (P2.8).
+func syncRoutes(ctx context.Context, cfg config.Worker, s *store.Store, log *slog.Logger) (*routing.Router, error) {
+	c := cfg.Caddy
 	if !c.Enabled {
 		return nil, nil
 	}
-	router, err := routing.NewRouter(s, routing.Settings{
+	settings := routing.Settings{
 		AdminSocket:  filepath.Join(c.AdminDir, runtime.AdminSocketName),
 		VerifySocket: filepath.Join(c.AdminDir, routing.VerifySocketName),
 		CA:           c.CA,
 		ACMEEmail:    c.ACMEEmail,
-	})
+	}
+	if cfg.APIHostname != "" {
+		settings.APIHostname, settings.APIUpstream = cfg.APIHostname, "unix/"+cfg.APISocket() // [CADDY-RP]
+	}
+	router, err := routing.NewRouter(s, settings)
 	if err != nil {
 		return nil, fmt.Errorf("caddy router: %w", err)
 	}
@@ -218,7 +229,7 @@ func syncRoutes(ctx context.Context, c config.Caddy, s *store.Store, log *slog.L
 	if err != nil {
 		return nil, fmt.Errorf("caddy config: %w", err)
 	}
-	log.Info("caddy config in sync", slog.Bool("reloaded", changed))
+	log.Info("caddy config in sync", slog.Bool("reloaded", changed), slog.String("api_hostname", cfg.APIHostname))
 	return router, nil
 }
 

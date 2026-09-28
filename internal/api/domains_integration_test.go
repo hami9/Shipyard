@@ -169,6 +169,14 @@ func TestDomainsPolicy(t *testing.T) {
 	if r.status != http.StatusCreated || r.body["dns_checked_at"] != nil || dns.count() != before {
 		t.Errorf("preflight off: %d %s (lookups %d -> %d)", r.status, r.raw, before, dns.count())
 	}
+
+	// P2.8: the API's own hostname is not an app domain, in any spelling.
+	api := f.domainsServer(DomainPolicy{APIHostname: "shipyard.example.org"}, dns)
+	for _, h := range []string{"shipyard.example.org", "Shipyard.Example.org."} {
+		if r := f.callAt(api, "POST", "/v1/apps/web/domains", f.admin, body(h)); r.status != http.StatusConflict || !strings.Contains(r.raw, "reserved for the Shipyard API") {
+			t.Errorf("API hostname %q: %d %s", h, r.status, r.raw)
+		}
+	}
 }
 
 // A hostname added to an app that is already serving targets its active

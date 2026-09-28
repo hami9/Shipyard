@@ -31,6 +31,7 @@ All notable changes to Shipyard are recorded here.
   - **Checks:** hostnames are normalized and must be exact FQDNs, optionally under `SHIPYARD_DOMAIN_SUFFIXES`. A DNS preflight requires every A/AAAA record to be one of `SHIPYARD_PUBLIC_IPS` (`SHIPYARD_DNS_PREFLIGHT=false` skips it).
   - **Serving:** a hostname added to a running app serves it at once. The worker applies added and removed hostnames within `SHIPYARD_RECONCILE_INTERVAL` (default 60 s).
 - **Live events:** `shipyard events ID` and `shipyard deploy APP --follow` stream an operation's events until it ends (`GET /v1/operations/{id}/events`, SSE). A dropped connection resumes where it stopped. `--follow` exits non-zero unless the deploy succeeded, so it can gate CI.
+- **Published API:** set `SHIPYARD_API_HOSTNAME` and Caddy serves the API there over HTTPS (HTTP/2): `/v1/*` and `/hooks/github` only. The API must listen on a Unix socket (`SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock`, now in `shipyard.env` for both services), which the worker mounts read-only into Caddy. Apps cannot take the API's hostname.
 - **App logs:** `shipyard logs APP [--tail N] [--follow]` shows the running release's output (`GET /v1/apps/{app}/logs`, SSE), with stdout and stderr kept apart. The worker reads the logs and serves them to the API on a private socket (`SHIPYARD_WORKER_SOCKET`). The API never touches Docker.
   - **Redaction:** the app's secret values (6 characters or longer) are shown as `[REDACTED]`. This is best effort: a secret printed in another form is not caught.
   - The candidate output that a failed deploy copies into the operation's events is redacted the same way.
@@ -40,6 +41,11 @@ All notable changes to Shipyard are recorded here.
 - **Environment API:** `GET /v1/apps/{app}/env` lists keys only; `PUT` and `DELETE /v1/apps/{app}/env/{key}` create new revisions. Values are secret (encrypted) by default.
 - **Configuration:** `SHIPYARD_KEK_DIR` and `SHIPYARD_KEK_ACTIVE`. `shipyard-api serve` refuses to start without the active KEK, or with a KEK file other users can read.
 - **Secret encryption and environment revisions** (`internal/secrets`): envelope encryption with a per-value AES-256-GCM key wrapped by a file-based KEK. Every change creates an immutable, numbered revision that reuses unchanged values without decrypting them.
+
+### Removed
+
+- **`SHIPYARD_API_ALLOW_PUBLIC_LISTEN`.** The API now listens only on loopback or a Unix socket, and public traffic reaches it through Caddy. A non-loopback `SHIPYARD_API_LISTEN` is refused at startup, even with the old setting.
+
 ## [0.1.0] - 2026-09-26
 
 First release: the Phase 0 bootstrap. An empty but fully wired project; it does not deploy apps yet.

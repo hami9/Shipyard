@@ -311,6 +311,11 @@ The reconciler runs at worker start and then every 60 s by default.
   - Unknown, expired, revoked, and malformed tokens get the same 401, so a client cannot tell them apart.
 - Every authenticated mutation, whether allowed or denied, writes an audit event naming the token prefix, the route, and the path. Anonymous failures are logged only, so they cannot fill the audit table.
 - The API listens on localhost or a Unix socket and is exposed only through Caddy over TLS.
+  - As implemented (P2.8, ADR-0003 note):
+    - **Listen.** Any other listen address is refused, and no override exists.
+    - **Publishing.** `SHIPYARD_API_HOSTNAME` publishes the API on its own name over HTTPS, with HTTP/2 by default `[CADDY-OPTIONS]`. Only `/v1/*` and `/hooks/github` reach it; everything else on that host is 404.
+    - **Socket.** Caddy reaches the API's socket (`unix:/run/shipyard-api/api.sock`, mode 0660, shared group) through a read-only bind mount of its directory, so publishing requires a socket, not TCP.
+    - **Reserved name.** An app cannot take the API's hostname (409).
 - The webhook path is the only unauthenticated public endpoint, and it must pass HMAC verification.
 
 **GitHub** `[GH-VALIDATE][GH-BP][GH-EVENTS]`

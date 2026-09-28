@@ -171,7 +171,7 @@ What `make run-worker` leaves running on your machine:
   - Remove it with `docker rm -f shipyard-caddy`.
   - Set `SHIPYARD_CADDY=false` to skip it.
 
-`login` reads the token from stdin so it never lands in shell history. The CLI refuses plain `http://` to a non-loopback host. On the server itself, use the API socket: `--url unix:///run/shipyard/api.sock`. On Windows, a `shipyard.exe` built with `GOOS=windows` reaches an API in WSL at `http://127.0.0.1:<port>`.
+`login` reads the token from stdin so it never lands in shell history. The CLI refuses plain `http://` to a non-loopback host. On the server itself, use the API socket: `--url unix:///run/shipyard-api/api.sock`. From anywhere else, use the published API: `--url https://<SHIPYARD_API_HOSTNAME>`. On Windows, a `shipyard.exe` built with `GOOS=windows` reaches an API in WSL at `http://127.0.0.1:<port>`.
 
 ## 4. Everyday commands
 

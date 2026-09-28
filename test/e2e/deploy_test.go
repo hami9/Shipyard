@@ -84,6 +84,25 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if got := h.viaCaddy(extra, "/read?path=/etc/hostname"); got != first[:12] {
 		t.Fatalf("%s through caddy = %q, want %s", extra, got, first[:12])
 	}
+	// P2.8: Caddy publishes the API (listening on a Unix socket only) on its
+	// own hostname over HTTPS with HTTP/2; only /v1/* and /hooks/github.
+	resp, body := h.apiViaCaddy("/v1/whoami")
+	if resp.StatusCode != http.StatusOK || resp.ProtoMajor != 2 || !strings.Contains(body, `"e2e"`) {
+		t.Fatalf("whoami through caddy: %s %s %s", resp.Proto, resp.Status, body)
+	}
+	if resp, body := h.apiViaCaddy("/readyz"); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/readyz through caddy: %s %s", resp.Status, body)
+	}
+	// SSE through Caddy: the finished deploy's events stream to their end.
+	resp, body = h.apiViaCaddy("/v1/operations/" + op1 + "/events")
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" ||
+		!strings.Contains(body, "is active") || !strings.Contains(body, "event: end") {
+		t.Fatalf("events through caddy: %s %s", resp.Status, body)
+	}
+	// Apps cannot take the API's hostname.
+	if out, err := h.cliErr("domain", "add", slug, apiHost); err == nil || !strings.Contains(out, "reserved for the Shipyard API") {
+		t.Fatalf("domain add %s: %v\n%s", apiHost, err, out)
+	}
 
 	// 2. A broken Dockerfile at the branch head fails with the build log.
 	h.wantOp(h.deploy(), "failed", "missing-file")
@@ -149,8 +168,12 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	}
 }
 
+// apiHost is the name Caddy publishes the API on (P2.8).
+const apiHost = "api.e2e.example"
+
 type harness struct {
 	t      *testing.T
+	token  string // the CLI's API token
 	bin    string
 	slug   string
 	caddy  string // the worker's edge container
@@ -208,21 +231,29 @@ func start(t *testing.T) *harness {
 	dbURL := storetest.NewDatabase(t)
 	h.dbURL = dbURL
 	t.Cleanup(func() { h.dumpEvents(dbURL) }) // before the database is dropped
+	// P2.8: the API listens on a Unix socket in a directory of its own, which
+	// the worker mounts into Caddy; Caddy runs with this process's group.
+	apiDir := filepath.Join(tmp, "api")
+	if err := os.Mkdir(apiDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	apiSock := filepath.Join(apiDir, "api.sock")
 	common := append(cleanEnv(), "SHIPYARD_DATABASE_URL="+dbURL,
 		"SHIPYARD_KEK_DIR="+kek, "SHIPYARD_KEK_ACTIVE=e2e", "SHIPYARD_LOG_FORMAT=text",
-		"SHIPYARD_WORKER_SOCKET="+filepath.Join(tmp, "logs.sock"))
+		"SHIPYARD_WORKER_SOCKET="+filepath.Join(tmp, "logs.sock"),
+		"SHIPYARD_API_LISTEN=unix:"+apiSock, "SHIPYARD_API_HOSTNAME="+apiHost)
 	run(t, tmp, common, h.bin+"/shipyard-api", "migrate")
 	token := run(t, tmp, common, h.bin+"/shipyard-api", "token", "create", "--name", "e2e")
+	h.token = token
 
-	addr := freeAddr(t)
-	h.spawn("api", append(common, "SHIPYARD_API_LISTEN="+addr, "SHIPYARD_DNS_PREFLIGHT=false"), "shipyard-api", "serve")
-	waitHTTP(t, "http://"+addr+"/readyz")
+	h.spawn("api", append(common, "SHIPYARD_DNS_PREFLIGHT=false"), "shipyard-api", "serve")
+	waitUnix(t, apiSock)
 	h.spawn("worker", append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s"), "shipyard-worker", "run")
-	h.env = append(cleanEnv(), "SHIPYARD_URL=http://"+addr, "SHIPYARD_TOKEN="+token,
+	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h
 }
@@ -297,6 +328,14 @@ func (h *harness) cli(stdin string, args ...string) string {
 		h.t.Fatalf("shipyard %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
+}
+
+// cliErr runs a CLI command that is expected to fail.
+func (h *harness) cliErr(args ...string) (string, error) {
+	cmd := exec.Command(filepath.Join(h.bin, "shipyard"), args...)
+	cmd.Env = h.env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func (h *harness) deploy(args ...string) string {
@@ -448,26 +487,54 @@ func cleanEnv() []string {
 	return env
 }
 
-func freeAddr(t *testing.T) string {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	return ln.Addr().String()
-}
-
-func waitHTTP(t *testing.T, url string) {
+// waitUnix waits until the API answers /readyz on its socket.
+func waitUnix(t *testing.T, sock string) {
 	t.Helper()
+	hc := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		}}}
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		if resp, err := http.Get(url); err == nil {
+		if resp, err := hc.Get("http://api/readyz"); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return
 			}
 		}
 	}
-	t.Fatalf("%s did not become ready", url)
+	t.Fatalf("the API on %s did not become ready", sock)
+}
+
+// apiViaCaddy calls the API through Caddy's HTTPS listener by its hostname,
+// over HTTP/2 when Caddy offers it; it returns the response and its body.
+func (h *harness) apiViaCaddy(path string) (*http.Response, string) {
+	h.t.Helper()
+	addr := strings.Fields(h.docker("port", h.caddy, "443/tcp"))[0]
+	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // Caddy's internal CA
+		ForceAttemptHTTP2: true,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}}
+	var last error
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		req, _ := http.NewRequestWithContext(h.t.Context(), "GET", "https://"+apiHost+path, nil)
+		req.Header.Set("Authorization", "Bearer "+h.token)
+		resp, err := hc.Do(req)
+		if err != nil {
+			last = err
+			continue
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusBadGateway { // the socket not yet reachable
+			last = fmt.Errorf("%s: %s", resp.Status, b)
+			continue
+		}
+		return resp, string(b)
+	}
+	h.t.Fatalf("https://%s%s through caddy: %v", apiHost, path, last)
+	return nil, ""
 }
 
 func get(t *testing.T, url string) string {

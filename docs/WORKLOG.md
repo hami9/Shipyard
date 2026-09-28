@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); `app-logs` (P2.7b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.7b: `shipyard logs [--follow]` through the worker's log socket (ADR-0008), with secret redaction, which now also covers failed-deploy output in events |
-| **Next task** | P2.8: the API listens on localhost or a Unix socket only and is published through Caddy over HTTPS (HTTP/2) |
+| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); `api-edge` (P2.8). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P2.8: the API is published through Caddy (`SHIPYARD_API_HOSTNAME`, HTTPS with HTTP/2) from its Unix socket; the public-listen override is removed |
+| **Next task** | Phase 2 exit criteria. One criterion needs the owner: it asks `logs --follow` to resume without loss, but ADR-0008 makes logs non-resumable (only `events` resumes). Then an e2e that probes continuously through a health-failing deploy, and a fault-injected route-verification failure through Caddy. After that, P3.1 |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-28 |
@@ -53,6 +53,49 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-28: P2.8 API published through Caddy
+
+- **Phase / task:** P2.8: the API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2)
+- **Author:** Claude Code (desktop session)
+- **Goal:** Operators and CI reach the API at `https://<API hostname>`. The API itself never listens publicly.
+
+**Done**
+- **Config:**
+  - `Listen` moved to `Common`, since the worker reads it too. It allows loopback or a clean absolute Unix socket path only.
+  - `SHIPYARD_API_ALLOW_PUBLIC_LISTEN` is **removed** (the owner's choice).
+  - New `SHIPYARD_API_HOSTNAME`, normalized and checked like an app hostname. On the worker with Caddy enabled, it requires a Unix socket in a directory of its own (not `/`, not the admin directory).
+- **Edge:** `EdgeSpec.APISocketDir` is bind-mounted **read-only** at the same path. `EnsureEdge` reports a missing directory clearly. The field is `omitempty`, so existing edges keep their spec hash.
+- **Worker:** `ensureEdge` mounts the API socket's directory, and `syncRoutes` renders the API route (`unix//<socket>`, only `/v1/*` and `/hooks/github`; the renderer is from P2.2).
+- **API:** adding the API hostname as an app domain is a 409 ("reserved for the Shipyard API").
+- **systemd and env:**
+  - `SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock` moved from the API unit into `shipyard.env`, which both services read. Before, the worker would have seen `127.0.0.1:8080`.
+  - The API unit gets `RuntimeDirectoryPreserve=yes`, and the worker starts `After=shipyard-api.service`.
+
+**Decisions** (ADR-0003 dated note)
+- **Socket only for publishing:** Caddy runs in a container and cannot reach the host's loopback.
+- **A read-only mount is enough:** Linux refuses writes on a read-only mount only for regular files, directories, and symlinks, so connecting to a socket works. e2e confirms it.
+- **`RuntimeDirectoryPreserve=yes`:** a recreated `/run/shipyard-api` would leave Caddy's bind mount pointing at the deleted directory `[SYSTEMD-EXEC]`.
+
+**Problems / surprises**
+- The shipped env example set `SHIPYARD_API_LISTEN=127.0.0.1:8080`, and only the API unit set the socket, which the worker could not see. It is fixed by the move above.
+- **An exit criterion conflicts with ADR-0008:** "`logs --follow` resumes after a dropped connection without losing events" cannot hold for container logs, which have no ids. Only `events` resumes. The owner should confirm the criterion means `events`, or reopen ADR-0008.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `config_test.go`), `make test`, `make test-integration`: all ok.
+  - `TestLoadAPIListenValidation`: 4 accepted, 9 refused, and the removed override no longer opens `0.0.0.0`.
+  - `TestAPIHostname`: normalization, 7 refusals, and Caddy off.
+  - `TestEdgeSpecValidate` (+4), `TestEdgeCreateOptions` (the read-only mount), `TestEdgeSpecHash` (a new field; the old JSON is unchanged).
+  - `TestDomainsPolicy`: a 409 for the API hostname in two spellings.
+- `make test-docker`: all ok.
+- **`make test-e2e`: PASS (210 s).**
+  - The API listens only on a Unix socket, and the CLI uses `unix://`.
+  - Through Caddy at `https://api.e2e.example`: `/v1/whoami` is 200 over **HTTP/2** (`ProtoMajor` 2); `/readyz` is 404; the events SSE streams to `event: end`.
+  - `domain add api.e2e.example` is refused as reserved.
+- No leftovers. Secret scan: see the PR.
+
+**Next**
+- Phase 2 exit criteria (see Current status), after the owner answers on the logs-resume criterion. Then P3.1.
 
 ### 2026-09-28: P2.7b app logs through the worker socket
 

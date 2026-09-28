@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -30,6 +32,10 @@ func TestEdgeSpecValidate(t *testing.T) {
 		"admin dir with pipe":  func(s *EdgeSpec) { s.AdminDir = "/run/x|0777" },
 		"admin dir with comma": func(s *EdgeSpec) { s.AdminDir = "/run/x,ro" },
 		"root group":           func(s *EdgeSpec) { s.GID = 0 },
+		"relative API dir":     func(s *EdgeSpec) { s.APISocketDir = "run/api" },
+		"API dir is root":      func(s *EdgeSpec) { s.APISocketDir = "/" },
+		"API dir is admin dir": func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard/caddy" },
+		"API dir with colon":   func(s *EdgeSpec) { s.APISocketDir = "/run/api:rw" },
 		"port too high":        func(s *EdgeSpec) { s.HTTPSPort = 70000 },
 		"negative port":        func(s *EdgeSpec) { s.HTTPPort = -1 },
 	} {
@@ -96,6 +102,14 @@ func TestEdgeCreateOptions(t *testing.T) {
 	if b[0].HostIP.String() != "127.0.0.1" || b[0].HostPort != "" {
 		t.Errorf("loopback, random port: %v", b)
 	}
+
+	// P2.8: the API's socket directory, read-only, at the same path.
+	s.APISocketDir = "/run/shipyard-api"
+	ms := s.createOptions().HostConfig.Mounts
+	if last := ms[len(ms)-1]; len(ms) != 4 || last.Type != mount.TypeBind || last.Source != "/run/shipyard-api" ||
+		last.Target != "/run/shipyard-api" || !last.ReadOnly {
+		t.Errorf("mounts with the API = %+v", ms)
+	}
 }
 
 // Any change of spec changes the label that triggers a recreate.
@@ -107,6 +121,7 @@ func TestEdgeSpecHash(t *testing.T) {
 		"dir":   func(s *EdgeSpec) { s.AdminDir = "/run/other" },
 		"group": func(s *EdgeSpec) { s.GID = 991 },
 		"bind":  func(s *EdgeSpec) { s.BindIP = netip.MustParseAddr("10.0.0.1") },
+		"api":   func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
 	} {
 		b := validEdge()
 		mutate(&b)
@@ -116,5 +131,10 @@ func TestEdgeSpecHash(t *testing.T) {
 	}
 	if a.hash() != validEdge().hash() {
 		t.Error("hash is not deterministic")
+	}
+	// An edge without the API keeps the hash it had before P2.8, so an
+	// upgrade does not recreate it: the field is omitted when empty.
+	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") {
+		t.Errorf("spec JSON = %s", b)
 	}
 }
