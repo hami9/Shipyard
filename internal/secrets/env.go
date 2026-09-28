@@ -114,9 +114,30 @@ func (e *Env) Keys(ctx context.Context, appID string) (int, []Var, error) {
 // Resolve decrypts a revision into KEY -> value, for starting a container.
 // Callers must never log the result.
 func (e *Env) Resolve(ctx context.Context, revisionID string) (map[string]string, error) {
-	rev, err := e.store.EnvRevisionByID(ctx, revisionID)
+	env, _, err := e.resolve(ctx, revisionID)
+	return env, err
+}
+
+// SecretValues returns a revision's decrypted secret values, not its plain
+// ones, for redacting app output (app.Redactor, ADR-0008). Callers must
+// never log the result.
+func (e *Env) SecretValues(ctx context.Context, revisionID string) ([]string, error) {
+	env, secret, err := e.resolve(ctx, revisionID)
 	if err != nil {
 		return nil, err
+	}
+	out := make([]string, 0, len(secret))
+	for _, k := range secret {
+		out = append(out, env[k])
+	}
+	return out, nil
+}
+
+// resolve returns the revision's environment and which keys are secret.
+func (e *Env) resolve(ctx context.Context, revisionID string) (map[string]string, []string, error) {
+	rev, err := e.store.EnvRevisionByID(ctx, revisionID)
+	if err != nil {
+		return nil, nil, err
 	}
 	var ids []string
 	for _, en := range rev.Entries {
@@ -126,9 +147,10 @@ func (e *Env) Resolve(ctx context.Context, revisionID string) (map[string]string
 	}
 	values, err := e.store.SecretValuesByID(ctx, ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	env := make(map[string]string, len(rev.Entries))
+	var secret []string
 	for _, en := range rev.Entries {
 		if en.PlainValue != nil {
 			env[en.Key] = *en.PlainValue
@@ -136,15 +158,16 @@ func (e *Env) Resolve(ctx context.Context, revisionID string) (map[string]string
 		}
 		v, ok := values[*en.SecretValueID]
 		if !ok {
-			return nil, fmt.Errorf("revision %d: secret for %s is missing", rev.Number, en.Key)
+			return nil, nil, fmt.Errorf("revision %d: secret for %s is missing", rev.Number, en.Key)
 		}
 		plain, err := e.keys.Open(rev.AppID, en.Key, Sealed{ValueID: v.ID, Ciphertext: v.Ciphertext, WrappedDEK: v.WrappedDEK, KEKID: v.KEKID})
 		if err != nil {
-			return nil, fmt.Errorf("revision %d, key %s: %w", rev.Number, en.Key, err)
+			return nil, nil, fmt.Errorf("revision %d, key %s: %w", rev.Number, en.Key, err)
 		}
 		env[en.Key] = string(plain)
+		secret = append(secret, en.Key)
 	}
-	return env, nil
+	return env, secret, nil
 }
 
 // lockedEntries locks the app and returns its latest entries (none for a

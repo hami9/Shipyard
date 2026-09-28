@@ -267,7 +267,7 @@ The reconciler runs at worker start and then every 60 s by default.
 | `shipyard ps` | `GET /v1/apps` |
 | `shipyard login --url URL` (token read from stdin) | `GET /v1/whoami` to verify, then saves `~/.config/shipyard/config.json` with mode 0600 |
 | `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
-| `shipyard logs APP --follow` | `GET /v1/apps/{id}/logs` (SSE) |
+| `shipyard logs APP [--tail N] [--follow]` | `GET /v1/apps/{id}/logs?tail=&follow=` (`read` scope; SSE). The active deployment's output, read by the worker and proxied by the API (ADR-0008). `tail` is 0–1000 (default 100). 404 with no active deployment; 503 when the worker is down. Ends with `event: end` and the reason |
 | `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (`read` scope; SSE, resumable). Ends with an `end` event carrying the operation |
 | `shipyard rollback APP --to <deployment-id>` | `POST /v1/apps/{id}/rollbacks` |
 | `shipyard env set APP KEY [--plain]` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision. Body `{"value": …, "secret": true}`; secret by default |
@@ -294,6 +294,12 @@ The reconciler runs at worker start and then every 60 s by default.
     - **Shutdown.** Streams close as soon as the API starts shutting down, so they do not hold it up, and clients resume on the next process.
     - **Client.** The client reconnects with `Last-Event-ID`, treats 45 s of silence as a dead connection, and gives up after 5 failed reconnects in a row.
 - **Log limits.** Historical logs are bounded tails. Known secret values are redacted, but redaction cannot catch every secret an app prints.
+  - As implemented (P2.7b, ADR-0008):
+    - **Path.** The worker serves `GET /logs` on its private socket (`SHIPYARD_WORKER_SOCKET`, mode 0660, shared group). The API authenticates and proxies it as SSE, so the API never reads Docker (invariant 1).
+    - **Which container.** Only the active deployment's container, named by PostgreSQL.
+    - **Format.** Lines are timestamped, marked stdout or stderr, and cut at 16 KiB. Streams have no ids, so a reconnect starts a fresh tail.
+    - **Redaction.** It happens in the worker: every secret value (not plain ones) of at least 6 characters becomes `[REDACTED]`. If the secrets cannot be read, nothing is streamed.
+    - **Deploy output.** The same redaction now covers the candidate's output that a failed deploy copies into the operation's events. If the secrets cannot be read there, the output is withheld.
 
 ## 7. Security and operational defaults
 

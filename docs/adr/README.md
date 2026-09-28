@@ -15,3 +15,4 @@ An ADR records one significant decision: its context, the choice made, and its c
 | [0005](0005-secrets-envelope-encryption.md) | Envelope encryption for app configuration | Accepted |
 | [0006](0006-retention-and-backup.md) | Retention defaults and backup/restore procedure | Accepted |
 | [0007](0007-mvp-trust-model.md) | MVP trust model: single admin, trusted repositories | Accepted |
+| [0008](0008-worker-log-socket.md) | App logs through a worker log socket | Accepted |

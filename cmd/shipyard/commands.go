@@ -256,6 +256,34 @@ func cmdDeploy(ctx context.Context, e env, c *client.Client, args []string) erro
 	return nil
 }
 
+// cmdLogs prints the app's container output: stdout lines to stdout and
+// stderr lines to stderr, like docker logs. Known secret values arrive
+// redacted (ADR-0008).
+func cmdLogs(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
+	tail := fs.Int("tail", 100, "")
+	follow := fs.Bool("follow", false, "")
+	fs.BoolVar(follow, "f", false, "")
+	pos, err := parse(fs, args, 1)
+	if err != nil {
+		return err
+	}
+	reason, err := c.Logs(ctx, pos[0], *tail, *follow, func(l client.LogLine) {
+		w := e.stdout
+		if l.Stream == "stderr" {
+			w = e.stderr
+		}
+		fmt.Fprintf(w, "%s %s\n", l.TS.Local().Format(time.TimeOnly), l.Line)
+	})
+	if err != nil {
+		return err
+	}
+	if *follow {
+		fmt.Fprintf(e.stderr, "-- %s\n", reason)
+	}
+	return nil
+}
+
 func cmdEvents(ctx context.Context, e env, c *client.Client, args []string) error {
 	pos, err := parse(flag.NewFlagSet("events", flag.ContinueOnError), args, 1)
 	if err != nil {

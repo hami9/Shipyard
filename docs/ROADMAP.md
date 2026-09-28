@@ -141,7 +141,7 @@ flowchart LR
 - [x] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
 - SSE, split in two (each needs about 400 lines):
   - [x] **P2.7a** Operation events with `id` and `Last-Event-ID` resume, and a keepalive every 15 s. Also `shipyard events ID` and `deploy --follow`.
-  - [ ] **P2.7b** `logs --follow` with a bounded tail and best-effort secret redaction. The owner chose (2026-09-28) that the worker serves logs on a private Unix socket, and the API authenticates and proxies them. An ADR records the new boundary.
+  - [x] **P2.7b** `logs --follow` with a bounded tail and best-effort secret redaction. The owner chose (2026-09-28) that the worker serves logs on a private Unix socket, and the API authenticates and proxies them (ADR-0008).
 - [ ] **P2.8** The API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2).
 
 **Exit criteria**

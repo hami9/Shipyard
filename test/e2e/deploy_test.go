@@ -134,6 +134,13 @@ func TestPhase1ExitCriteria(t *testing.T) {
 			t.Fatalf("after the switch caddy serves %q on %s, want the second container %s", got, hn, second[:12])
 		}
 	}
+	// P2.7b: logs come from the worker's socket through the API (ADR-0008),
+	// with the secret GREETING redacted; stderr lines are there too.
+	h.viaCaddy(host, "/say?text=greeting+is+hello+from+e2e")
+	logs := h.cli("", "logs", slug, "--tail", "20")
+	if !strings.Contains(logs, "greeting is [REDACTED]") || strings.Contains(logs, "hello from e2e") || !strings.Contains(logs, "probe listening on :8080") {
+		t.Fatalf("logs:\n%s", logs)
+	}
 	// A removed hostname leaves Caddy at the next sync: no route, no certificate.
 	h.cli("", "domain", "remove", slug, extra)
 	h.gone(extra)
@@ -202,7 +209,8 @@ func start(t *testing.T) *harness {
 	h.dbURL = dbURL
 	t.Cleanup(func() { h.dumpEvents(dbURL) }) // before the database is dropped
 	common := append(cleanEnv(), "SHIPYARD_DATABASE_URL="+dbURL,
-		"SHIPYARD_KEK_DIR="+kek, "SHIPYARD_KEK_ACTIVE=e2e", "SHIPYARD_LOG_FORMAT=text")
+		"SHIPYARD_KEK_DIR="+kek, "SHIPYARD_KEK_ACTIVE=e2e", "SHIPYARD_LOG_FORMAT=text",
+		"SHIPYARD_WORKER_SOCKET="+filepath.Join(tmp, "logs.sock"))
 	run(t, tmp, common, h.bin+"/shipyard-api", "migrate")
 	token := run(t, tmp, common, h.bin+"/shipyard-api", "token", "create", "--name", "e2e")
 

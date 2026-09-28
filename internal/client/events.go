@@ -67,58 +67,93 @@ func (c *Client) followOnce(ctx context.Context, id string, after *int64, retry 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	path := p("v1", "operations", id, "events")
-	req, err := http.NewRequestWithContext(ctx, "GET", c.base+path, nil)
+	h := http.Header{}
+	if *after > 0 {
+		h.Set("Last-Event-ID", strconv.FormatInt(*after, 10))
+	}
+	body, err := c.openStream(ctx, path, h)
 	if err != nil {
 		return op, false, false, err
 	}
+	defer body.Close()
+	done, progress, err = readSSE(body, cancel, retry, func(ev sseEvent) (bool, error) {
+		if ev.name == "end" {
+			if err := json.Unmarshal([]byte(ev.data), &op); err != nil {
+				return false, fmt.Errorf("decode end event: %w", err)
+			}
+			return true, nil
+		}
+		var e Event
+		if err := json.Unmarshal([]byte(ev.data), &e); err != nil {
+			return false, fmt.Errorf("decode event: %w", err)
+		}
+		fn(e)
+		if n, err := strconv.ParseInt(ev.id, 10, 64); err == nil {
+			*after = n
+		}
+		return false, nil
+	})
+	switch {
+	case done:
+		return op, true, true, nil
+	case err != nil:
+		return op, false, progress, fmt.Errorf("read %s: %w", path, err)
+	}
+	return op, false, progress, fmt.Errorf("read %s: stream closed before the operation ended", path)
+}
+
+// openStream starts a GET of an SSE stream; an API error is returned as
+// *Error.
+func (c *Client) openStream(ctx context.Context, path string, h http.Header) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range h {
+		req.Header[k] = v
+	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", eventStreamType)
-	if *after > 0 {
-		req.Header.Set("Last-Event-ID", strconv.FormatInt(*after, 10))
-	}
 	res, err := c.stream.Do(req)
 	if err != nil {
-		return op, false, false, fmt.Errorf("GET %s: %w", path, err)
+		return nil, fmt.Errorf("GET %s: %w", path, err)
 	}
-	defer res.Body.Close()
 	if res.StatusCode >= 400 {
+		defer res.Body.Close()
 		data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		apiErr := &Error{Status: res.StatusCode, Title: http.StatusText(res.StatusCode)}
 		_ = json.Unmarshal(data, apiErr)
-		return op, false, false, apiErr
+		return nil, apiErr
 	}
 	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, eventStreamType) {
-		return op, false, false, fmt.Errorf("GET %s: unexpected content type %q", path, ct)
+		res.Body.Close()
+		return nil, fmt.Errorf("GET %s: unexpected content type %q", path, ct)
 	}
+	return res.Body, nil
+}
 
-	// A connection that goes silent past the keepalive is dropped.
+type sseEvent struct{ name, id, data string }
+
+// readSSE dispatches the events of body to fn until fn reports done, fails,
+// or the stream ends [WHATWG-SSE]. A stream silent past streamIdle is dead:
+// cancel drops it. It reports whether an event or a keepalive arrived.
+func readSSE(body io.Reader, cancel func(), retry *time.Duration, fn func(sseEvent) (bool, error)) (done, progress bool, err error) {
 	idle := time.AfterFunc(streamIdle, cancel)
 	defer idle.Stop()
-	sc := bufio.NewScanner(res.Body)
+	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 64<<10), maxStreamLine)
-	var name, data, lastID string
+	var ev sseEvent
 	for sc.Scan() {
 		idle.Reset(streamIdle)
 		line := sc.Text()
-		if line == "" { // dispatch [WHATWG-SSE]
-			if name == "end" {
-				if err := json.Unmarshal([]byte(data), &op); err != nil {
-					return op, false, true, fmt.Errorf("decode end event: %w", err)
-				}
-				return op, true, true, nil
-			}
-			if data != "" {
-				var e Event
-				if err := json.Unmarshal([]byte(data), &e); err != nil {
-					return op, false, true, fmt.Errorf("decode event: %w", err)
-				}
-				fn(e)
+		if line == "" { // dispatch
+			if ev.data != "" || ev.name != "" {
 				progress = true
-				if n, err := strconv.ParseInt(lastID, 10, 64); err == nil {
-					*after = n
+				if done, err := fn(ev); done || err != nil {
+					return done, true, err
 				}
 			}
-			name, data = "", ""
+			ev.name, ev.data = "", "" // the id carries over, as in EventSource
 			continue
 		}
 		field, value, _ := strings.Cut(line, ":")
@@ -127,22 +162,19 @@ func (c *Client) followOnce(ctx context.Context, id string, after *int64, retry 
 		case "": // a comment: the keepalive shows the connection is healthy
 			progress = true
 		case "event":
-			name = value
+			ev.name = value
 		case "data":
-			if data != "" {
-				data += "\n"
+			if ev.data != "" {
+				ev.data += "\n"
 			}
-			data += value
+			ev.data += value
 		case "id":
-			lastID = value
+			ev.id = value
 		case "retry":
-			if ms, err := strconv.Atoi(value); err == nil && ms > 0 {
+			if ms, err := strconv.Atoi(value); err == nil && ms > 0 && retry != nil {
 				*retry = time.Duration(ms) * time.Millisecond
 			}
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return op, false, progress, fmt.Errorf("read %s: %w", path, err)
-	}
-	return op, false, progress, fmt.Errorf("read %s: stream closed before the operation ended", path)
+	return false, progress, sc.Err()
 }

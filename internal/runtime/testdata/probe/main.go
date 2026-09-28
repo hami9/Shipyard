@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +26,14 @@ func main() {
 			return
 		}
 		w.Write([]byte(v))
+	})
+	// Prints a line to stdout, or with stream=stderr to stderr, for the log tests.
+	http.HandleFunc("GET /say", func(w http.ResponseWriter, r *http.Request) {
+		out := os.Stdout
+		if r.URL.Query().Get("stream") == "stderr" {
+			out = os.Stderr
+		}
+		fmt.Fprintln(out, r.URL.Query().Get("text"))
 	})
 	// Optional failure modes for the worker's docker tests.
 	if os.Getenv("PROBE_EXIT") != "" {
