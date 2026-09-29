@@ -151,7 +151,7 @@ stateDiagram-v2
   building --> starting: image ID recorded
   starting --> health_checking: container ID recorded
   health_checking --> switching: probe passed
-  switching --> active: Caddy /load ok + route verified + DB commit
+  switching --> active: Caddy /config/ load ok + route verified + DB commit
   building --> failed
   starting --> failed
   health_checking --> failed: candidate removed, route untouched
@@ -247,7 +247,7 @@ Rollback is a new operation with `kind = rollback` that targets a prior successf
 
 The reconciler runs at worker start and then every 60 s by default.
 
-1. Re-queue operations whose leases expired, incrementing `attempt`. Once `max_attempts` is exceeded, mark them failed.
+1. Re-queue operations whose leases expired, incrementing `attempt`. Once `max_attempts` is exceeded, mark them failed, together with their in-progress deployment, in the same statement, so step 2 removes its container.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
    - Since P2.6 (`app.Janitor`, run after step 3):
      - superseded containers are drained once their observation window is over (§5 step 8);

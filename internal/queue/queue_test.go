@@ -21,6 +21,7 @@ type fakeStore struct {
 	claimCalls int
 	beats      []time.Time
 	beatErr    func(n int) error // result for the nth heartbeat (1-based)
+	hangFrom   int               // from this heartbeat on, block until ctx ends (0: never)
 }
 
 func (f *fakeStore) ClaimOperation(context.Context, string, time.Duration) (store.Operation, error) {
@@ -38,12 +39,17 @@ func (f *fakeStore) ClaimOperation(context.Context, string, time.Duration) (stor
 	return store.Operation{ID: "op-1"}, nil
 }
 
-func (f *fakeStore) HeartbeatOperation(context.Context, string, string, time.Duration) error {
+func (f *fakeStore) HeartbeatOperation(ctx context.Context, _, _ string, _ time.Duration) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.beats = append(f.beats, time.Now())
+	n := len(f.beats)
+	f.mu.Unlock()
+	if f.hangFrom > 0 && n >= f.hangFrom { // a query stuck on a dead connection
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if f.beatErr != nil {
-		return f.beatErr(len(f.beats))
+		return f.beatErr(n)
 	}
 	return nil
 }
@@ -148,6 +154,25 @@ func TestHoldGivesUpAfterLeaseWithoutRenewal(t *testing.T) {
 		}
 		if bytes.Count(logs.Bytes(), []byte("lease heartbeat failed")) != 3 {
 			t.Fatalf("logs:\n%s", logs.String())
+		}
+	})
+}
+
+// A heartbeat that hangs (a partitioned database) must not keep the work
+// running past the lease: the call's deadline is the lease's expiry.
+func TestHoldGivesUpWhenHeartbeatHangs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		q, _ := newQueue(&fakeStore{hangFrom: 2})
+		start := time.Now()
+		held, release := q.Hold(t.Context(), store.Operation{ID: "op-1"})
+		defer release()
+		<-held.Done()
+		// Last success at 20s; the second beat hangs until 20s + one lease.
+		if elapsed := time.Since(start); elapsed != 80*time.Second {
+			t.Fatalf("gave up after %v, want 80s", elapsed)
+		}
+		if cause := context.Cause(held); !errors.Is(cause, store.ErrLeaseLost) {
+			t.Fatalf("cause = %v", cause)
 		}
 	})
 }

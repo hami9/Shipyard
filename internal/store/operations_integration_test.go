@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -312,11 +313,19 @@ func TestRequeueExpired(t *testing.T) {
 	ctx := t.Context()
 	f.enqueue(f.app(), "k")
 	op, _ := f.s.ClaimOperation(ctx, "crashed", time.Minute)
+	dep, err := f.s.CreateDeployment(ctx, "crashed", store.NewDeployment{OperationID: op.ID, SourceCommitSHA: strings.Repeat("ab", 20)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.sql(`UPDATE operations SET lease_expires_at = now() - interval '1 second' WHERE id = $1`, op.ID)
 
 	requeued, failed, err := f.s.RequeueExpired(ctx)
 	if err != nil || requeued != 1 || failed != 0 {
 		t.Fatalf("RequeueExpired = %d, %d, %v", requeued, failed, err)
+	}
+	// A requeued operation resumes its deployment, so it stays in progress.
+	if d, _ := f.s.DeploymentByID(ctx, dep.ID); d.Status != store.DeployBuilding || d.EndedAt != nil {
+		t.Fatalf("requeued deployment = %s", d.Status)
 	}
 	if err := f.s.HeartbeatOperation(ctx, op.ID, "crashed", time.Minute); !errors.Is(err, store.ErrLeaseLost) {
 		t.Fatalf("old owner kept the lease: %v", err)
@@ -333,6 +342,11 @@ func TestRequeueExpired(t *testing.T) {
 	}
 	if got := f.op(op.ID); got.Status != store.OpFailed || got.FinishedAt == nil {
 		t.Fatalf("exhausted op = %+v", got)
+	}
+	// Its deployment fails with it, so the janitor removes its container and
+	// the app is no longer busy.
+	if d, _ := f.s.DeploymentByID(ctx, dep.ID); d.Status != store.DeployFailed || d.EndedAt == nil || !strings.Contains(d.FailureReason, "lease expired") {
+		t.Fatalf("exhausted deployment = %s %q ended %v", d.Status, d.FailureReason, d.EndedAt)
 	}
 	if requeued, failed, _ = f.s.RequeueExpired(ctx); requeued+failed != 0 {
 		t.Fatal("RequeueExpired touched a live or finished op")

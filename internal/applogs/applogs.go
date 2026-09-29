@@ -128,8 +128,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case follow:
 		end = EndStopped
 	}
-	enc.Encode(Line{End: end})
-	rc.Flush()
+	if err := enc.Encode(Line{End: end}); err != nil {
+		return // the reader sees a stream without an end line: cut short
+	}
+	_ = rc.Flush()
 }
 
 // ParseTail reads a tail count: empty is DefaultTail, otherwise 0..MaxTail.

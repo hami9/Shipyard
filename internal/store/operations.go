@@ -226,14 +226,26 @@ func (s *Store) FailOperation(ctx context.Context, id, owner, reason string, ret
 // fails them once they have used all attempts. The reconciler calls it
 // (ARCHITECTURE §5, Reconciler step 1).
 func (s *Store) RequeueExpired(ctx context.Context) (requeued, failed int, err error) {
+	// One statement, so both updates commit together. A failed operation's
+	// in-progress deployment fails with it: nobody will resume it, and the
+	// janitor then removes its container. A requeued one keeps its
+	// deployment for the resume. (Data-modifying WITH queries always run.)
 	rows, err := s.q.Query(ctx, `
-		UPDATE operations SET
-			status = CASE WHEN attempt < max_attempts THEN 'queued' ELSE 'failed' END,
-			finished_at = CASE WHEN attempt < max_attempts THEN NULL ELSE now() END,
-			last_error = 'lease expired (worker stopped or lost the database)',
-			lease_owner = NULL, lease_expires_at = NULL
-		WHERE status = 'running' AND lease_expires_at < now()
-		RETURNING status`)
+		WITH ops AS (
+			UPDATE operations SET
+				status = CASE WHEN attempt < max_attempts THEN 'queued' ELSE 'failed' END,
+				finished_at = CASE WHEN attempt < max_attempts THEN NULL ELSE now() END,
+				last_error = 'lease expired (worker stopped or lost the database)',
+				lease_owner = NULL, lease_expires_at = NULL
+			WHERE status = 'running' AND lease_expires_at < now()
+			RETURNING id, status
+		), deps AS (
+			UPDATE deployments d SET status = 'failed', ended_at = now(),
+				failure_reason = 'lease expired on the last attempt (worker stopped or lost the database)'
+			FROM ops WHERE ops.status = 'failed' AND d.operation_id = ops.id
+			  AND d.status IN ('building', 'starting', 'health_checking', 'switching')
+		)
+		SELECT status FROM ops`)
 	if err != nil {
 		return 0, 0, mapError(err)
 	}

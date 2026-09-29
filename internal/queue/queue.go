@@ -93,7 +93,11 @@ func (q *Queue) Hold(ctx context.Context, op store.Operation) (held context.Cont
 				return
 			case <-tick.C:
 			}
-			err := q.store.HeartbeatOperation(held, op.ID, q.owner, q.lease)
+			// A heartbeat stuck on a dead connection must not outlive the
+			// lease: past it, another worker may own the operation.
+			beat, cancelBeat := context.WithDeadline(held, lastOK.Add(q.lease))
+			err := q.store.HeartbeatOperation(beat, op.ID, q.owner, q.lease)
+			cancelBeat()
 			switch {
 			case err == nil:
 				lastOK = time.Now()

@@ -244,7 +244,8 @@ func TestServeEndsStreams(t *testing.T) {
 	}()
 	for _, path := range []string{"/stream", "/slow"} {
 		go func() {
-			if resp, err := http.Get("http://" + ln.Addr().String() + path); err == nil {
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+ln.Addr().String()+path, nil)
+			if resp, err := http.DefaultClient.Do(req); err == nil {
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 			}

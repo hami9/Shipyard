@@ -93,8 +93,10 @@ func parseTokenCreate(args []string) (tokenOptions, error) {
 func parseTTL(s string) (time.Duration, error) {
 	var d time.Duration
 	if days, ok := strings.CutSuffix(s, "d"); ok {
+		// Bound the days before multiplying: a large count would overflow
+		// and wrap into the allowed range.
 		n, err := strconv.Atoi(days)
-		if err != nil {
+		if err != nil || n < 1 || n > 366 {
 			return 0, fmt.Errorf("invalid --ttl %q", s)
 		}
 		d = time.Duration(n) * 24 * time.Hour

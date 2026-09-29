@@ -99,7 +99,9 @@ func TestLogsOverSocket(t *testing.T) {
 	if f.read != "ctr-a tail=5 follow=false" {
 		t.Fatalf("read %s", f.read)
 	}
-	s, _ = c.Logs(ctx, appC, 0, true)
+	if s, err = c.Logs(ctx, appC, 0, true); err != nil {
+		t.Fatal(err)
+	}
 	if _, end := readAll(t, s); end != EndStopped || f.read != "ctr-c tail=0 follow=true" {
 		t.Fatalf("follow: end %q, read %s", end, f.read)
 	}

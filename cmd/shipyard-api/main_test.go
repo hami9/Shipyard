@@ -49,7 +49,9 @@ func TestParseTTL(t *testing.T) {
 			t.Errorf("parseTTL(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "0", "59m", "367d", "-1d", "d", "1.5d", "forever"} {
+	// 213505d overflows int64 nanoseconds and wraps to about a day; it must
+	// not be accepted as one.
+	for _, in := range []string{"", "0", "59m", "367d", "-1d", "d", "1.5d", "forever", "213505d", "200000000000d"} {
 		if _, err := parseTTL(in); err == nil {
 			t.Errorf("parseTTL(%q) succeeded, want error", in)
 		}

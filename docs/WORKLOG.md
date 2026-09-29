@@ -54,6 +54,30 @@ Copy this block to the top of the entries section.
 
 ## Entries
 
+### 2026-09-29: Phase 2 exit checks and review fixes
+
+- **Phase / task:** Phase 2 exit criteria (PR #19), plus fixes from the CodeRabbit review of the whole stack.
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **e2e exit checks:**
+  - A client probes the app through Caddy every 50 ms during the health-failing deploy. Every answer was 2xx from the running release.
+  - A fault-injected route-verification failure (`PROBE_FAIL_BY_NAME`: `/healthz` fails by hostname only) makes the deploy fail with "switch traffic", and Caddy goes back to the old release. 40 of 207 probes, about 2 s, were answered by the candidate before the restore. That is the known "briefly on candidate" window, and it lasts as long as the verification retries.
+- **Review fixes** (each bug fix started with a failing test):
+  - `RequeueExpired`: when an operation fails on its last attempt, its in-progress deployment now fails in the same statement. Before, the deployment stayed `building` and so on forever, the janitor kept its container, and the app stayed busy.
+  - `queue.Hold`: each heartbeat has a deadline at the lease's expiry. A query stuck on a dead connection could keep the work running past the lease, with two owners (invariant 3).
+  - `parseTTL`: the day count is bounded to 1–366 before multiplying. `213505d` overflowed and wrapped to about a day.
+  - Smaller fixes: an ignored error in the applogs test, the last `Encode` in the applogs server, a context-bound request in `TestServeEndsStreams`, the `/load` label in the state diagram, and the duplicate `CADDY-OPTIONS` and `SYSTEMD-EXEC` tags in SOURCES (merged).
+- **Not changed:** `DeleteIdleApp` still allows deleting an app whose superseded container is in its observation window. The store does not know the worker's window, and deleting an app's containers belongs to P3.8 (delete app as an operation). It is recorded in the open risks.
+
+**Verification**
+- The three new tests failed before the fixes and pass after: `TestParseTTL` (`213505d`), `TestHoldGivesUpWhenHeartbeatHangs` (a synctest deadlock before), and `TestRequeueExpired` (the deployment stayed `building`).
+- `make lint`, `make test`, `make test-integration`: ok, except for a pre-existing flake in `TestLeaseHandover`. It has a 600 ms lease and fails under load: the unmodified `queue.go` failed on a 20-run batch too, and 20 runs with the fix passed. `-race -count=10` on `queue`: ok.
+- Exit checks: `make test-docker` ok, `make test-e2e` PASS (207 s).
+
+**Next**
+- Owner: confirm that the logs-resume exit criterion means `events`, and merge #1–#19 in order.
+
 ### 2026-09-28: P2.8 API published through Caddy
 
 - **Phase / task:** P2.8: the API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2)
