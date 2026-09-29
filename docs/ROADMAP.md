@@ -157,7 +157,7 @@ flowchart LR
 
 **Goal:** Shipyard survives crashes, restores from backup, and rolls back without rebuilding.
 
-- [ ] **P3.1** Deployment history: `GET /v1/apps/{id}/deployments` and `shipyard releases APP`.
+- [x] **P3.1** Deployment history: `GET /v1/apps/{id}/deployments` and `shipyard releases APP`.
 - [ ] **P3.2** `internal/reconcile`, run at startup and every 60 s:
   - Re-queue or fail expired leases.
   - Reconcile containers by label: remove orphans, recreate missing active containers.

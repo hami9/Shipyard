@@ -54,12 +54,60 @@ const deployColumns = `id, app_id, operation_id, kind, source_commit_sha, coales
 	build_metadata, env_revision_id, coalesce(container_id, ''), status, coalesce(failure_reason, ''),
 	building_at, starting_at, health_checking_at, switching_at, active_at, ended_at, created_at, updated_at`
 
-func scanDeployment(row interface{ Scan(...any) error }) (Deployment, error) {
+// scanDeployment reads deployColumns, then any extra columns into extra.
+func scanDeployment(row interface{ Scan(...any) error }, extra ...any) (Deployment, error) {
 	var d Deployment
-	err := row.Scan(&d.ID, &d.AppID, &d.OperationID, &d.Kind, &d.SourceCommitSHA, &d.ImageID,
+	err := row.Scan(append([]any{&d.ID, &d.AppID, &d.OperationID, &d.Kind, &d.SourceCommitSHA, &d.ImageID,
 		&d.BuildMetadata, &d.EnvRevisionID, &d.ContainerID, &d.Status, &d.FailureReason,
-		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.SwitchingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt)
+		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.SwitchingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt},
+		extra...)...)
 	return d, mapError(err)
+}
+
+// Release is a deployment as the history shows it: with its environment
+// revision's number (0: the app had no environment).
+type Release struct {
+	Deployment
+	EnvRevision int
+}
+
+// Releases returns up to limit of the app's deployments, newest first. With
+// before (a deployment ID of this app), it continues after that one, so a
+// page stays stable while new deployments arrive. A before that is not the
+// app's deployment is ErrNotFound.
+func (s *Store) Releases(ctx context.Context, appID, before string, limit int) ([]Release, error) {
+	var cursor any // nil: from the newest
+	if before != "" {
+		d, err := s.DeploymentByID(ctx, before)
+		if err != nil {
+			return nil, err
+		}
+		if d.AppID != appID {
+			return nil, ErrNotFound
+		}
+		cursor = d.ID
+	}
+	// The scalar subquery keeps deployColumns unambiguous (no join).
+	rows, err := s.q.Query(ctx, `
+		SELECT `+deployColumns+`, coalesce((SELECT number FROM env_revisions r WHERE r.id = d.env_revision_id), 0)
+		FROM deployments d
+		WHERE app_id = $1 AND ($2::uuid IS NULL OR
+			(created_at, id) < (SELECT created_at, id FROM deployments WHERE id = $2::uuid))
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3`, appID, cursor, limit)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+	var out []Release
+	for rows.Next() {
+		var r Release
+		if r.Deployment, err = scanDeployment(rows, &r.EnvRevision); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, mapError(rows.Err())
 }
 
 // Every write below is guarded by the operation's lease, like the operation

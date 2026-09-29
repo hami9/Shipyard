@@ -312,6 +312,44 @@ func followEvents(ctx context.Context, e env, c *client.Client, id string) error
 	return nil
 }
 
+// cmdReleases prints an app's deployment history, newest first.
+func cmdReleases(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("releases", flag.ContinueOnError)
+	limit := fs.Int("limit", 0, "")
+	before := fs.String("before", "", "")
+	pos, err := parse(fs, args, 1)
+	if err != nil {
+		return err
+	}
+	page, err := c.Releases(ctx, pos[0], *limit, *before)
+	if err != nil {
+		return err
+	}
+	if len(page.Deployments) == 0 {
+		fmt.Fprintln(e.stdout, "No releases.")
+		return nil
+	}
+	rows := make([][]string, len(page.Deployments))
+	for i, d := range page.Deployments {
+		env := "-"
+		if d.EnvRevision > 0 {
+			env = fmt.Sprintf("#%d", d.EnvRevision)
+		}
+		note, _, _ := strings.Cut(d.FailureReason, "\n")
+		if len(note) > 60 {
+			note = note[:57] + "..."
+		}
+		rows[i] = []string{d.ID[:8], d.Status, d.Commit[:min(12, len(d.Commit))], env, d.CreatedAt.Local().Format("2006-01-02 15:04"), note}
+	}
+	if err := table(e, "DEPLOYMENT\tSTATUS\tCOMMIT\tENV\tCREATED\tNOTE", rows); err != nil {
+		return err
+	}
+	if page.Next != "" {
+		fmt.Fprintf(e.stdout, "more: shipyard releases %s --before %s\n", pos[0], page.Next)
+	}
+	return nil
+}
+
 func cmdOperation(ctx context.Context, e env, c *client.Client, args []string) error {
 	pos, err := parse(flag.NewFlagSet("operation", flag.ContinueOnError), args, 1)
 	if err != nil {

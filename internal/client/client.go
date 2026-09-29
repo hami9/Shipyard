@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -304,6 +305,47 @@ func (c *Client) Deploy(ctx context.Context, app, ref, idempotencyKey string) (D
 	}
 	var r DeployResult
 	_, err := c.do(ctx, "POST", p("v1", "apps", app, "deployments"), body, h, &r)
+	return r, err
+}
+
+// Release is one deployment in an app's history.
+type Release struct {
+	ID            string     `json:"id"`
+	OperationID   string     `json:"operation_id"`
+	Kind          string     `json:"kind"`
+	Status        string     `json:"status"`
+	Commit        string     `json:"commit"`
+	ImageID       string     `json:"image_id"`
+	EnvRevision   int        `json:"env_revision"`
+	FailureReason string     `json:"failure_reason"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ActiveAt      *time.Time `json:"active_at"`
+	EndedAt       *time.Time `json:"ended_at"`
+}
+
+// Releases is one page of an app's history, newest first; Next is the
+// cursor for the following page, empty after the last one.
+type Releases struct {
+	Deployments []Release `json:"deployments"`
+	Next        string    `json:"next"`
+}
+
+// Releases lists an app's deployments: limit per page (0: the server's
+// default), after the deployment before (empty: from the newest).
+func (c *Client) Releases(ctx context.Context, app string, limit int, before string) (Releases, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := p("v1", "apps", app, "deployments")
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var r Releases
+	_, err := c.do(ctx, "GET", path, nil, nil, &r)
 	return r, err
 }
 

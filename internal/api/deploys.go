@@ -17,6 +17,7 @@ type OperationStore interface {
 	EnqueueOperation(ctx context.Context, n store.NewOperation) (store.Enqueued, error)
 	OperationByID(ctx context.Context, id string) (store.Operation, error)
 	OperationEvents(ctx context.Context, opID string, afterSeq int64, limit int) ([]store.OperationEvent, error)
+	Releases(ctx context.Context, appID, before string, limit int) ([]store.Release, error)
 }
 
 // Client keys are namespaced so they can never collide with the webhook
