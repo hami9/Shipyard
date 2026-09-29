@@ -6,7 +6,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 )
 
@@ -43,7 +45,21 @@ func main() {
 	if os.Getenv("PROBE_UNHEALTHY") != "" {
 		status = http.StatusInternalServerError
 	}
-	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) })
+	// PROBE_FAIL_BY_NAME fails /healthz only when asked by hostname: the
+	// worker's health gate (by IP) passes, its check through Caddy (by Host)
+	// fails. It injects a route-verification failure.
+	failByName := os.Getenv("PROBE_FAIL_BY_NAME") != ""
+	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if _, err := netip.ParseAddr(host); failByName && err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(status)
+	})
 	log.Print("probe listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

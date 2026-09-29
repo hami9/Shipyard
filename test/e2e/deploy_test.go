@@ -108,18 +108,41 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	h.wantOp(h.deploy(), "failed", "missing-file")
 	// 3. A commit that is not on the tracked branch is refused.
 	h.wantOp(h.deploy("--ref", h.repo.offBranch), "failed", "commit is not on the tracked branch")
-	// 4. An unhealthy release is removed; the running one stays.
+	// 4. An unhealthy release is removed; the running one stays. Phase 2 exit
+	// criterion: a client probing throughout sees only 2xx, all from the
+	// running release.
 	h.cli("1\n", "env", "set", slug, "PROBE_UNHEALTHY", "--plain")
+	p := h.probe(host)
 	h.wantOp(h.deploy("--ref", h.repo.good), "failed", "status 500")
+	if got := p.stop(); got.bad != 0 || got.served[first[:12]] != got.total || got.total < 10 {
+		t.Fatalf("probing through the unhealthy deploy: %+v, want every answer 2xx from %s", got, first[:12])
+	}
 	if now := h.onlyRunning(); now != first {
 		t.Fatalf("a failed deploy replaced the running container: %s -> %s", first, now)
+	}
+	// 4b. Phase 2 exit criterion: a candidate that passes its health gate but
+	// fails verification through Caddy (injected: it fails /healthz by
+	// hostname only) is rolled back; Caddy goes back to the committed routes.
+	h.cli("", "env", "unset", slug, "PROBE_UNHEALTHY")
+	h.cli("1\n", "env", "set", slug, "PROBE_FAIL_BY_NAME", "--plain")
+	p = h.probe(host)
+	h.wantOp(h.deploy("--ref", h.repo.good), "failed", "switch traffic")
+	sw := p.stop()
+	// The load puts traffic on the candidate until the restore (ARCHITECTURE
+	// §5 failure table), so only 2xx is required here, not the origin.
+	if sw.bad != 0 || sw.total < 10 {
+		t.Fatalf("probing through the failed switch: %+v", sw)
+	}
+	t.Logf("failed switch: %d probes, %d answered by the candidate before the restore", sw.total, sw.total-sw.served[first[:12]])
+	if now := h.onlyRunning(); now != first {
+		t.Fatalf("a failed switch replaced the running container: %s -> %s", first, now)
 	}
 	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != first[:12] {
 		t.Fatalf("after failed deploys caddy serves %q, want %s", got, first[:12])
 	}
 
 	// 5. A healthy release supersedes the first, whose container is removed.
-	h.cli("", "env", "unset", slug, "PROBE_UNHEALTHY")
+	h.cli("", "env", "unset", slug, "PROBE_FAIL_BY_NAME")
 	// P2.7: --follow streams the events (SSE) to the end, including the one
 	// the worker appends after the operation has finished (the drain plan).
 	out := h.cli("", "deploy", slug, "--ref", h.repo.good, "--follow")
@@ -328,6 +351,71 @@ func (h *harness) cli(stdin string, args ...string) string {
 		h.t.Fatalf("shipyard %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
+}
+
+// probeResult counts what a continuous client saw: answers by container
+// (its hostname is the short container ID), and failures of any kind.
+type probeResult struct {
+	total, bad int
+	served     map[string]int
+	failures   []string // the first few
+}
+
+type prober struct {
+	stopc chan struct{}
+	done  chan probeResult
+}
+
+// probe requests host through Caddy's HTTPS listener every 50 ms, one
+// attempt each and no retries, until stop: a dropped connection or a non-2xx
+// answer is downtime.
+func (h *harness) probe(host string) *prober {
+	h.t.Helper()
+	addr := strings.Fields(h.docker("port", h.caddy, "443/tcp"))[0]
+	hc := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // Caddy's internal CA
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}}
+	p := &prober{stopc: make(chan struct{}), done: make(chan probeResult, 1)}
+	go func() {
+		r := probeResult{served: map[string]int{}}
+		fail := func(s string) {
+			r.bad++
+			if len(r.failures) < 5 {
+				r.failures = append(r.failures, s)
+			}
+		}
+		tick := time.NewTicker(50 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-p.stopc:
+				p.done <- r
+				return
+			case <-tick.C:
+			}
+			r.total++
+			resp, err := hc.Get("https://" + host + "/read?path=/etc/hostname")
+			if err != nil {
+				fail(err.Error())
+				continue
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode/100 != 2 {
+				fail(resp.Status + ": " + string(b))
+				continue
+			}
+			r.served[strings.TrimSpace(string(b))]++
+		}
+	}()
+	return p
+}
+
+func (p *prober) stop() probeResult {
+	close(p.stopc)
+	return <-p.done
 }
 
 // cliErr runs a CLI command that is expected to fail.
