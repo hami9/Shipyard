@@ -137,8 +137,11 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if now := h.onlyRunning(); now != first {
 		t.Fatalf("a failed switch replaced the running container: %s -> %s", first, now)
 	}
-	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != first[:12] {
-		t.Fatalf("after failed deploys caddy serves %q, want %s", got, first[:12])
+	// The whole committed route table is back, every hostname of the app.
+	for _, hn := range []string{host, extra} {
+		if got := h.viaCaddy(hn, "/read?path=/etc/hostname"); got != first[:12] {
+			t.Fatalf("after failed deploys caddy serves %q on %s, want %s", got, hn, first[:12])
+		}
 	}
 
 	// 5. A healthy release supersedes the first, whose container is removed.
