@@ -247,7 +247,7 @@ Rollback is a new operation with `kind = rollback` that targets a prior successf
 
 The reconciler runs at worker start and then every 60 s by default.
 
-1. Re-queue operations whose leases expired, incrementing `attempt`. Once `max_attempts` is exceeded, mark them failed, together with their in-progress deployment, in the same statement, so step 2 removes its container.
+1. Re-queue operations whose leases expired; the next claim increments `attempt` (step 2 of §5). Once `max_attempts` is reached, mark them failed, together with their in-progress deployment, in the same statement, so step 2 removes its container.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
    - Since P2.6 (`app.Janitor`, run after step 3):
      - superseded containers are drained once their observation window is over (§5 step 8);
