@@ -45,13 +45,18 @@ func Listen(addr string) (net.Listener, error) {
 
 // Serve runs an HTTP server on ln until ctx is cancelled, then shuts down
 // gracefully, giving in-flight requests up to shutdownTimeout to finish.
+// Event streams end as soon as shutdown starts; their clients resume.
 func Serve(ctx context.Context, ln net.Listener, h http.Handler, shutdownTimeout time.Duration, log *slog.Logger) error {
+	streams := make(chan struct{})
+	base := context.WithValue(context.Background(), stoppingKey{}, streams)
 	srv := &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		BaseContext:       func(net.Listener) context.Context { return base },
 	}
+	srv.RegisterOnShutdown(func() { close(streams) })
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	log.Info("api listening", slog.String("addr", ln.Addr().String()))

@@ -9,6 +9,43 @@ All notable changes to Shipyard are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **Database schema v1** (migration `0002`): users and API tokens, apps, encrypted secret values and immutable environment revisions, the operations queue and its events, deployments, routes, webhook deliveries, and audit events. The database itself enforces one running operation and one active deployment per app, unique idempotency keys and hostnames, and same-app references.
+- **API tokens:** `shipyard-api token create|list|revoke` bootstraps and manages `shp_` tokens on the server. Tokens have scopes (`read`, `deploy`, `admin`) and an expiry of 1h to 366d (default 90d). Only a SHA-256 hash is stored, the plaintext is printed once, and every create and revoke is audited.
+- **API authentication:** every `/v1` route requires a bearer token with the right scope (401 or 403 per RFC 6750). Every authenticated mutation is audited, allowed or denied. `GET /v1/whoami` describes the calling token.
+- **CLI (`shipyard`):** `login` (token from stdin, verified, saved with mode 0600), `whoami`, `app create|list|show`, `ps`, `env set|unset|list` (values from stdin, never printed), `deploy [--ref SHA] [--idempotency-key K]`, and `operation ID`. It refuses plain `http://` to a non-loopback host and supports `unix://` sockets. `SHIPYARD_URL` and `SHIPYARD_TOKEN` override the config, for CI.
+- **Deploy API:** `POST /v1/apps/{app}/deployments` queues a deploy (idempotent with `Idempotency-Key`; a newer request cancels older queued ones), and `GET /v1/operations/{id}` reports its status and phase.
+- **Deployments (worker):** `shipyard-worker run` executes deploys. It fetches the pinned or head commit, refusing one that is not on the tracked branch, then builds it on a resource-limited buildx builder. It then starts a hardened container on the app's own network, with the environment decrypted and injected. Next comes a health gate: 3 consecutive 2xx/3xx on `health_path`, while the container keeps running. Last, it marks the deployment active; the previous one is drained after the observation window (below).
+  - A failed build, start, or health check leaves the running release untouched and removes the candidate. The last lines of the candidate's output are recorded.
+  - A worker that crashes or restarts resumes the deploy where it stopped.
+  - There is no public route until Phase 2.
+- **Caddy edge:** at start, the worker keeps a Caddy container (`caddy:2.11.4-alpine`, pinned by digest) running.
+  - It is the only container that publishes ports (80/tcp, 443/tcp, 443/udp), and it joins every app network.
+  - Its admin API is available only on a Unix socket (mode 0660) that the worker's group can use.
+  - Certificates and the last loaded config persist in volumes, and a restart resumes that config.
+  - Configured with `SHIPYARD_CADDY`, `SHIPYARD_CADDY_NAME`, `SHIPYARD_CADDY_IMAGE`, `SHIPYARD_CADDY_ADMIN_DIR`, `SHIPYARD_CADDY_BIND`, `SHIPYARD_CADDY_HTTP_PORT`, and `SHIPYARD_CADDY_HTTPS_PORT`.
+- **Caddy config from the database:** at start, the worker renders Caddy's whole config from the routes table. It loads the config only if it differs, as a conditional replace (`If-Match`) that fails safely on a concurrent change. The admin API always stays on its socket. A config Caddy rejects leaves the running one in place. Certificates are configured with `SHIPYARD_CADDY_CA` (default, `staging`, or `internal`) and `SHIPYARD_ACME_EMAIL`.
+- **Traffic switching:** once a candidate is healthy, the worker points the app's hostnames at it in Caddy. It verifies each hostname through Caddy (a private plain-HTTP listener with the same routes), and only then commits the new routes together with the active deployment. If loading, verifying, or committing fails, the previous routes are restored before the candidate is removed, so the running release keeps serving.
+- **Domains:** `shipyard domain add|remove|list APP [HOSTNAME]` and `/v1/apps/{app}/domains`. An app can have several hostnames; each hostname belongs to one app.
+  - **Checks:** hostnames are normalized and must be exact FQDNs, optionally under `SHIPYARD_DOMAIN_SUFFIXES`. A DNS preflight requires every A/AAAA record to be one of `SHIPYARD_PUBLIC_IPS` (`SHIPYARD_DNS_PREFLIGHT=false` skips it).
+  - **Serving:** a hostname added to a running app serves it at once. The worker applies added and removed hostnames within `SHIPYARD_RECONCILE_INTERVAL` (default 60 s).
+- **Live events:** `shipyard events ID` and `shipyard deploy APP --follow` stream an operation's events until it ends (`GET /v1/operations/{id}/events`, SSE). A dropped connection resumes where it stopped. `--follow` exits non-zero unless the deploy succeeded, so it can gate CI.
+- **Published API:** set `SHIPYARD_API_HOSTNAME` and Caddy serves the API there over HTTPS (HTTP/2): `/v1/*` and `/hooks/github` only. The API must listen on a Unix socket (`SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock`, now in `shipyard.env` for both services), which the worker mounts read-only into Caddy. Apps cannot take the API's hostname.
+- **App logs:** `shipyard logs APP [--tail N] [--follow]` shows the running release's output (`GET /v1/apps/{app}/logs`, SSE), with stdout and stderr kept apart. The worker reads the logs and serves them to the API on a private socket (`SHIPYARD_WORKER_SOCKET`). The API never touches Docker.
+  - **Redaction:** the app's secret values (6 characters or longer) are shown as `[REDACTED]`. This is best effort: a secret printed in another form is not caught.
+  - The candidate output that a failed deploy copies into the operation's events is redacted the same way.
+- **Observation window:** after a switch, the previous release keeps running for `SHIPYARD_OBSERVATION_WINDOW` (default 5 min; `0s` to `24h`). The worker then stops it gracefully with the app's `stop_timeout` (`SIGTERM`, then `SIGKILL`) and removes it. The image stays. The worker also removes containers of failed deployments that a crash left behind. It never touches containers whose deployment is not in its database.
+- **Worker configuration:** `SHIPYARD_WORK_DIR`, `SHIPYARD_SOURCE_BASE_URL`, `SHIPYARD_BUILDER`, `SHIPYARD_BUILDER_MEMORY`, and `SHIPYARD_BUILDER_CPUS`. The worker now requires `SHIPYARD_KEK_ACTIVE` and access to Docker.
+- **Apps API:** `/v1/apps` create, list, show (by slug or ID), update, and delete. Every field is validated before it reaches the database: git branch rules, repository-relative paths without `..`, ports, and limits. All invalid fields are reported at once as `application/problem+json`.
+- **Environment API:** `GET /v1/apps/{app}/env` lists keys only; `PUT` and `DELETE /v1/apps/{app}/env/{key}` create new revisions. Values are secret (encrypted) by default.
+- **Configuration:** `SHIPYARD_KEK_DIR` and `SHIPYARD_KEK_ACTIVE`. `shipyard-api serve` refuses to start without the active KEK, or with a KEK file other users can read.
+- **Secret encryption and environment revisions** (`internal/secrets`): envelope encryption with a per-value AES-256-GCM key wrapped by a file-based KEK. Every change creates an immutable, numbered revision that reuses unchanged values without decrypting them.
+
+### Removed
+
+- **`SHIPYARD_API_ALLOW_PUBLIC_LISTEN`.** The API now listens only on loopback or a Unix socket, and public traffic reaches it through Caddy. A non-loopback `SHIPYARD_API_LISTEN` is refused at startup, even with the old setting.
+
 ## [0.1.0] - 2026-09-26
 
 First release: the Phase 0 bootstrap. An empty but fully wired project; it does not deploy apps yet.
