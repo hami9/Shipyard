@@ -156,6 +156,13 @@ func TestCLIEndToEnd(t *testing.T) {
 	if out := f.ok("", "operation", m[1]); !regexp.MustCompile(`status\s+cancelled`).MatchString(out) || !strings.Contains(out, "superseded by") {
 		t.Fatalf("operation:\n%s", out)
 	}
+	// P3.1: no deployment ran yet (the queued ones were cancelled first).
+	if out := f.ok("", "releases", "web"); out != "No releases.\n" {
+		t.Fatalf("releases:\n%s", out)
+	}
+	if code, _, errb := f.run("", "releases", "web", "--limit", "101"); code != 1 || !strings.Contains(errb, "limit: must be") {
+		t.Fatalf("releases --limit 101: %d %s", code, errb)
+	}
 	// P2.7: events streams the log to the end; a cancelled operation fails.
 	for _, msg := range []string{"fetching", "two\nlines"} {
 		if _, err := f.s.AppendOperationEvent(t.Context(), m[1], store.LevelWarn, msg); err != nil {

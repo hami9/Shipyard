@@ -73,6 +73,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "DELETE /v1/apps/{app}/domains/{hostname}", ScopeAdmin, domains.remove)
 	route(mux, "GET /v1/apps/{app}/logs", ScopeRead, logs.logs)
 	route(mux, "POST /v1/apps/{app}/deployments", ScopeDeploy, ops.deploy)
+	route(mux, "GET /v1/apps/{app}/deployments", ScopeRead, ops.releases)
 	route(mux, "GET /v1/operations/{id}", ScopeRead, ops.get)
 	route(mux, "GET /v1/operations/{id}/events", ScopeRead, ops.events)
 	return withRequestID(withAccessLog(log, mux))

@@ -49,6 +49,61 @@ func (f *queueFixture) healthy(op store.Operation, owner string) store.Deploymen
 	return d
 }
 
+// P3.1: the history lists an app's deployments newest first, pages with a
+// stable cursor, and names each environment revision by number.
+func TestReleases(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	app, other := f.app(), f.app()
+	if got, err := f.s.Releases(ctx, app, "", 10); err != nil || len(got) != 0 {
+		t.Fatalf("empty history = %v, %v", got, err)
+	}
+	var ids []string // oldest first
+	for i := range 3 {
+		op := f.claimed(app, "w1")
+		d := f.healthy(op, "w1")
+		if i < 2 {
+			if _, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "", nil); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := f.s.FailDeployment(ctx, d.ID, "w1", "health check did not pass"); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, d.ID)
+	}
+	f.healthy(f.claimed(other, "w1"), "w1") // another app's: never listed
+
+	all, err := f.s.Releases(ctx, app, "", 10)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("history = %d, %v", len(all), err)
+	}
+	var got []string
+	for _, r := range all {
+		got = append(got, r.ID[:8]+" "+r.Status)
+	}
+	want := []string{ids[2][:8] + " failed", ids[1][:8] + " active", ids[0][:8] + " superseded"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("history = %v, want %v", got, want)
+	}
+	if all[0].FailureReason != "health check did not pass" || all[1].EnvRevision != 0 || all[2].ImageID != testImage {
+		t.Fatalf("details = %+v", all)
+	}
+
+	// Pages: two, then the rest after the second's ID.
+	page, _ := f.s.Releases(ctx, app, "", 2)
+	rest, err := f.s.Releases(ctx, app, page[1].ID, 2)
+	if len(page) != 2 || err != nil || len(rest) != 1 || rest[0].ID != ids[0] {
+		t.Fatalf("pages = %d then %d (%v)", len(page), len(rest), err)
+	}
+	// A cursor from another app, or unknown, is not found.
+	otherRel, _ := f.s.Releases(ctx, other, "", 1)
+	for _, before := range []string{otherRel[0].ID, "00000000-0000-4000-8000-000000000000"} {
+		if _, err := f.s.Releases(ctx, app, before, 2); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("before %s: %v", before, err)
+		}
+	}
+}
+
 func TestDeploymentLifecycle(t *testing.T) {
 	f := newQueueFixture(t)
 	ctx := t.Context()

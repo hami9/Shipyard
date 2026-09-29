@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 2: Safe releases, HTTPS, and traffic switching. Phase 1 is done, pending the owner's merge. Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); `api-edge` (P2.8). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P2.8: the API is published through Caddy (`SHIPYARD_API_HOSTNAME`, HTTPS with HTTP/2) from its Unix socket; the public-listen override is removed |
-| **Next task** | Phase 2 exit criteria. One criterion needs the owner: it asks `logs --follow` to resume without loss, but ADR-0008 makes logs non-resumable (only `events` resumes). Then an e2e that probes continuously through a health-failing deploy, and a fault-injected route-verification failure through Caddy. After that, P3.1 |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); `releases` (P3.1). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.1: deployment history (`GET /v1/apps/{app}/deployments`, `shipyard releases`) |
+| **Next task** | P3.2: `internal/reconcile`. The janitor, requeue, and Caddy sync exist in the worker already; what is missing is recreating a missing active container, and moving the steps into their own package |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
-| **Last updated** | 2026-09-28 |
+| **Last updated** | 2026-09-29 |
 
 ## Entry template
 
@@ -53,6 +53,31 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-29: P3.1 release history
+
+- **Phase / task:** P3.1: deployment history, `GET /v1/apps/{id}/deployments` and `shipyard releases APP`
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`store.Releases`:** newest first, ordered by `(created_at, id)`, with a keyset cursor (`before`). A cursor that is not this app's deployment is `ErrNotFound`. Each row carries its environment revision number from a scalar subquery, which keeps `deployColumns` unambiguous without a join. `scanDeployment` takes extra columns.
+- **API:** `GET /v1/apps/{app}/deployments?limit=&before=` (`read` scope). `limit` is 1–100 (default 20), and every invalid field is reported at once (422). `next` is the last ID of a full page.
+- **Client and CLI:** `shipyard releases APP [--limit N] [--before ID]` prints a table (deployment, status, commit, env revision, created, note), plus the command for the next page.
+
+**Decisions**
+- **Keyset, not offset:** a page stays stable while new deployments arrive.
+- **The history shows database rows only.** Whether an image is still on the host is the worker's knowledge (invariant 1); rollback availability comes with P3.3.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint`, `make test`, `make test-integration`: all ok.
+  - `TestReleases`: order, statuses, another app's rows excluded, pages, and two bad cursors.
+  - `TestReleasesEndpoint`: the empty list, two pages, and 7 negative cases, plus both fields reported at once.
+  - `TestCLIEndToEnd`: `releases` with no history, and `--limit 101` refused.
+- **`make test-e2e`: PASS (282 s).** After step 5, `shipyard releases` shows `active failed failed failed superseded`, every row with an env revision, and the active row at the pinned commit. The off-branch commit has no row, since it was refused before a deployment existed.
+- No leftovers. Docker tests were not run (no runtime, routing, or build change).
+
+**Next**
+- P3.2: `internal/reconcile`.
 
 ### 2026-09-29: Phase 2 exit checks and review fixes
 

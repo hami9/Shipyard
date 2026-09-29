@@ -179,6 +179,23 @@ func TestPhase1ExitCriteria(t *testing.T) {
 			t.Fatalf("after the switch caddy serves %q on %s, want the second container %s", got, hn, second[:12])
 		}
 	}
+	// P3.1: the history, newest first: the active release, the two failed
+	// deploys of steps 4 and 4b, the failed build of step 2 (the off-branch
+	// commit of step 3 was refused before a deployment existed), and the
+	// superseded first release. Each pins its environment revision.
+	rel := h.cli("", "releases", slug)
+	var statuses, commits []string
+	for _, line := range strings.Split(strings.TrimSpace(rel), "\n")[1:] {
+		f := strings.Fields(line)
+		if len(f) < 4 || !strings.HasPrefix(f[3], "#") {
+			t.Fatalf("release row %q (no env revision):\n%s", line, rel)
+		}
+		statuses, commits = append(statuses, f[1]), append(commits, f[2])
+	}
+	if got := strings.Join(statuses, " "); got != "active failed failed failed superseded" || commits[0] != h.repo.good[:12] {
+		t.Fatalf("releases = %s (active commit %s, want %s):\n%s", got, commits[0], h.repo.good[:12], rel)
+	}
+
 	// P2.7b: logs come from the worker's socket through the API (ADR-0008),
 	// with the secret GREETING redacted; stderr lines are there too.
 	h.viaCaddy(host, "/say?text=greeting+is+hello+from+e2e")

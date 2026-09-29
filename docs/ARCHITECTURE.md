@@ -264,6 +264,7 @@ The reconciler runs at worker start and then every 60 s by default.
 | `shipyard app create --repo owner/repo --branch main --port 3000` | `POST /v1/apps` |
 | `shipyard deploy APP [--ref <commit-sha>] [--idempotency-key K] [--follow]` | `POST /v1/apps/{id}/deployments` (`deploy` scope). 202 for a new operation; 200 with the original for a repeated key; 409 if the key was used for a different request. Client keys are stored as `api:<key>` so they never collide with `gh:` keys. `--follow` then streams the events and exits non-zero unless the operation succeeded |
 | `shipyard operation ID` | `GET /v1/operations/{id}` |
+| `shipyard releases APP [--limit N] [--before ID]` | `GET /v1/apps/{id}/deployments?limit=&before=` (`read` scope). The history, newest first, with a stable keyset cursor: `next` is the last ID of a full page. Each entry has its commit, image ID, environment revision number, status, and failure reason. `limit` is 1–100 (default 20); a `before` that is not the app's deployment is 422 |
 | `shipyard ps` | `GET /v1/apps` |
 | `shipyard login --url URL` (token read from stdin) | `GET /v1/whoami` to verify, then saves `~/.config/shipyard/config.json` with mode 0600 |
 | `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |

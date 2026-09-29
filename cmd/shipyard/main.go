@@ -42,6 +42,8 @@ Domains (DNS must point at the server first; Caddy picks changes up within a min
 Deploys:
   deploy APP [--ref SHA] [--idempotency-key KEY] [--follow]
                            --follow streams the events and fails unless it succeeds
+  releases APP [--limit N] [--before ID]
+                           An app's deployments, newest first
   operation ID             Show an operation's status
   events ID                Stream an operation's events until it ends
   logs APP [--tail N] [--follow|-f]
@@ -85,7 +87,7 @@ func run(ctx context.Context, args []string, e env) int {
 		return 0
 	case "login":
 		err = cmdLogin(ctx, e, args[1:])
-	case "whoami", "app", "ps", "env", "domain", "deploy", "operation", "events", "logs":
+	case "whoami", "app", "ps", "env", "domain", "deploy", "operation", "events", "logs", "releases":
 		err = withClient(e, func(c *client.Client) error { return dispatch(ctx, e, c, args) })
 	default:
 		fmt.Fprintf(e.stderr, "unknown command %q\n\n%s", args[0], usage)
@@ -153,6 +155,8 @@ func dispatch(ctx context.Context, e env, c *client.Client, args []string) error
 		return cmdEvents(ctx, e, c, rest)
 	case "logs ":
 		return cmdLogs(ctx, e, c, rest)
+	case "releases ":
+		return cmdReleases(ctx, e, c, rest)
 	}
 	return errUsage
 }
