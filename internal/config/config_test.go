@@ -261,6 +261,45 @@ func TestLoadWorkerObservationWindow(t *testing.T) {
 	}
 }
 
+// P3.4b: the retention job's settings and their defaults (ADR-0006).
+func TestLoadWorkerRetention(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.RetentionInterval != 24*time.Hour || cfg.BuildCacheMax != 10<<30 ||
+		cfg.RetainOperations != 20 || cfg.OperationLogMax != 5<<20 {
+		t.Fatalf("defaults = %s %d %d %d, %v", cfg.RetentionInterval, cfg.BuildCacheMax, cfg.RetainOperations, cfg.OperationLogMax, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetentionInterval: "5s",
+		EnvBuildCacheMax: "512MB", EnvRetainOperations: "1", EnvOperationLogMax: "4096"}))
+	if err != nil || cfg.RetentionInterval != 5*time.Second || cfg.BuildCacheMax != 512<<20 ||
+		cfg.RetainOperations != 1 || cfg.OperationLogMax != 4096 {
+		t.Fatalf("set = %s %d %d %d, %v", cfg.RetentionInterval, cfg.BuildCacheMax, cfg.RetainOperations, cfg.OperationLogMax, err)
+	}
+	for key, bad := range map[string][]string{
+		EnvRetentionInterval: {"0s", "500ms", "daily"},
+		EnvBuildCacheMax:     {"0", "1k", "10x", "-1g", "2000t", "1.5g", "99999999999999999g"},
+		EnvRetainOperations:  {"0", "10001", "all"},
+		EnvOperationLogMax:   {"1000", "5 m", "m"},
+	} {
+		for _, v := range bad {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, key: v}))
+			checkErr(t, err, key)
+		}
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	for s, want := range map[string]int64{"1": 1, "4096": 4096, "1k": 1024, "10g": 10 << 30, "10GB": 10 << 30, "1t": 1 << 40, "1024t": 1 << 50} {
+		if got, ok := parseSize(s); !ok || got != want {
+			t.Errorf("parseSize(%q) = %d, %v; want %d", s, got, ok, want)
+		}
+	}
+	for _, s := range []string{"", "0", "01", "1025t", "1e3", "1kib", "g"} {
+		if got, ok := parseSize(s); ok {
+			t.Errorf("parseSize(%q) = %d, want invalid", s, got)
+		}
+	}
+}
+
 func TestLoadWorkerRetainImages(t *testing.T) {
 	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
 		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))

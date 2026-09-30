@@ -54,6 +54,10 @@ const (
 	EnvObservationWindow  = "SHIPYARD_OBSERVATION_WINDOW"
 	EnvWorkerSocket       = "SHIPYARD_WORKER_SOCKET"
 	EnvRetainImages       = "SHIPYARD_RETAIN_IMAGES"
+	EnvRetainOperations   = "SHIPYARD_RETAIN_OPERATIONS"
+	EnvOperationLogMax    = "SHIPYARD_OPERATION_LOG_MAX"
+	EnvBuildCacheMax      = "SHIPYARD_BUILD_CACHE_MAX"
+	EnvRetentionInterval  = "SHIPYARD_RETENTION_INTERVAL"
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
 	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
@@ -83,12 +87,22 @@ const (
 	// image for rollback, besides the active one (ADR-0006).
 	DefaultRetainImages = 5
 	maxRetainImages     = 1000
-	minPollInterval     = 100 * time.Millisecond
+	// ADR-0006: operation events of the last 20 operations per app, 5 MB
+	// each; the BuildKit cache pruned daily down to 10 GB.
+	DefaultRetainOperations  = 20
+	maxRetainOperations      = 10000
+	DefaultOperationLogMax   = 5 << 20
+	DefaultBuildCacheMax     = 10 << 30
+	DefaultRetentionInterval = 24 * time.Hour
+	maxSize                  = 1 << 50
+	minPollInterval          = 100 * time.Millisecond
 )
 
 var (
 	// kekIDRE mirrors secret_values.kek_id.
 	kekIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	// sizeRE is a byte count with an optional binary unit and b (reader.size).
+	sizeRE = regexp.MustCompile(`^([1-9][0-9]{0,15})([kmgt]?)b?$`)
 	// memoryRE is a buildx driver-opt memory value, e.g. 512m or 2g [DK-BX-CONTAINER].
 	memoryRE = regexp.MustCompile(`^[1-9][0-9]*[bkmg]?$`)
 	// builderRE is a safe buildx builder name; it becomes a container name.
@@ -172,6 +186,14 @@ type Worker struct {
 	// RetainImages is how many earlier releases per app keep their image
 	// (rollback targets); 0 keeps only the active release's.
 	RetainImages int
+	// The retention job runs at start and then every RetentionInterval: it
+	// prunes the BuildKit cache down to BuildCacheMax bytes, keeps operation
+	// events of each app's last RetainOperations operations only, and
+	// trims a finished operation's events to OperationLogMax bytes.
+	RetentionInterval time.Duration
+	BuildCacheMax     int64
+	RetainOperations  int
+	OperationLogMax   int64
 	// WorkDir holds one checkout per running operation (mode 0700).
 	WorkDir string
 	// SourceBaseURL is where repositories are cloned from: https, or
@@ -287,15 +309,14 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 			cfg.ObservationWindow = d
 		}
 	}
-	cfg.RetainImages = DefaultRetainImages
-	if s := r.str(EnvRetainImages, ""); s != "" {
-		n, err := strconv.Atoi(s)
-		if err != nil || n < 0 || n > maxRetainImages {
-			r.fail(EnvRetainImages, fmt.Errorf("%q must be a number between 0 and %d", s, maxRetainImages))
-		} else {
-			cfg.RetainImages = n
-		}
+	cfg.RetainImages = r.intRange(EnvRetainImages, DefaultRetainImages, 0, maxRetainImages)
+	cfg.RetainOperations = r.intRange(EnvRetainOperations, DefaultRetainOperations, 1, maxRetainOperations)
+	cfg.RetentionInterval = r.duration(EnvRetentionInterval, DefaultRetentionInterval)
+	if cfg.RetentionInterval < time.Second {
+		r.fail(EnvRetentionInterval, errors.New("must be at least 1s"))
 	}
+	cfg.BuildCacheMax = r.size(EnvBuildCacheMax, DefaultBuildCacheMax, 1<<20)
+	cfg.OperationLogMax = r.size(EnvOperationLogMax, DefaultOperationLogMax, 1<<10)
 	if !filepath.IsAbs(cfg.WorkDir) {
 		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))
 	}
@@ -357,6 +378,47 @@ func (r *reader) caddy() Caddy {
 		c.BindIP = ip
 	}
 	return c
+}
+
+// intRange reads a whole number between lo and hi.
+func (r *reader) intRange(key string, def, lo, hi int) int {
+	s := r.str(key, "")
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < lo || n > hi {
+		r.fail(key, fmt.Errorf("%q must be a number between %d and %d", s, lo, hi))
+		return def
+	}
+	return n
+}
+
+// size reads a byte count such as 10g, 512m, or 4096: binary units k, m,
+// g, t, an optional trailing b, at least lo and at most 1 PiB.
+func (r *reader) size(key string, def, lo int64) int64 {
+	s := r.str(key, "")
+	if s == "" {
+		return def
+	}
+	if n, ok := parseSize(s); ok && n >= lo {
+		return n
+	}
+	r.fail(key, fmt.Errorf("%q must be a size like 512m or 10g, from %d bytes to 1 PiB", s, lo))
+	return def
+}
+
+func parseSize(s string) (int64, bool) {
+	m := sizeRE.FindStringSubmatch(strings.ToLower(s))
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	shift := map[string]uint{"": 0, "k": 10, "m": 20, "g": 30, "t": 40}[m[2]]
+	if err != nil || n > maxSize>>shift {
+		return 0, false
+	}
+	return n << shift, true
 }
 
 func (r *reader) port(key string, def int) int {

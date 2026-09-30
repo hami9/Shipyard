@@ -107,6 +107,36 @@ func TestBuildSucceeds(t *testing.T) {
 	}
 }
 
+// P3.4b: the cache is pruned only down to the cap; buildx reports what it
+// reclaimed [DK-BX-PRUNE].
+func TestPruneCache(t *testing.T) {
+	b := newTestBuilder(t)
+	dockerfile, ctxDir := project(t, "FROM scratch\nCOPY blob /blob\n")
+	blob := make([]byte, 2<<20)
+	rand.Read(blob)
+	if err := os.WriteFile(filepath.Join(ctxDir, "blob"), blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Build(t.Context(), Request{Dockerfile: dockerfile, Context: ctxDir, App: "web",
+		Commit: strings.Repeat("cd", 20), DeploymentID: deployment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeImage(t, res.ImageID)
+	for _, tc := range []struct {
+		max  int64
+		none bool
+	}{{1 << 40, true}, {1, false}, {1, true}} {
+		got, err := b.PruneCache(t.Context(), tc.max)
+		if err != nil || got == "" || (got == "0B") != tc.none {
+			t.Fatalf("PruneCache(%d) = %q, %v; want reclaimed=%v", tc.max, got, err, !tc.none)
+		}
+	}
+	if _, err := b.PruneCache(t.Context(), 0); err == nil {
+		t.Fatal("a zero cap was accepted")
+	}
+}
+
 // Exit criterion: a broken Dockerfile yields a failure with a bounded log.
 func TestBuildFailsWithBoundedLog(t *testing.T) {
 	b := newTestBuilder(t)

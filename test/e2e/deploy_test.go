@@ -186,6 +186,13 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	// superseded first release's (the rollback target) stay.
 	secondImage := h.docker("inspect", "--format", "{{.Image}}", second)
 	h.waitImages(firstImage, secondImage)
+	// P3.4b: only the 2 newest operations keep their events; the first
+	// deploy's are removed, while its operation row stays.
+	h.waitEvents(op1, 0)
+	if n := h.events(h.ops[len(h.ops)-1]); n == 0 {
+		t.Fatal("the newest operation lost its events")
+	}
+	h.wantOp(op1, "succeeded", "")
 	// P3.2: the reconciler brings the active release back. A container that
 	// is gone is recreated from the deployment's image and environment under
 	// the same name, so Caddy reaches it without a config change; a stopped
@@ -364,7 +371,7 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
-		"SHIPYARD_RETAIN_IMAGES=1"), "shipyard-worker", "run")
+		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2"), "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h
@@ -603,6 +610,33 @@ func (h *harness) dumpEvents(dbURL string) {
 		}
 		h.t.Logf("--- events of operation %s:\n%s", id, b.String())
 	}
+}
+
+// events counts an operation's stored events.
+func (h *harness) events(id string) int {
+	h.t.Helper()
+	pool, err := store.Open(h.t.Context(), h.dbURL)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer pool.Close()
+	events, err := store.New(pool).OperationEvents(h.t.Context(), id, 0, 10000)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return len(events)
+}
+
+// waitEvents waits up to 30 s until the operation has want events.
+func (h *harness) waitEvents(id string, want int) {
+	h.t.Helper()
+	n := -1
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		if n = h.events(id); n == want {
+			return
+		}
+	}
+	h.t.Fatalf("operation %s has %d events, want %d", id, n, want)
 }
 
 // wantOp waits for the operation to finish and checks its outcome.

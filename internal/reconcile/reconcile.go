@@ -70,11 +70,15 @@ type Reconciler struct {
 }
 
 // Run does a pass at once and then every interval, until ctx ends.
-func (r *Reconciler) Run(ctx context.Context, every time.Duration) {
+func (r *Reconciler) Run(ctx context.Context, every time.Duration) { Every(ctx, every, r.Pass) }
+
+// Every calls fn at once and then every interval, until ctx ends. A slow
+// call delays the next one rather than overlapping it.
+func Every(ctx context.Context, every time.Duration, fn func(context.Context)) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
-		r.Pass(ctx)
+		fn(ctx)
 		select {
 		case <-ctx.Done():
 			return

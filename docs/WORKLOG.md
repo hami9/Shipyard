@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); `retention` (P3.4a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.4a: image retention (the active image plus the last `SHIPYARD_RETAIN_IMAGES` earlier releases' per app) |
-| **Next task** | P3.4b: the BuildKit cache cap and the operation event cap (ADR-0006) |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.4: retention (P3.4a images; P3.4b the build cache cap and the operation event cap) |
+| **Next task** | P3.5: backup (ADR-0006) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-30 |
@@ -53,6 +53,35 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-30: P3.4b cache and log caps
+
+- **Phase / task:** P3.4b: the BuildKit cache cap and the operation event cap (ADR-0006). P3.4 is done.
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`app.Retention`**, run by the worker at start and every `SHIPYARD_RETENTION_INTERVAL` (default 24h) through `reconcile.Every` (the reconciler's loop, extracted). Both steps run even if one fails.
+- **`build.PruneCache`:** `buildx prune --builder <name> --force --max-used-space <bytes>`; returns the reclaimed size from the `Total:` line. It takes the builder's one slot (shared with `Build` via `acquire`/`release`), so it never runs beside a build.
+- **`store.TrimOperationEvents(keep, maxBytes)`**, finished operations only:
+  - beyond each app's newest `keep`, all events go (rows stay);
+  - over `maxBytes`, the middle goes, except warnings and errors, and one warning marker takes the first removed seq.
+- **Config:** `SHIPYARD_RETENTION_INTERVAL` (≥ 1s), `SHIPYARD_BUILD_CACHE_MAX` (default 10g, ≥ 1 MiB), `SHIPYARD_RETAIN_OPERATIONS` (default 20, 1–10000), `SHIPYARD_OPERATION_LOG_MAX` (default 5m, ≥ 1 KiB). Sizes are binary (`k`/`m`/`g`/`t`, optional `b`).
+
+**Decisions**
+- **Trim the middle, not the end:** the start (what was built) and the end (why it failed or what went live) are what an operator reads; warnings and errors always stay. A marker says what was removed.
+- **Finished operations only:** a running operation's stream never has events disappear under it.
+- **Prune serialized with builds:** the docs do not say whether a prune leaves alone the cache a build is using, so the prune does not rely on it.
+- **A plain byte count to buildx:** our units are binary, and buildx's suffix parsing is not ours to depend on.
+
+**Verification** (WSL2, Engine 29.8.1, buildx 0.37.1, PostgreSQL 18)
+- `make lint` (after a gofmt of `config.go`), `make test`, `make test-integration`: all ok.
+  - Unit: `TestRetentionRun` (the order prune → trim, the configured limits, a failing step not skipping the other), `TestLoadWorkerRetention` (defaults, set values, 14 bad values), `TestParseSize`, `TestRun` (via `Every`).
+  - Integration: `TestTrimOperationEvents`: with keep 2, an old finished operation loses its events while an older queued one, the running one, and the newest keep theirs. An 1100-byte log capped at 400 keeps seq 1–2, the marker at 3 ("6 log lines (600 bytes)"), the error at 6, and 10–11. Resume after the marker works, and a second pass is a no-op.
+- Docker: `TestPruneCache` (a 2 MiB build: nothing reclaimed under a 1 TiB cap, something at 1 byte, `0B` the second time; a zero cap refused), `TestBuildSucceeds`: ok.
+- **`make test-e2e`: PASS (300 s)** with `SHIPYARD_RETENTION_INTERVAL=3s` and `SHIPYARD_RETAIN_OPERATIONS=2`. The first deploy's events are removed while its operation still reads succeeded, and the newest operation keeps its events. The P3.4a image checks pass too. No leftover containers or builders.
+
+**Next**
+- P3.5: backup (`pg_dump -Fc` and a Caddy data tarball to target A, the KEK to target B, by systemd timers).
 
 ### 2026-09-30: P3.4a image retention
 

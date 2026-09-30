@@ -147,8 +147,19 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		rec.Router = router
 	}
 
+	// The rest of retention (ADR-0006): daily by default, and at start.
+	ret := &app.Retention{Events: s, Cache: builder, CacheMax: cfg.BuildCacheMax,
+		KeepOperations: cfg.RetainOperations, MaxEventBytes: cfg.OperationLogMax, Log: log}
+
 	var wg sync.WaitGroup
 	wg.Go(func() { rec.Run(ctx, cfg.ReconcileInterval) })
+	wg.Go(func() {
+		reconcile.Every(ctx, cfg.RetentionInterval, func(ctx context.Context) {
+			if err := ret.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("retention incomplete", slog.Any("err", err))
+			}
+		})
+	})
 	log.Info("worker ready", slog.Duration("poll_interval", cfg.PollInterval), slog.String("work_dir", cfg.WorkDir))
 	for {
 		op, err := q.Next(ctx)

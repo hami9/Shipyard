@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -122,6 +123,32 @@ func (b *Builder) Remove(ctx context.Context) error {
 	return err
 }
 
+// PruneCache removes the builder's least recently used cache until at most
+// maxUsed bytes remain (ADR-0006) and reports the space reclaimed, as buildx
+// prints it (e.g. "1.2GB"). Records BuildKit excludes by default (without
+// --all) stay [DK-BX-PRUNE]. It waits for a running build, so it never
+// removes cache a build is using.
+func (b *Builder) PruneCache(ctx context.Context, maxUsed int64) (string, error) {
+	if maxUsed <= 0 {
+		return "", fmt.Errorf("build: cache cap must be positive, got %d", maxUsed)
+	}
+	if err := b.acquire(ctx); err != nil {
+		return "", err
+	}
+	defer b.release()
+	out, err := b.run(ctx, "buildx", "prune", "--builder", b.name(), "--force",
+		"--max-used-space", strconv.FormatInt(maxUsed, 10))
+	if err != nil {
+		return "", fmt.Errorf("prune build cache: %w", err)
+	}
+	// The output ends with "Total:\t<size>".
+	lines := strings.Split(out, "\n")
+	if f := strings.Fields(lines[len(lines)-1]); len(f) == 2 && f[0] == "Total:" {
+		return f[1], nil
+	}
+	return "", nil
+}
+
 // Build builds and loads the image, then reads its Engine image ID. Builds
 // are serialized: a second call waits for the first (ADR-0004: one build at a
 // time by default).
@@ -129,13 +156,10 @@ func (b *Builder) Build(ctx context.Context, req Request) (Result, error) {
 	if err := validate(req); err != nil {
 		return Result{}, err
 	}
-	b.once.Do(func() { b.slot = make(chan struct{}, 1) })
-	select {
-	case b.slot <- struct{}{}:
-		defer func() { <-b.slot }()
-	case <-ctx.Done():
-		return Result{}, ctx.Err()
+	if err := b.acquire(ctx); err != nil {
+		return Result{}, err
 	}
+	defer b.release()
 	timeout := b.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -204,6 +228,20 @@ func (b *Builder) Build(ctx context.Context, req Request) (Result, error) {
 	res.ImageID = id
 	return res, nil
 }
+
+// acquire takes the builder's one slot: builds and cache prunes run one at
+// a time.
+func (b *Builder) acquire(ctx context.Context) error {
+	b.once.Do(func() { b.slot = make(chan struct{}, 1) })
+	select {
+	case b.slot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *Builder) release() { <-b.slot }
 
 func (b *Builder) maxLog() int {
 	if b.MaxLog > 0 {

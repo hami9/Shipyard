@@ -148,6 +148,12 @@ The model is PostgreSQL-first, implemented in [`migrations/0002_schema_v1.sql`](
   - **Never touched:** an image no deployment here recorded. It belongs to another installation, or to a build whose ID is not persisted yet.
   - **Removal is never forced.** Docker keeps an image a container uses, running or stopped, or one with a second tag (`DK-RMI`), and the next pass tries again. A second tag is an operator's way to keep an image.
   - The consequence: a rollback to an older release is "unavailable" (P3.3). The history keeps the row.
+- As implemented for the rest (P3.4b, `app.Retention`): a job in the worker runs at start and then every `SHIPYARD_RETENTION_INTERVAL` (default 24 h).
+  - **Build cache:** `buildx prune --max-used-space` down to `SHIPYARD_BUILD_CACHE_MAX` (default 10 GiB) on the `shipyard` builder, least recently used first `[DK-BX-PRUNE]`. It takes the builder's one slot, so it never runs beside a build.
+  - **Operation events** (the build and deploy logs), for finished operations only, so a live stream never loses events:
+    - an operation beyond each app's newest `SHIPYARD_RETAIN_OPERATIONS` (default 20) loses its events; the operation row stays;
+    - an operation whose events exceed `SHIPYARD_OPERATION_LOG_MAX` (default 5 MiB) keeps the first and last half of that, plus every warning and error. The gap becomes one warning at the first removed seq, so `Last-Event-ID` resume still works. A second pass changes nothing.
+  - One build's log is already capped at 5 MB (ADR-0004); the event cap covers retries and the rest.
 
 ## 5. Deployment lifecycle
 

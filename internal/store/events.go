@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -65,6 +66,87 @@ func (s *Store) OperationEvents(ctx context.Context, opID string, afterSeq int64
 	}
 	events, err := pgx.CollectRows(rows, pgx.RowToStructByPos[OperationEvent])
 	return events, mapError(err)
+}
+
+// Trimmed reports what TrimOperationEvents removed.
+type Trimmed struct {
+	Operations int   // operations that lost events
+	Events     int64 // events removed
+}
+
+// TrimOperationEvents caps the stored build and deploy logs (ADR-0006). It
+// changes finished operations only, so a live stream never loses events:
+//   - operations beyond each app's newest keep lose all their events (the
+//     operation rows stay);
+//   - an operation whose events exceed maxBytes keeps its first and last
+//     maxBytes/2, plus every warning and error, and the gap becomes one
+//     warning event at the first removed seq that says what was removed.
+//
+// Seqs stay unique and ordered, so Last-Event-ID resume still works.
+func (s *Store) TrimOperationEvents(ctx context.Context, keep int, maxBytes int64) (Trimmed, error) {
+	var t Trimmed
+	err := s.InTx(ctx, func(tx *Store) error {
+		var ops int
+		err := tx.q.QueryRow(ctx, `
+			WITH old AS (
+				SELECT id FROM (
+					SELECT id, finished_at,
+						row_number() OVER (PARTITION BY app_id ORDER BY created_at DESC, id DESC) AS n
+					FROM operations
+				) o WHERE n > $1 AND finished_at IS NOT NULL
+			), gone AS (
+				DELETE FROM operation_events e USING old WHERE e.operation_id = old.id
+				RETURNING e.operation_id
+			)
+			SELECT count(DISTINCT operation_id), count(*) FROM gone`, keep).Scan(&ops, &t.Events)
+		if err != nil {
+			return mapError(err)
+		}
+		t.Operations = ops
+
+		rows, err := tx.q.Query(ctx, `
+			WITH big AS (
+				SELECT e.operation_id FROM operation_events e JOIN operations o ON o.id = e.operation_id
+				WHERE o.finished_at IS NOT NULL
+				GROUP BY e.operation_id HAVING sum(octet_length(e.message)) > $1
+			), ranked AS (
+				SELECT operation_id, seq, level,
+					sum(octet_length(message)) OVER (PARTITION BY operation_id ORDER BY seq) AS head,
+					sum(octet_length(message)) OVER (PARTITION BY operation_id ORDER BY seq DESC) AS tail
+				FROM operation_events WHERE operation_id IN (SELECT operation_id FROM big)
+			), gone AS (
+				DELETE FROM operation_events e USING ranked r
+				WHERE e.operation_id = r.operation_id AND e.seq = r.seq
+					AND r.head > $1 / 2 AND r.tail > $1 / 2 AND r.level NOT IN ('warn', 'error')
+				RETURNING e.operation_id, e.seq, octet_length(e.message) AS bytes
+			)
+			SELECT operation_id, min(seq), count(*), sum(bytes) FROM gone GROUP BY operation_id`, maxBytes)
+		if err != nil {
+			return mapError(err)
+		}
+		type gap struct {
+			op           string
+			seq, n, size int64
+		}
+		gaps, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (gap, error) {
+			var g gap
+			return g, row.Scan(&g.op, &g.seq, &g.n, &g.size)
+		})
+		if err != nil {
+			return mapError(err)
+		}
+		for _, g := range gaps {
+			msg := fmt.Sprintf("… %d log lines (%d bytes) removed by retention: this operation's log is capped at %d bytes", g.n, g.size, maxBytes)
+			if _, err := tx.q.Exec(ctx, `INSERT INTO operation_events (operation_id, seq, level, message) VALUES ($1, $2, 'warn', $3)`,
+				g.op, g.seq, msg); err != nil {
+				return mapError(err)
+			}
+			t.Operations++
+			t.Events += g.n
+		}
+		return nil
+	})
+	return t, err
 }
 
 // sanitize makes arbitrary process output storable as PostgreSQL text, which
