@@ -26,6 +26,7 @@ type Deployment struct {
 	AppID            string
 	OperationID      string
 	Kind             string
+	SourceDeployment *string // a rollback's source; nil for a build
 	SourceCommitSHA  string
 	ImageID          string // empty until built
 	BuildMetadata    json.RawMessage
@@ -50,14 +51,14 @@ type NewDeployment struct {
 	EnvRevisionID   *string
 }
 
-const deployColumns = `id, app_id, operation_id, kind, source_commit_sha, coalesce(image_id, ''),
+const deployColumns = `id, app_id, operation_id, kind, source_deployment_id, source_commit_sha, coalesce(image_id, ''),
 	build_metadata, env_revision_id, coalesce(container_id, ''), status, coalesce(failure_reason, ''),
 	building_at, starting_at, health_checking_at, switching_at, active_at, ended_at, created_at, updated_at`
 
 // scanDeployment reads deployColumns, then any extra columns into extra.
 func scanDeployment(row interface{ Scan(...any) error }, extra ...any) (Deployment, error) {
 	var d Deployment
-	err := row.Scan(append([]any{&d.ID, &d.AppID, &d.OperationID, &d.Kind, &d.SourceCommitSHA, &d.ImageID,
+	err := row.Scan(append([]any{&d.ID, &d.AppID, &d.OperationID, &d.Kind, &d.SourceDeployment, &d.SourceCommitSHA, &d.ImageID,
 		&d.BuildMetadata, &d.EnvRevisionID, &d.ContainerID, &d.Status, &d.FailureReason,
 		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.SwitchingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt},
 		extra...)...)
@@ -123,6 +124,33 @@ func (s *Store) CreateDeployment(ctx context.Context, owner string, n NewDeploym
 		SELECT o.app_id, o.id, 'build', $3, $4, 'building', now() FROM operations o
 		WHERE o.id = $1 AND o.lease_owner = $2 AND o.status = 'running'
 		RETURNING `+deployColumns, n.OperationID, owner, n.SourceCommitSHA, n.EnvRevisionID))
+	if errors.Is(err, ErrNotFound) {
+		return Deployment{}, ErrLeaseLost
+	}
+	return d, err
+}
+
+// NewRollback is the input to CreateRollbackDeployment.
+type NewRollback struct {
+	OperationID string
+	Source      Deployment // the earlier deployment whose image it reuses
+	// EnvRevisionID is the source's revision, or the latest one when the
+	// operator asked for the current configuration; nil for none.
+	EnvRevisionID *string
+}
+
+// CreateRollbackDeployment inserts a rollback operation's deployment: kind
+// rollback, the source's commit and image ID (never rebuilt, invariant 6),
+// straight in status starting. The source must be a deployment of the same
+// app with an image.
+func (s *Store) CreateRollbackDeployment(ctx context.Context, owner string, n NewRollback) (Deployment, error) {
+	d, err := scanDeployment(s.q.QueryRow(ctx, `
+		INSERT INTO deployments (app_id, operation_id, kind, source_deployment_id, source_commit_sha, image_id,
+			build_metadata, env_revision_id, status, starting_at)
+		SELECT o.app_id, o.id, 'rollback', src.id, src.source_commit_sha, src.image_id, src.build_metadata, $4, 'starting', now()
+		FROM operations o JOIN deployments src ON src.id = $3 AND src.app_id = o.app_id AND src.image_id IS NOT NULL
+		WHERE o.id = $1 AND o.lease_owner = $2 AND o.status = 'running'
+		RETURNING `+deployColumns, n.OperationID, owner, n.Source.ID, n.EnvRevisionID))
 	if errors.Is(err, ErrNotFound) {
 		return Deployment{}, ErrLeaseLost
 	}

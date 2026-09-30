@@ -20,6 +20,7 @@ type releaseJSON struct {
 	ID            string     `json:"id"`
 	OperationID   string     `json:"operation_id"`
 	Kind          string     `json:"kind"`
+	RollbackOf    *string    `json:"rollback_of,omitempty"` // a rollback's source deployment
 	Status        string     `json:"status"`
 	Commit        string     `json:"commit"`
 	ImageID       string     `json:"image_id,omitempty"`
@@ -73,7 +74,7 @@ func (h *opHandlers) releases(w http.ResponseWriter, r *http.Request) {
 		Next        string        `json:"next,omitempty"`
 	}{Deployments: make([]releaseJSON, len(rels))}
 	for i, d := range rels {
-		out.Deployments[i] = releaseJSON{d.ID, d.OperationID, d.Kind, d.Status, d.SourceCommitSHA, d.ImageID,
+		out.Deployments[i] = releaseJSON{d.ID, d.OperationID, d.Kind, d.SourceDeployment, d.Status, d.SourceCommitSHA, d.ImageID,
 			d.EnvRevision, d.FailureReason, d.CreatedAt, d.ActiveAt, d.EndedAt}
 	}
 	if len(rels) == limit {

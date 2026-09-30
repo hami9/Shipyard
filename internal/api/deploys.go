@@ -18,6 +18,10 @@ type OperationStore interface {
 	OperationByID(ctx context.Context, id string) (store.Operation, error)
 	OperationEvents(ctx context.Context, opID string, afterSeq int64, limit int) ([]store.OperationEvent, error)
 	Releases(ctx context.Context, appID, before string, limit int) ([]store.Release, error)
+	// For rollbacks: the target, and its revision against the latest.
+	DeploymentByID(ctx context.Context, id string) (store.Deployment, error)
+	EnvRevisionByID(ctx context.Context, id string) (store.EnvRevision, error)
+	LatestEnvRevision(ctx context.Context, appID string) (store.EnvRevision, error)
 }
 
 // Client keys are namespaced so they can never collide with the webhook
@@ -76,12 +80,7 @@ func (h *opHandlers) deploy(w http.ResponseWriter, r *http.Request) {
 			fe = append(fe, app.FieldError{Field: "ref", Detail: err.Error()})
 		}
 	}
-	key := r.Header.Get(headerIdempotencyKey)
-	if key == "" {
-		key = "auto:" + rand.Text()
-	} else if err := app.CheckIdempotencyKey(key); err != nil {
-		fe = append(fe, app.FieldError{Field: headerIdempotencyKey, Detail: err.Error()})
-	}
+	key, fe := idempotencyKey(r, fe)
 	if len(fe) > 0 {
 		writeError(w, r, h.log, fe)
 		return
@@ -92,8 +91,25 @@ func (h *opHandlers) deploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload, _ := json.Marshal(req)
+	h.admit(w, r, a, app.KindDeploy, key, payload)
+}
+
+// idempotencyKey reads the client's Idempotency-Key, or makes one up.
+func idempotencyKey(r *http.Request, fe app.FieldErrors) (string, app.FieldErrors) {
+	key := r.Header.Get(headerIdempotencyKey)
+	if key == "" {
+		return "auto:" + rand.Text(), fe
+	}
+	if err := app.CheckIdempotencyKey(key); err != nil {
+		fe = append(fe, app.FieldError{Field: headerIdempotencyKey, Detail: err.Error()})
+	}
+	return key, fe
+}
+
+// admit queues an operation of app and answers like deploy.
+func (h *opHandlers) admit(w http.ResponseWriter, r *http.Request, a store.App, kind, key string, payload []byte) {
 	res, err := h.ops.EnqueueOperation(r.Context(), store.NewOperation{
-		AppID: a.ID, Kind: "deploy", IdempotencyKey: clientKeyPrefix + key, Payload: payload,
+		AppID: a.ID, Kind: kind, IdempotencyKey: clientKeyPrefix + key, Payload: payload,
 	})
 	if err != nil {
 		writeError(w, r, h.log, err)

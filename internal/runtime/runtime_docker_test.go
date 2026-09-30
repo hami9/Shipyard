@@ -410,6 +410,17 @@ func TestRefusesUnmanaged(t *testing.T) {
 	}
 }
 
+// P3.3: a rollback learns whether its image is still on the host.
+func TestImageExists(t *testing.T) {
+	r := newRuntime(t)
+	id := dockerOut(t, "image", "inspect", "--format", "{{.Id}}", probeImage)
+	for ref, want := range map[string]bool{id: true, "sha256:" + strings.Repeat("0", 64): false} {
+		if got, err := r.ImageExists(t.Context(), ref); err != nil || got != want {
+			t.Errorf("ImageExists(%.19s) = %v, %v; want %v", ref, got, err, want)
+		}
+	}
+}
+
 // The janitor sees Shipyard's app containers, running or not, and nothing
 // else: not foreign containers, not ones with a forged managed label.
 func TestListManaged(t *testing.T) {

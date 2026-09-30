@@ -242,6 +242,16 @@ Rollback is a new operation with `kind = rollback` that targets a prior successf
 - It starts a container from that deployment's retained **image ID** and **original environment revision**, confirms health, switches the route, and records the new active state.
 - If the image is gone, the API reports that rollback is unavailable. It never silently rebuilds from a moving branch.
 - If a secret in the target revision has since been rotated, the CLI warns and offers `--with-current-config`.
+- As implemented (P3.3):
+  - **API** (`POST /v1/apps/{id}/rollbacks`, `deploy` scope).
+    - **Targets.** Only a `superseded` deployment of the app is a target. An active one is 409, and one that never served is 422.
+    - **Changed secrets.** When a secret of the target's revision has changed or been removed since, the request is 409, naming the keys (never values). The operator then picks `with_old_config` (the values it ran with) or `with_current_config` (the latest revision).
+    - **Admission.** The operation is `kind = rollback` with the same idempotency and latest-wins rules as a deploy.
+  - **Worker.**
+    - **Image check.** It first checks that the target's image ID is still on the host (`ImageInspect`). If not, the rollback fails at once, before any side effect, as "rollback unavailable", and suggests deploying the commit again. The API cannot check this, because it never touches Docker.
+    - **The deployment.** It then creates a `kind = rollback` deployment in `starting`, with the target's commit, image ID, and build metadata, `source_deployment_id` pointing at the target, and the chosen revision.
+    - **The rest.** Start, health gate, switch, and activation run as for a deploy, and a retry resumes the deployment.
+  - **CLI.** `shipyard rollback APP --to <id or prefix from releases>`. The history marks the deployment "rollback of …".
 
 ### Reconciler
 
@@ -275,7 +285,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 | `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
 | `shipyard logs APP [--tail N] [--follow]` | `GET /v1/apps/{id}/logs?tail=&follow=` (`read` scope; SSE). The active deployment's output, read by the worker and proxied by the API (ADR-0008). `tail` is 0–1000 (default 100). 404 with no active deployment; 503 when the worker is down. Ends with `event: end` and the reason |
 | `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (`read` scope; SSE, resumable). Ends with an `end` event carrying the operation |
-| `shipyard rollback APP --to <deployment-id>` | `POST /v1/apps/{id}/rollbacks` |
+| `shipyard rollback APP --to <deployment-id> [--with-current-config\|--with-old-config] [--follow]` | `POST /v1/apps/{id}/rollbacks` (`deploy` scope), body `{"to", "with_current_config", "with_old_config"}`. 202 like a deploy; 409 if the target is active or its secrets changed since (keys named); 422 for a target that never served |
 | `shipyard env set APP KEY [--plain]` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision. Body `{"value": …, "secret": true}`; secret by default |
 | `shipyard env unset APP KEY` | `DELETE /v1/apps/{id}/env/{key}` → new environment revision |
 | `shipyard env list APP` | `GET /v1/apps/{id}/env` (keys and whether each is secret; never values) |

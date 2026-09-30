@@ -81,6 +81,10 @@ func (a runtimeAdapter) Logs(ctx context.Context, id string, tail int) ([]string
 	return a.r.Logs(ctx, id, tail)
 }
 
+func (a runtimeAdapter) ImageExists(ctx context.Context, id string) (bool, error) {
+	return a.r.ImageExists(ctx, id)
+}
+
 func (a runtimeAdapter) StreamLogs(ctx context.Context, id string, tail int, follow bool, fn func(applogs.Line) error) error {
 	return a.r.StreamLogs(ctx, id, tail, follow, func(l runtime.LogLine) error {
 		return fn(applogs.Line{TS: l.TS, Stream: l.Stream, Text: l.Text})

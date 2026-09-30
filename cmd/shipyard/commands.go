@@ -312,6 +312,65 @@ func followEvents(ctx context.Context, e env, c *client.Client, id string) error
 	return nil
 }
 
+// cmdRollback queues a rollback to an earlier deployment, given by its full
+// ID or a unique prefix from `shipyard releases`.
+func cmdRollback(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
+	to := fs.String("to", "", "")
+	var o client.RollbackOptions
+	fs.BoolVar(&o.WithCurrentConfig, "with-current-config", false, "")
+	fs.BoolVar(&o.WithOldConfig, "with-old-config", false, "")
+	key := fs.String("idempotency-key", "", "")
+	follow := fs.Bool("follow", false, "")
+	pos, err := parse(fs, args, 1)
+	if err != nil || *to == "" {
+		return errUsage
+	}
+	target, err := resolveDeployment(ctx, c, pos[0], *to)
+	if err != nil {
+		return err
+	}
+	res, err := c.Rollback(ctx, pos[0], target.ID, o, *key)
+	if err != nil {
+		return err
+	}
+	verb := "Queued"
+	if !res.Created {
+		verb = "Already requested with this idempotency key:"
+	}
+	fmt.Fprintf(e.stdout, "%s rollback of %s to deployment %s (commit %s).\noperation: %s (%s)\n",
+		verb, pos[0], target.ID, target.Commit[:min(12, len(target.Commit))], res.Operation.ID, res.Operation.Status)
+	for _, id := range res.Superseded {
+		fmt.Fprintf(e.stdout, "cancelled older queued operation %s\n", id)
+	}
+	if *follow {
+		return followEvents(ctx, e, c, res.Operation.ID)
+	}
+	return nil
+}
+
+// resolveDeployment finds the deployment of app that id names, as a full
+// ID or a unique prefix among the latest 100.
+func resolveDeployment(ctx context.Context, c *client.Client, app, id string) (client.Release, error) {
+	page, err := c.Releases(ctx, app, 100, "")
+	if err != nil {
+		return client.Release{}, err
+	}
+	var found []client.Release
+	for _, d := range page.Deployments {
+		if strings.HasPrefix(d.ID, strings.ToLower(id)) {
+			found = append(found, d)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return client.Release{}, fmt.Errorf("no deployment %q among %s's latest %d; see `shipyard releases %s`", id, app, len(page.Deployments), app)
+	}
+	return client.Release{}, fmt.Errorf("%q matches %d deployments; give more of the ID", id, len(found))
+}
+
 // cmdReleases prints an app's deployment history, newest first.
 func cmdReleases(ctx context.Context, e env, c *client.Client, args []string) error {
 	fs := flag.NewFlagSet("releases", flag.ContinueOnError)
@@ -338,6 +397,9 @@ func cmdReleases(ctx context.Context, e env, c *client.Client, args []string) er
 		note, _, _ := strings.Cut(d.FailureReason, "\n")
 		if len(note) > 60 {
 			note = note[:57] + "..."
+		}
+		if note == "" && d.RollbackOf != "" {
+			note = "rollback of " + d.RollbackOf[:min(8, len(d.RollbackOf))]
 		}
 		rows[i] = []string{d.ID[:8], d.Status, d.Commit[:min(12, len(d.Commit))], env, d.CreatedAt.Local().Format("2006-01-02 15:04"), note}
 	}

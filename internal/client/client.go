@@ -313,6 +313,7 @@ type Release struct {
 	ID            string     `json:"id"`
 	OperationID   string     `json:"operation_id"`
 	Kind          string     `json:"kind"`
+	RollbackOf    string     `json:"rollback_of"`
 	Status        string     `json:"status"`
 	Commit        string     `json:"commit"`
 	ImageID       string     `json:"image_id"`
@@ -346,6 +347,28 @@ func (c *Client) Releases(ctx context.Context, app string, limit int, before str
 	}
 	var r Releases
 	_, err := c.do(ctx, "GET", path, nil, nil, &r)
+	return r, err
+}
+
+// RollbackOptions choose the configuration a rollback runs with when
+// secrets changed since the target ran; at most one may be set.
+type RollbackOptions struct {
+	WithCurrentConfig bool `json:"with_current_config,omitempty"`
+	WithOldConfig     bool `json:"with_old_config,omitempty"`
+}
+
+// Rollback queues a rollback of app to the deployment to (a full ID).
+func (c *Client) Rollback(ctx context.Context, app, to string, o RollbackOptions, idempotencyKey string) (DeployResult, error) {
+	body := struct {
+		To string `json:"to"`
+		RollbackOptions
+	}{to, o}
+	h := http.Header{}
+	if idempotencyKey != "" {
+		h.Set("Idempotency-Key", idempotencyKey)
+	}
+	var r DeployResult
+	_, err := c.do(ctx, "POST", p("v1", "apps", app, "rollbacks"), body, h, &r)
 	return r, err
 }
 

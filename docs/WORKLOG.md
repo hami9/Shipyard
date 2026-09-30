@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); `reconcile` (P3.2). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.2: `internal/reconcile`, which also restores a stopped or missing active container |
-| **Next task** | P3.3: the rollback operation (the target's image ID and environment revision; "unavailable" if the image is gone; a warning about rotated secrets) |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); `rollback` (P3.3). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.3: the rollback operation (`shipyard rollback`), with the rotated-secrets choice and the image check |
+| **Next task** | P3.4: the retention job per ADR-0006 (images, the BuildKit cache cap, the operation event cap) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-29 |
@@ -53,6 +53,43 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-30: P3.3 rollback
+
+- **Phase / task:** P3.3: the rollback operation
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **API** `POST /v1/apps/{app}/rollbacks` (`deploy` scope):
+  - `to` must be a superseded deployment of the app: an active one is 409, one that never served is 422, and another app's or an unknown one is 422;
+  - the same idempotency and latest-wins rules as a deploy apply (a shared `admit`);
+  - when secrets changed, the request is 409 naming the keys, unless `with_old_config` or `with_current_config` is given (both at once is 422).
+- **`app.RotatedSecrets`:** the target's secret keys whose value row differs in the latest revision, or that were removed or made plain since. Keys only; nothing is decrypted.
+- **Worker:**
+  - `Deployer` runs `kind = rollback`: `prepareRollback` checks the target, then `ImageExists`. A missing image fails the operation at once with "rollback unavailable" and a hint to deploy the commit again.
+  - `store.CreateRollbackDeployment` records the target's commit, image, and build metadata, `source_deployment_id`, and the chosen revision, in `starting`. Start, health, switch, and activate are unchanged, and a retry resumes.
+  - `runtime.ImageExists`. The worker no longer fails unknown kinds as "not supported yet".
+- **History:** `Deployment.SourceDeployment` is read everywhere, and the releases JSON has `rollback_of`, shown by the CLI as "rollback of …".
+- **CLI:** `shipyard rollback APP --to ID|prefix [--with-current-config|--with-old-config] [--idempotency-key] [--follow]`. It resolves a prefix among the latest 100 deployments.
+
+**Decisions**
+- **Where "unavailable" is decided:** only the worker can see images (invariant 1). So an unavailable rollback is the operation's immediate failure, not an API answer. This is noted on the roadmap item.
+- **"Warns and offers":** a 409 that names the rotated keys and requires an explicit choice, rather than a silent default. Rolling back to old credentials may be intended, or dangerous.
+- **Removed or made-plain secrets** count as rotated: the old revision would bring the value back.
+- **Size:** about 700 lines with tests, more than the ~400 guide. The API and worker halves are not useful apart, so it stayed one slice.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `rollback_test.go`), `make test`, `make test-integration`: all ok.
+  - Unit: `TestRollback` (no fetch or build; the target's image, commit, and revision; kind and source), `TestRollbackWithCurrentConfig` (the latest revision, and none at all), `TestRollbackRefused` (5 cases, no side effects), `TestRollbackResumes`, `TestRotatedSecrets`.
+  - Integration: `TestCreateRollbackDeployment` (the copy, the link, `starting`; a cross-app or unbuilt source refused) and `TestRollbackEndpoint` (202, replay, the rotated 409 without values, both flags, 8 negative cases).
+- Docker: `TestImageExists` (present and absent) ok.
+- **`make test-e2e`: PASS (269 s).**
+  - With `GREETING` changed, `rollback --to <prefix>` is refused and names `GREETING`.
+  - `--with-old-config --follow` succeeds. The previous container drains, Caddy serves the rollback's container with the old `GREETING`, and `releases` shows it active as "rollback of <prefix>".
+- No leftovers.
+
+**Next**
+- P3.4: retention (ADR-0006). Images of the last 5 successful deployments per app are what keeps rollback available.
 
 ### 2026-09-30: P3.2 reconcile package
 

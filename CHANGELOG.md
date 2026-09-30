@@ -31,6 +31,10 @@ All notable changes to Shipyard are recorded here.
   - **Checks:** hostnames are normalized and must be exact FQDNs, optionally under `SHIPYARD_DOMAIN_SUFFIXES`. A DNS preflight requires every A/AAAA record to be one of `SHIPYARD_PUBLIC_IPS` (`SHIPYARD_DNS_PREFLIGHT=false` skips it).
   - **Serving:** a hostname added to a running app serves it at once. The worker applies added and removed hostnames within `SHIPYARD_RECONCILE_INTERVAL` (default 60 s).
 - **Live events:** `shipyard events ID` and `shipyard deploy APP --follow` stream an operation's events until it ends (`GET /v1/operations/{id}/events`, SSE). A dropped connection resumes where it stopped. `--follow` exits non-zero unless the deploy succeeded, so it can gate CI.
+- **Rollback:** `shipyard rollback APP --to DEPLOYMENT` runs an earlier release's image again, with the configuration it ran with, through the usual health gate and traffic switch. Nothing is rebuilt.
+  - If a secret changed since, the rollback is refused and names the keys. Pick `--with-old-config` or `--with-current-config`.
+  - If the image is gone from the host, the rollback fails at once as unavailable.
+  - `shipyard releases` marks it "rollback of …".
 - **Self-healing:** the worker brings the running release back when its container disappears. It recreates the container from the same image and environment, or starts it if it was stopped. The check runs within `SHIPYARD_RECONCILE_INTERVAL`, and no change to Caddy is needed.
 - **Release history:** `shipyard releases APP [--limit N] [--before ID]` (`GET /v1/apps/{app}/deployments`) lists an app's deployments, newest first, with commit, image ID, environment revision, status, and failure reason. Pages continue with `--before`.
 - **Published API:** set `SHIPYARD_API_HOSTNAME` and Caddy serves the API there over HTTPS (HTTP/2): `/v1/*` and `/hooks/github` only. The API must listen on a Unix socket (`SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock`, now in `shipyard.env` for both services), which the worker mounts read-only into Caddy. Apps cannot take the API's hostname.

@@ -40,6 +40,8 @@ type DeployStore interface {
 	AppendOperationEvent(ctx context.Context, opID, level, message string) (store.OperationEvent, error)
 	CreateDeployment(ctx context.Context, owner string, n store.NewDeployment) (store.Deployment, error)
 	DeploymentByOperation(ctx context.Context, opID string) (store.Deployment, error)
+	DeploymentByID(ctx context.Context, id string) (store.Deployment, error)
+	CreateRollbackDeployment(ctx context.Context, owner string, n store.NewRollback) (store.Deployment, error)
 	RecordImage(ctx context.Context, id, owner, imageID string, metadata json.RawMessage) error
 	RecordContainer(ctx context.Context, id, owner, containerID string) error
 	MarkHealthChecking(ctx context.Context, id, owner string) error
@@ -107,6 +109,8 @@ type Runtime interface {
 	Stop(ctx context.Context, id string, timeout time.Duration) error
 	Remove(ctx context.Context, id string) error
 	Logs(ctx context.Context, id string, tail int) ([]string, error)
+	// ImageExists reports whether an image ID is still on the host.
+	ImageExists(ctx context.Context, id string) (bool, error)
 }
 
 // Container is a deployment's container; the runtime adds the hardening.
@@ -137,8 +141,15 @@ type EnvResolver interface {
 // reports a container that stopped or restarted.
 type HealthGate func(ctx context.Context, url string, timeout time.Duration, alive func(context.Context) error) error
 
+// Operation kinds the Deployer runs (the operations.kind CHECK).
+const (
+	KindDeploy   = "deploy"
+	KindRollback = "rollback"
+)
+
 // Deployer runs deploy operations (ARCHITECTURE §5): fetch, build, start,
-// health-check, switch traffic, activate.
+// health-check, switch traffic, activate. A rollback skips fetch and build:
+// it starts its target's image again (ARCHITECTURE §5, Rollback).
 type Deployer struct {
 	Store   DeployStore
 	Source  Source
@@ -198,7 +209,7 @@ func (r *deployRun) execute(ctx context.Context) error {
 		return fmt.Errorf("load app: %w", err)
 	}
 	var p DeployPayload
-	if len(r.op.Payload) > 0 {
+	if len(r.op.Payload) > 0 && r.op.Kind != KindRollback {
 		if err := json.Unmarshal(r.op.Payload, &p); err != nil {
 			return fmt.Errorf("invalid deploy payload: %w", err)
 		}
@@ -215,7 +226,15 @@ func (r *deployRun) execute(ctx context.Context) error {
 		r.event(ctx, store.LevelInfo, "resuming deployment %s (attempt %d)", r.dep.ID, r.op.Attempt)
 	}
 
-	if r.dep.ImageID == "" {
+	// A rollback reuses its target's image (invariant 6); a deploy fetches
+	// and builds. Either way, an image already recorded is not made again.
+	switch {
+	case r.dep.ID == "" && r.op.Kind == KindRollback:
+		if err := r.prepareRollback(ctx); err != nil {
+			return err
+		}
+		r.log = r.log.With(slog.String("deployment_id", r.dep.ID))
+	case r.dep.ImageID == "":
 		if err := r.fetchAndBuild(ctx, p.Ref); err != nil {
 			return err
 		}

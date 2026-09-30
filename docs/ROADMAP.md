@@ -162,7 +162,7 @@ flowchart LR
   - Re-queue or fail expired leases.
   - Reconcile containers by label: remove orphans, recreate missing active containers.
   - Re-render and load the Caddy config on drift.
-- [ ] **P3.3** Rollback operation:
+- [x] **P3.3** Rollback operation (the image check is the worker's, so "unavailable" is the operation's failure, not an API answer; see ARCHITECTURE §5 Rollback):
   - Uses the target's image ID and environment revision.
   - Returns "unavailable" if the image is gone.
   - Warns about rotated secrets and offers `--with-current-config`.

@@ -223,6 +223,38 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if !strings.Contains(logs, "greeting is [REDACTED]") || strings.Contains(logs, "hello from e2e") || !strings.Contains(logs, "probe listening on :8080") {
 		t.Fatalf("logs:\n%s", logs)
 	}
+
+	// P3.3: roll back to the first release (the superseded row of the
+	// history). GREETING changed since, so a plain rollback is refused and
+	// names the key; with its old configuration, the first release's image
+	// runs again with the old value, through the health gate and the switch.
+	var firstDep string
+	for _, line := range strings.Split(h.cli("", "releases", slug), "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[1] == "superseded" {
+			firstDep = f[0]
+		}
+	}
+	h.cli("rotated value\n", "env", "set", slug, "GREETING")
+	if out, err := h.cliErr("rollback", slug, "--to", firstDep); err == nil || !strings.Contains(out, "GREETING") || strings.Contains(out, "hello from e2e") {
+		t.Fatalf("rollback with a rotated secret: %v\n%s", err, out)
+	}
+	out = h.cli("", "rollback", slug, "--to", firstDep, "--with-old-config", "--follow")
+	if m := h.opRE.FindStringSubmatch(out); m != nil {
+		h.ops = append(h.ops, m[1])
+	}
+	if !strings.Contains(out, "rolling back to deployment "+firstDep) || !strings.Contains(out, "succeeded") {
+		t.Fatalf("rollback --follow:\n%s", out)
+	}
+	rolled := h.waitRunning(func(id string) bool { return id != third }) // the old one drains
+	if got := h.viaCaddy(host, "/env?key=GREETING"); got != "hello from e2e" {
+		t.Fatalf("after the rollback GREETING = %q, want the old value", got)
+	}
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != rolled[:12] {
+		t.Fatalf("after the rollback caddy serves %q, want %s", got, rolled[:12])
+	}
+	if rel := h.cli("", "releases", slug, "--limit", "1"); !strings.Contains(rel, "active") || !strings.Contains(rel, "rollback of "+firstDep) {
+		t.Fatalf("history after the rollback:\n%s", rel)
+	}
 	// A removed hostname leaves Caddy at the next sync: no route, no certificate.
 	h.cli("", "domain", "remove", slug, extra)
 	h.gone(extra)

@@ -44,6 +44,10 @@ Deploys:
                            --follow streams the events and fails unless it succeeds
   releases APP [--limit N] [--before ID]
                            An app's deployments, newest first
+  rollback APP --to DEPLOYMENT [--with-current-config|--with-old-config]
+           [--idempotency-key KEY] [--follow]
+                           Run an earlier release's image again (ID or prefix from releases);
+                           if secrets changed since, choose which values it gets
   operation ID             Show an operation's status
   events ID                Stream an operation's events until it ends
   logs APP [--tail N] [--follow|-f]
@@ -87,7 +91,7 @@ func run(ctx context.Context, args []string, e env) int {
 		return 0
 	case "login":
 		err = cmdLogin(ctx, e, args[1:])
-	case "whoami", "app", "ps", "env", "domain", "deploy", "operation", "events", "logs", "releases":
+	case "whoami", "app", "ps", "env", "domain", "deploy", "operation", "events", "logs", "releases", "rollback":
 		err = withClient(e, func(c *client.Client) error { return dispatch(ctx, e, c, args) })
 	default:
 		fmt.Fprintf(e.stderr, "unknown command %q\n\n%s", args[0], usage)
@@ -157,6 +161,8 @@ func dispatch(ctx context.Context, e env, c *client.Client, args []string) error
 		return cmdLogs(ctx, e, c, rest)
 	case "releases ":
 		return cmdReleases(ctx, e, c, rest)
+	case "rollback ":
+		return cmdRollback(ctx, e, c, rest)
 	}
 	return errUsage
 }
