@@ -26,6 +26,8 @@
 
 A disk-usage alarm fires at 80% of the Docker data root filesystem.
 
+*Note 2026-09-30 (P3.4a):* "the last 5 successful deployments" counts distinct images, ranked by when each last served, so rolling back and forth does not use up the rollback depth. Images of deployments in progress and a pending rollback's target are kept too. Image retention runs on every reconcile pass; the BuildKit prune stays daily. The decision is unchanged.
+
 **Backup**
 
 | What | How | Where | Frequency |

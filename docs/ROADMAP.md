@@ -66,33 +66,46 @@ flowchart LR
 - `make dev-up && make migrate && make test-integration` passes locally. ✅ (owner's WSL2 machine, 2026-09-26)
 - Merged to `main` and released as [`v0.1.0`](https://github.com/hami9/Shipyard/releases/tag/v0.1.0) (2026-09-26).
 
-## P1: Foundation, the first manual deploy
+## P1: Foundation, the first manual deploy `[~]`
 
 **Goal:** `shipyard deploy` builds a public repository at an exact SHA and runs it in a hardened container that passes a health check. There is no public routing yet.
 
-- [ ] **P1.1** Schema v1:
+- [x] **P1.1** Schema v1 (`migrations/0002_schema_v1.sql`, with constraint tests in `internal/store/schema_integration_test.go`):
   - Tables: users, api_tokens, apps, secret_values, env_revisions and entries, deployments, operations, operation_events, audit_events, routes, webhook_deliveries.
   - Constraints: `UNIQUE(idempotency_key)`, the partial unique index for one running operation per app, and a unique `hostname`.
-- [ ] **P1.2** `internal/store` on pgx, with integration tests for every constraint.
-- [ ] **P1.3** Token auth:
-  - A bootstrap admin token command.
-  - `shp_` tokens stored as a SHA-256 hash, with scopes and expiry.
-  - Middleware, plus an audit event on every mutation (ADR-0007).
-- [ ] **P1.4** `internal/secrets`: envelope encryption and environment revisions (ADR-0005).
+- [x] **P1.2** `internal/store` core on pgx:
+  - `Store` and `InTx` (a nested call joins the outer transaction).
+  - Database errors mapped to `ErrNotFound`, `ErrConflict`, `ErrInvalid`, `ErrReference`, and `ErrImmutable`, naming the constraint but never the values.
+  - Users and apps repositories.
+  - Each later task adds the queries it consumes, with integration tests: tokens and audit (P1.3), secrets and revisions (P1.4), operations and events (P1.5), deployments (P1.11).
+- [x] **P1.3** Token auth:
+  - A bootstrap admin token command (`shipyard-api token create|list|revoke`).
+  - `shp_` tokens stored as a SHA-256 hash, with scopes (`read` ⊂ `deploy` ⊂ `admin`) and expiry.
+  - Middleware, plus an audit event on every mutation (ADR-0007). `GET /v1/whoami`.
+- [x] **P1.4** `internal/secrets`: envelope encryption and environment revisions (ADR-0005).
   - Negative tests: wrong AAD, wrong KEK, tampered ciphertext.
   - A test proving that a DB dump contains no plaintext.
-- [ ] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
-- [ ] **P1.6** App CRUD API: validation of slug, port, and paths (no escape from the repository), plus `application/problem+json` errors.
-- [ ] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, and `ps`. Config holds the API URL and token.
-- [ ] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
-- [ ] **P1.9** `internal/build`:
+  - Wiring the keyring into the API and worker (config `SHIPYARD_KEK_DIR` and the active KEK id) arrives with the first consumers: the env endpoints (P1.6) and container start (P1.10).
+- [x] **P1.5** `internal/queue`: claim with `SKIP LOCKED`, lease and heartbeat, complete and fail, idempotent insert, and coalescing of queued deploys (ADR-0002). Race tests put two workers on one app.
+  - Also in `internal/store`: operation events with gapless `seq` for SSE resume, and `RequeueExpired` for the reconciler (called periodically from P3.2).
+- [x] **P1.6** App CRUD API: validation of slug, port, and paths (no escape from the repository), plus `application/problem+json` errors.
+  - Also the env endpoints (`GET`, `PUT`, `DELETE /v1/apps/{app}/env[/{key}]`) and the KEK configuration (`SHIPYARD_KEK_DIR`, `SHIPYARD_KEK_ACTIVE`, `make dev-kek`), deferred from P1.4.
+- [x] **P1.7** CLI: `app create|list`, `env set` (value read from stdin), `env list` (keys only), `deploy`, `ps`, and `whoami`. Config holds the API URL and token.
+  - Also `login`, `app show`, `env unset`, `operation ID`, and the API's `POST /v1/apps/{app}/deployments` and `GET /v1/operations/{id}`. Deploys stay `queued` until the worker executes them (P1.11).
+- [x] **P1.8** `internal/source`: fetch the exact SHA, resolve the branch head, **check ancestry against the tracked branch**, and give each operation its own workspace (ADR-0004).
+  - Also `Checkout.Path`, which resolves the Dockerfile and context paths through symlinks. The workspace root setting (`SHIPYARD_WORK_DIR`) is wired with the worker in P1.11. GitHub App tokens arrive in P4; `Request.Token` is already sent as a header.
+- [x] **P1.9** `internal/build`:
   - A `shipyard` buildx builder with CPU and memory caps.
   - `--load`, a deadline, and `--metadata-file`.
-  - Bounded log capture into operation events.
-- [ ] **P1.10** `internal/runtime` on `moby/moby/client`:
+  - Bounded log capture into operation events. The line sink is a callback; P1.11 connects it to `AppendOperationEvent`.
+  - Docker tests use the `docker` build tag and `make test-docker`, which run on the owner's machine, not in CI.
+- [x] **P1.10** `internal/runtime` on `moby/moby/client`:
   - A per-app network, the hardened flag set, `io.shipyard.*` labels, and environment injection.
   - Create, start, inspect, stop, and remove.
-- [ ] **P1.11** `internal/app` deploy use case covering the phases `queued → building → starting → health_checking → active (no route)`, with each phase persisted before its side effect. Also implement the health probe.
+  - The automated `docker inspect` check from the exit criteria is `TestHardenedContainer` (`make test-docker`).
+- [x] **P1.11** `internal/app` deploy use case covering the phases `queued → building → starting → health_checking → active (no route)`, with each phase persisted before its side effect. Also implement the health probe.
+  - The worker runs the queue loop, holds leases, and requeues expired operations.
+  - `test/e2e` (`make test-e2e`) drives the real binaries through every exit criterion below.
 
 **Exit criteria**
 
@@ -107,19 +120,31 @@ flowchart LR
 
 **Goal:** apps are served over HTTPS through Caddy, and only healthy candidates ever receive traffic.
 
-- [ ] **P2.1** Caddy container bootstrap:
+- [x] **P2.1** Caddy container bootstrap:
   - It is the only container with published ports (80/tcp, 443/tcp, 443/udp).
   - The admin API is on a Unix socket (`0660`, worker group only), and the data directory is a persistent volume.
   - It attaches to app networks (ADR-0003).
-- [ ] **P2.2** `internal/routing` renderer: `routes` table → full Caddy JSON config, including the API and `/hooks/github` routes. Golden-file tests.
-- [ ] **P2.3** Admin socket client: `GET` the config with its `Etag`, then `POST /load` with `If-Match`. Handle 412 and other errors.
-- [ ] **P2.4** The `switching` phase: load, then verify through Caddy with the `Host` header, then commit route and status in one transaction. Failure paths re-render the previous state.
-- [ ] **P2.5** Domain API: DNS preflight (A/AAAA must resolve to the host), unique hostnames, an optional suffix allow-list, and a toggle for the Let's Encrypt staging CA.
-- [ ] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
-- [ ] **P2.7** SSE:
-  - Operation events with `id` and `Last-Event-ID` resume, and a keepalive every 15 s.
-  - `logs --follow` with a bounded tail and best-effort secret redaction.
-- [ ] **P2.8** The API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2).
+  - The worker ensures it at start (`runtime.EnsureEdge`).
+- [x] **P2.2** `internal/routing` renderer: `routes` table → full Caddy JSON config, including the API and `/hooks/github` routes. Golden-file tests.
+  - Also a `docker` test that loads the rendered config into a real Caddy and routes HTTPS through it.
+- [x] **P2.3** Admin socket client: `GET` the config with its `Etag`, then `POST /load` with `If-Match`. Handle 412 and other errors.
+  - Changed to `POST /config/`, because `/load` ignores `If-Match` (ADR-0003 note of 2026-09-28).
+  - The worker renders and applies the routes table at start.
+- [x] **P2.4** The `switching` phase: load, then verify through Caddy with the `Host` header, then commit route and status in one transaction. Failure paths re-render the previous state.
+  - Verification uses a plain-HTTP Caddy server on a Unix socket with the same routes, so it does not wait for certificates.
+  - Only verified hostnames are committed.
+  - `test/e2e` checks over HTTPS through Caddy which container serves.
+- [x] **P2.5** Domain API: DNS preflight (A/AAAA must resolve to the host), unique hostnames, an optional suffix allow-list, and a toggle for the Let's Encrypt staging CA.
+  - `shipyard domain add|remove|list`, with several hostnames per app. A new hostname targets the running deployment.
+  - The worker's reconciler applies route changes.
+  - The staging toggle is `SHIPYARD_CADDY_CA=staging` (P2.3).
+- [x] **P2.6** Observation window, then graceful stop of the previous container with the per-app `stop_timeout`.
+- SSE, split in two (each needs about 400 lines):
+  - [x] **P2.7a** Operation events with `id` and `Last-Event-ID` resume, and a keepalive every 15 s. Also `shipyard events ID` and `deploy --follow`.
+  - [x] **P2.7b** `logs --follow` with a bounded tail and best-effort secret redaction. The owner chose (2026-09-28) that the worker serves logs on a private Unix socket, and the API authenticates and proxies them (ADR-0008).
+- [x] **P2.8** The API listens on localhost or a Unix socket only, and is published through Caddy over HTTPS (HTTP/2).
+  - `SHIPYARD_API_HOSTNAME` publishes it. Caddy reaches the socket through a read-only bind mount.
+  - The public-listen override is removed (the owner's choice, 2026-09-28).
 
 **Exit criteria**
 
@@ -132,16 +157,18 @@ flowchart LR
 
 **Goal:** Shipyard survives crashes, restores from backup, and rolls back without rebuilding.
 
-- [ ] **P3.1** Deployment history: `GET /v1/apps/{id}/deployments` and `shipyard releases APP`.
-- [ ] **P3.2** `internal/reconcile`, run at startup and every 60 s:
+- [x] **P3.1** Deployment history: `GET /v1/apps/{id}/deployments` and `shipyard releases APP`.
+- [x] **P3.2** `internal/reconcile`, run at startup and every 60 s. "Remove orphans" covers containers of failed deployments; containers whose deployment is not in the database are left alone (P2.6), and a deleted app's containers wait for P3.8:
   - Re-queue or fail expired leases.
   - Reconcile containers by label: remove orphans, recreate missing active containers.
   - Re-render and load the Caddy config on drift.
-- [ ] **P3.3** Rollback operation:
+- [x] **P3.3** Rollback operation (the image check is the worker's, so "unavailable" is the operation's failure, not an API answer; see ARCHITECTURE §5 Rollback):
   - Uses the target's image ID and environment revision.
   - Returns "unavailable" if the image is gone.
   - Warns about rotated secrets and offers `--with-current-config`.
-- [ ] **P3.4** Retention job per ADR-0006: images, the BuildKit cache cap, and the operation event cap.
+- [ ] **P3.4** Retention job per ADR-0006, split in two:
+  - [x] **P3.4a** Images: per app, the active release's and the last `SHIPYARD_RETAIN_IMAGES` (default 5) earlier releases' images are kept; other images this database recorded are removed, never forced. Reconciler step 5.
+  - [ ] **P3.4b** The BuildKit cache cap (daily `buildx prune` down to 10 GB) and the operation event cap (the last 20 operations per app, 5 MB each).
 - [ ] **P3.5** Backup:
   - `pg_dump -Fc` and a Caddy data tarball to target A, and the KEK to separate target B.
   - Run by systemd timers.

@@ -109,22 +109,26 @@ Docker-published ports bypass ufw rules `[DK-FW]`. Only Caddy publishes ports. P
 | Source fetcher | Fetches the exact commit and verifies it is reachable from the tracked branch `[GH-FORKS]` | Credentials are never written into the build context or image |
 | Builder | Builds an image from the Dockerfile on a dedicated, resource-limited BuildKit instance `[DK-BX-CONTAINER]` | Treats the source as untrusted code. Enforces time, CPU, memory, and log-size limits |
 | Docker runtime adapter | Creates, starts, stops, and inspects labeled containers and collects logs | Narrow interface defined where it is used |
-| Route manager | Renders the full Caddy JSON config from the `routes` table and applies it with `POST /load` `[CADDY-API]` | Only healthy candidates receive traffic, and config changes are atomic |
+| Route manager | Renders the full Caddy JSON config from the `routes` table and replaces Caddy's config with it (`POST /config/` + `If-Match`) `[CADDY-API][CADDY-ADMIN-SRC]` | Only healthy candidates receive traffic, and config changes are atomic |
 | Secret store | Seals and opens configuration values with envelope encryption `[OWASP-CRYPTO]` | Never returns plaintext through the API or logs. The KEK never enters PostgreSQL |
 | Reconciler | Compares database intent with containers, routes, and branch heads at startup and periodically | Repairs interrupted operations idempotently |
 
 ## 4. Data model
 
-The model is PostgreSQL-first. Every table has `id`, `created_at`, and `updated_at`. All timestamps are `timestamptz`.
+The model is PostgreSQL-first, implemented in [`migrations/0002_schema_v1.sql`](../migrations/0002_schema_v1.sql). All timestamps are `timestamptz`.
+
+- **IDs** are `uuid` from `gen_random_uuid()` `[PG-UUID]`. They are not enumerable through the API and work on PostgreSQL 17 and 18.
+- **Mutable tables** have `created_at` and a trigger-maintained `updated_at`. **Immutable and append-only tables** (secret values, environment revisions and their entries, operation events, audit events) have `created_at` only, and a trigger rejects `UPDATE`. Audit events also reject `DELETE`.
+- **Same-app references** use composite foreign keys on `(app_id, id)`. The database refuses a deployment that uses another app's operation, environment revision, or rollback source, and a route that points at another app's deployment.
 
 | Entity | Key fields | Constraints and notes |
 | --- | --- | --- |
 | **User** | `name`, `role` | The MVP has a single admin (ADR-0007). `owner_id` exists everywhere so that adding multiple users later needs no migration. |
-| **API token** | `user_id`, `prefix`, `sha256_hash`, `scopes[]`, `expires_at`, `last_used_at`, `revoked_at` | Tokens are `shp_` plus 32 random bytes. Only the hash is stored, and the plaintext is shown once. |
+| **API token** | `user_id`, `name`, `prefix`, `sha256_hash`, `scopes[]`, `expires_at`, `last_used_at`, `revoked_at` | Tokens are `shp_` plus 32 random bytes. Only the hash is stored, and the plaintext is shown once. |
 | **Application** | `owner_id`, `slug`, `repo_full_name`, `github_installation_id?`, `branch`, `dockerfile_path`, `build_context`, `internal_port`, `health_path`, `health_timeout`, `cpu_limit`, `memory_limit`, `stop_timeout`, `auto_deploy` | `slug` is unique and DNS-safe. `dockerfile_path` and `build_context` must stay inside the repository. |
 | **Secret value** | `app_id`, `key`, `ciphertext`, `wrapped_dek`, `kek_id` | Immutable. The AAD binds `(app_id, key, value_id)`, so ciphertexts cannot be swapped between rows. |
-| **Environment revision** | `app_id`, `number`, plus entries of `(key, secret_value_id \| plain_value)` | Immutable. Changing a key creates a new revision that reuses unchanged value rows **without decrypting them**. |
-| **Deployment** | `app_id`, `kind` (`build`/`rollback`), `source_commit_sha`, `image_id`, `build_metadata` (jsonb), `env_revision_id`, `container_id`, `status`, `failure_reason`, phase timestamps | `status` ∈ `queued, building, starting, health_checking, switching, active, superseded, failed, cancelled`. |
+| **Environment revision** | `app_id`, `number`, plus entries of `(key, secret_value_id \| plain_value)` in `env_revision_entries` | Immutable. Changing a key creates a new revision that reuses unchanged value rows **without decrypting them**. An entry's secret must have the same app and key. |
+| **Deployment** | `app_id`, `operation_id`, `kind` (`build`/`rollback`), `source_deployment_id` (rollback only), `source_commit_sha`, `image_id`, `build_metadata` (jsonb), `env_revision_id`, `container_id`, `status`, `failure_reason`, phase timestamps | `status` ∈ `queued, building, starting, health_checking, switching, active, superseded, failed, cancelled`. At most one `active` per app (partial unique index). From `health_checking` on, `image_id` and `container_id` are required. `failed` requires a `failure_reason`. |
 | **Operation** | `app_id`, `kind`, `idempotency_key`, `status`, `phase`, `payload`, `lease_owner`, `lease_expires_at`, `attempt`, `max_attempts`, `run_after`, `last_error` | `UNIQUE(idempotency_key)`, plus a partial unique index on `(app_id) WHERE status = 'running'` (one running op per app). |
 | **Operation event** | `operation_id`, `seq`, `ts`, `level`, `message` | Append-only. `seq` is the SSE `id` for `Last-Event-ID` resume `[WHATWG-SSE]`. Size-bounded and redacted. |
 | **Webhook delivery** | `delivery_id` (PK), `event`, `repository_id`, `ref`, `after_sha`, `received_at`, `outcome` | Primary key on the GitHub delivery GUID. Redeliveries reuse it `[GH-BP]`. |
@@ -134,9 +138,16 @@ The model is PostgreSQL-first. Every table has `id`, `created_at`, and `updated_
 **Rollback artifacts.** A deployment references an immutable **image ID** and an **environment revision**.
 
 - Tags such as `shipyard/<app>:<sha12>` are for humans only. Containers are always created from the image ID.
-- The build metadata (`containerimage.digest`, `containerimage.config.digest`) is stored for provenance `[DK-BX-BUILD]`.
+- The build metadata (the whole `--metadata-file` output: `containerimage.digest`, `containerimage.descriptor`, and `containerimage.config.digest` when buildx reports it) is stored for provenance `[DK-BX-BUILD]`. On the containerd image store, the image ID equals `containerimage.digest`.
 
 **Retention** is explicit and configurable. By default, Shipyard keeps the images of the last 5 successful deployments per app, keeps all deployment rows, and caps the BuildKit cache (ADR-0006).
+
+- As implemented for images (P3.4a, `app.ImagePruner`, Reconciler step 5):
+  - **Kept:** per app, the active release's image, and the images of the last `SHIPYARD_RETAIN_IMAGES` (default 5) superseded releases, ranked by when each image last served. An image served twice (a rollback to it) counts once. Also kept: images of deployments still in progress, and the target of a queued or running rollback.
+  - **Removed:** every other image a deployment in this database recorded, including failed deploys' images and older releases'. Rebuilding a commit leaves the previous image untagged (`DK-RMI`), so images are listed by the `io.shipyard.managed` label, not by name.
+  - **Never touched:** an image no deployment here recorded. It belongs to another installation, or to a build whose ID is not persisted yet.
+  - **Removal is never forced.** Docker keeps an image a container uses, running or stopped, or one with a second tag (`DK-RMI`), and the next pass tries again. A second tag is an operator's way to keep an image.
+  - The consequence: a rollback to an older release is "unavailable" (P3.3). The history keeps the row.
 
 ## 5. Deployment lifecycle
 
@@ -147,7 +158,7 @@ stateDiagram-v2
   building --> starting: image ID recorded
   starting --> health_checking: container ID recorded
   health_checking --> switching: probe passed
-  switching --> active: Caddy /load ok + route verified + DB commit
+  switching --> active: Caddy /config/ load ok + route verified + DB commit
   building --> failed
   starting --> failed
   health_checking --> failed: candidate removed, route untouched
@@ -161,14 +172,19 @@ stateDiagram-v2
 1. **Admission (API).** Validate the request and insert an operation.
    - For webhooks, the idempotency key is `gh:<X-GitHub-Delivery>`, so a redelivery does not create a second deployment `[GH-BP]`.
    - For manual deploys, the key comes from the client's `Idempotency-Key` header, or the API generates one.
-   - A newer request for an app cancels that app's still-`queued` deploy. Latest wins, and a running operation is never interrupted.
-2. **Claim (worker).** Select the oldest eligible operation with `FOR UPDATE SKIP LOCKED` and set `status = running`, `lease_owner`, and `lease_expires_at` `[PG-SELECT]`.
-   - The partial unique index guarantees one running operation per app.
-   - A heartbeat extends the lease.
-   - `LISTEN/NOTIFY` may wake the worker, but polling stays the fallback.
+   - A newer request for an app cancels that app's still-`queued` operations. Latest wins, and a running operation is never interrupted. A row lock on the app serializes admissions, so concurrent requests leave exactly one queued.
+   - Reusing an idempotency key for a different app or kind is refused.
+   - Admission writes only the operation. The worker creates the deployment row when it starts the operation, so a cancelled request never has a deployment.
+2. **Claim (worker).** Select the oldest eligible operation with `FOR UPDATE SKIP LOCKED` and set `status = running`, `lease_owner`, `lease_expires_at`, and `attempt + 1` `[PG-SELECT]`.
+   - Apps with a running operation are skipped. The partial unique index still guarantees one running operation per app when two workers race; the loser retries on other apps.
+   - A heartbeat every lease/3 (lease 60 s by default) extends the lease. Phase changes, completion, and failure all require the caller to still own the lease. When a renewal fails or a whole lease passes without one, the worker cancels its own work.
+   - A failure can be retried after a delay while attempts remain (default 3).
+   - `LISTEN/NOTIFY` may wake the worker, but polling (every 2 s) stays the fallback.
 3. **Fetch.** Fetch the exact SHA over HTTPS. For private repositories, use a one-hour installation token scoped to that repository with `contents: read` `[GH-APP-TOKEN]`, passed as a git header, never in the URL.
-   - **Verify that the SHA is an ancestor of the tracked branch**, for example with `git merge-base --is-ancestor`. Fork commits are reachable through the upstream network `[GH-FORKS]`.
-   - Reject Dockerfile or context paths that escape the checkout.
+   - **Verify that the SHA is an ancestor of the tracked branch** with `git merge-base --is-ancestor` `[GIT-MERGE-BASE]`. Fork commits are reachable through the upstream network `[GH-FORKS]`.
+   - How: a blobless, single-branch clone (`--filter=blob:none --single-branch`) into `<work>/op-<operation-id>`, emptied first on every retry. It has every commit of the branch but only the files of the commit checked out. A SHA missing from that history is refused without fetching anything else: the history and ancestry checks run with `GIT_NO_LAZY_FETCH=1`, because a partial clone otherwise downloads a missing commit on demand, even one from another branch or a fork `[GIT-PARTIAL]`.
+   - git runs without a shell, ignores the host's git config (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM`), never prompts, and allows only the base URL's transport (`protocol.allow=never` plus one exception). The token travels as an `http.extraHeader` in the environment `[GIT-CONFIG]`, never in argv, the URL, or `.git/config`.
+   - Reject Dockerfile or context paths that escape the checkout, **after resolving symlinks** (`Checkout.Path`).
 4. **Build.** Run `docker buildx build --builder shipyard --load --metadata-file … --label io.shipyard.*` on the resource-limited builder, under a context deadline `[DK-BX-CONTAINER][DK-BX-BUILD]`.
    - No Shipyard credentials go into the build: no build args, no environment `[DK-BUILD-SECRETS]`.
    - Record the image ID and build metadata. Stream bounded build logs to operation events.
@@ -180,10 +196,41 @@ stateDiagram-v2
 6. **Health gate.** The worker probes `http://<container-ip>:<internal_port><health_path>` until it sees N consecutive 2xx/3xx responses or `health_timeout` expires. The container must also stay `running` without restarts. The default path is `/`, and each app can override it.
 7. **Switch traffic.**
    - Render the full Caddy config with this app's upstream pointing at the candidate.
-   - Apply it with `POST /load` and `If-Match: <etag>`. Caddy applies it atomically with zero downtime, or rolls back `[CADDY-API]`.
+   - Apply it as a whole-config replace, `POST /config/` with `If-Match: <etag>` (`routing.Admin.Apply`). Caddy applies it atomically with zero downtime, or rolls back `[CADDY-API]`. `/load` would ignore `If-Match` `[CADDY-ADMIN-SRC]`.
    - Verify the route through Caddy using the app's `Host` header.
    - Only then commit, in one transaction: the route's `deployment_id`, the candidate as `active`, and the previous deployment as `superseded`.
+   - As implemented (P2.4, `routing.Router` and `deploy.switchTraffic`):
+     - **Order.** The deployment is marked `switching`. The rendered config points the app's routes at `<candidate container name>:<internal_port>`, which Caddy resolves on the app network `[DK-BRIDGE]`. That config is loaded.
+     - **Verification.** Each hostname gets `health_path` requested on Caddy's **verify server**: a plain-HTTP server on `caddy-verify.sock`, next to the admin socket (mode 0660), with the same routes and automatic HTTPS skipped. It proves the routing through Caddy without waiting for a certificate.
+     - **Commit.** Only the verified hostnames are committed. A route added meanwhile keeps its target, and a verified route deleted meanwhile aborts the commit.
+     - **Failure.** On a failed load, verification, or commit, Caddy is first restored from the routes table, then the candidate is removed.
+     - **Lost lease or shutdown.** The routes are restored, but nothing is recorded; the next owner resumes and switches again.
+     - **Restore fails too.** The next worker start restores (Reconciler step 3).
 8. **Observe and drain.** Keep the previous container for an observation window (default 5 min). Then run `docker stop` with the app's `stop_timeout`, which sends `SIGTERM` and later `SIGKILL` (Docker's default is 10 s `[DK-RUN]`), and remove the container. The image stays, subject to retention.
+   - As implemented (P2.6, `app.Janitor`, Reconciler step 2):
+     - **No drain in the deploy.** Activation leaves the previous container running and logs the window and stop timeout to the operation's events.
+     - **Who drains.** The reconciler does, after its Caddy sync. A `superseded` deployment whose `ended_at` plus the window has passed is stopped with its app's `stop_timeout`, then removed. The decision comes from the database, so a worker restart loses nothing.
+     - **Setting.** `SHIPYARD_OBSERVATION_WINDOW` (0 to 24h; 0 drains at the next reconcile). The drain happens within one reconcile interval after the window ends.
+
+**As implemented in Phase 1 (P1.11, `internal/app/deploy.go`; routing arrives in Phase 2)**
+
+- **Phases.** The operation records `fetch`, `build`, `start`, `health`, and `activate`, each before its side effect.
+- **Creating the deployment.** The deployment row is created after the fetch, once the commit is verified. It pins the app's latest environment revision at that moment.
+- **Lease guard.** Every deployment write is guarded by the operation's lease, as operation writes are.
+- **Resume.** A retried operation (the lease expired after a crash or shutdown) resumes its deployment.
+  - It keeps its commit, even if the branch moved.
+  - With an image already recorded, nothing is fetched or rebuilt.
+  - The container is re-created idempotently: same name, same image.
+- **Activation.** Superseding the previous active deployment, marking this one active, and completing the operation commit in one transaction.
+  - Phase 1 drained the previous container right away. Since P2.6 it stays for the observation window (step 8).
+- **Failure.** A deploy failure is final, with no automatic retry.
+  - The candidate's last 50 output lines go to the operation's events.
+  - The candidate is removed, and the deployment and the operation are marked failed.
+  - Only a lost lease or a shutdown leaves the operation to be retried.
+- **Health gate (`internal/health`).**
+  - 3 consecutive 2xx or 3xx responses, probed every second, with 2 s per request, within the app's `health_timeout`.
+  - No proxy and no redirects.
+  - Before every probe, the container must be running with `RestartCount` 0.
 
 ### Failure handling
 
@@ -191,8 +238,8 @@ stateDiagram-v2
 | --- | --- | --- |
 | Fetch, ancestry, or build fails | None | Mark failed, keep bounded logs, clean the workspace. |
 | Candidate exits or fails health | None | Mark failed, capture the last log lines, remove the candidate. |
-| `POST /load` rejected | None (Caddy kept the old config) | Mark failed and remove the candidate. |
-| Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), `POST /load`, mark failed. |
+| Config load rejected | None (Caddy kept the old config) | Mark failed and remove the candidate. |
+| Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), load it, then remove the candidate, mark failed. |
 | Worker crash in any phase | Unchanged, or equal to the DB | The lease expires and the reconciler resumes or compensates using the phase, labels, and the `routes` table. |
 
 ### Rollback
@@ -202,28 +249,58 @@ Rollback is a new operation with `kind = rollback` that targets a prior successf
 - It starts a container from that deployment's retained **image ID** and **original environment revision**, confirms health, switches the route, and records the new active state.
 - If the image is gone, the API reports that rollback is unavailable. It never silently rebuilds from a moving branch.
 - If a secret in the target revision has since been rotated, the CLI warns and offers `--with-current-config`.
+- As implemented (P3.3):
+  - **API** (`POST /v1/apps/{id}/rollbacks`, `deploy` scope).
+    - **Targets.** Only a `superseded` deployment of the app is a target. An active one is 409, and one that never served is 422.
+    - **Changed secrets.** When a secret of the target's revision has changed or been removed since, the request is 409, naming the keys (never values). The operator then picks `with_old_config` (the values it ran with) or `with_current_config` (the latest revision).
+    - **Admission.** The operation is `kind = rollback` with the same idempotency and latest-wins rules as a deploy.
+  - **Worker.**
+    - **Image check.** It first checks that the target's image ID is still on the host (`ImageInspect`). If not, the rollback fails at once, before any side effect, as "rollback unavailable", and suggests deploying the commit again. The API cannot check this, because it never touches Docker.
+    - **The deployment.** It then creates a `kind = rollback` deployment in `starting`, with the target's commit, image ID, and build metadata, `source_deployment_id` pointing at the target, and the chosen revision.
+    - **The rest.** Start, health gate, switch, and activation run as for a deploy, and a retry resumes the deployment.
+  - **CLI.** `shipyard rollback APP --to <id or prefix from releases>`. The history marks the deployment "rollback of …".
 
 ### Reconciler
 
-The reconciler runs at worker start and then every 60 s by default.
+The reconciler runs at worker start and then every 60 s by default. Since P3.2 it is `internal/reconcile`, and one pass runs step 1, the restore part of step 2, step 3, the janitor part of step 2, and then step 5. Each step carries on past a failing item.
 
-1. Re-queue operations whose leases expired, incrementing `attempt`. Once `max_attempts` is exceeded, mark them failed.
+1. Re-queue operations whose leases expired; the next claim increments `attempt` (step 2 of §5). Once `max_attempts` is reached, mark them failed, together with their in-progress deployment, in the same statement, so step 2 removes its container.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
-3. Render the Caddy config from `routes`. If it differs from the running config, `POST /load` it.
+   - Since P2.6 (`app.Janitor`, run after step 3):
+     - superseded containers are drained once their observation window is over (§5 step 8);
+     - containers of `failed` or `cancelled` deployments are removed;
+     - a container whose deployment is not in this database is left alone. It belongs to another Shipyard database on the same engine (a test run or a development worker), and Shipyard removes only what it can show it owns.
+   - Since P3.2 (`internal/reconcile`, before the Caddy sync): every active deployment's container is checked.
+     - A stopped one is started.
+     - A missing one is recreated from the deployment's image ID and environment revision, under the same deterministic name, so its routes resolve without a Caddy change. The new ID is recorded before the start, and only while the deployment is still active with the old container (`ReplaceContainer`).
+     - No health gate runs: it is the release that passed one, from the same image and configuration.
+     - A pruned image cannot be recreated, and the reconciler logs it on every pass until a deploy or rollback.
+   - Not yet: removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
+3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
+5. Since P3.4a: remove the images retention no longer keeps (§4, Retention). It runs last, after the janitor, so the containers that used them are gone.
 
 ## 6. API and CLI shape
 
 | CLI example | API operation |
 | --- | --- |
 | `shipyard app create --repo owner/repo --branch main --port 3000` | `POST /v1/apps` |
-| `shipyard deploy APP [--ref <commit-sha>]` | `POST /v1/apps/{id}/deployments` (with `Idempotency-Key`) |
+| `shipyard deploy APP [--ref <commit-sha>] [--idempotency-key K] [--follow]` | `POST /v1/apps/{id}/deployments` (`deploy` scope). 202 for a new operation; 200 with the original for a repeated key; 409 if the key was used for a different request. Client keys are stored as `api:<key>` so they never collide with `gh:` keys. `--follow` then streams the events and exits non-zero unless the operation succeeded |
+| `shipyard operation ID` | `GET /v1/operations/{id}` |
+| `shipyard releases APP [--limit N] [--before ID]` | `GET /v1/apps/{id}/deployments?limit=&before=` (`read` scope). The history, newest first, with a stable keyset cursor: `next` is the last ID of a full page. Each entry has its commit, image ID, environment revision number, status, and failure reason. `limit` is 1–100 (default 20); a `before` that is not the app's deployment is 422 |
 | `shipyard ps` | `GET /v1/apps` |
-| `shipyard logs APP --follow` | `GET /v1/apps/{id}/logs` (SSE) |
-| `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (SSE, resumable) |
-| `shipyard rollback APP --to <deployment-id>` | `POST /v1/apps/{id}/rollbacks` |
-| `shipyard env set APP KEY` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision |
-| `shipyard domain set APP example.com` | `PUT /v1/apps/{id}/domain` (DNS preflight) |
+| `shipyard login --url URL` (token read from stdin) | `GET /v1/whoami` to verify, then saves `~/.config/shipyard/config.json` with mode 0600 |
+| `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
+| `shipyard logs APP [--tail N] [--follow]` | `GET /v1/apps/{id}/logs?tail=&follow=` (`read` scope; SSE). The active deployment's output, read by the worker and proxied by the API (ADR-0008). `tail` is 0–1000 (default 100). 404 with no active deployment; 503 when the worker is down. Ends with `event: end` and the reason |
+| `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (`read` scope; SSE, resumable). Ends with an `end` event carrying the operation |
+| `shipyard rollback APP --to <deployment-id> [--with-current-config\|--with-old-config] [--follow]` | `POST /v1/apps/{id}/rollbacks` (`deploy` scope), body `{"to", "with_current_config", "with_old_config"}`. 202 like a deploy; 409 if the target is active or its secrets changed since (keys named); 422 for a target that never served |
+| `shipyard env set APP KEY [--plain]` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision. Body `{"value": …, "secret": true}`; secret by default |
+| `shipyard env unset APP KEY` | `DELETE /v1/apps/{id}/env/{key}` → new environment revision |
+| `shipyard env list APP` | `GET /v1/apps/{id}/env` (keys and whether each is secret; never values) |
+| `shipyard app show\|update\|delete APP` | `GET` / `PATCH` / `DELETE /v1/apps/{id}`. `{id}` accepts the slug. Slug and repo are fixed. Delete is refused while an operation runs or a deployment is live |
+| `shipyard domain add APP example.com` | `POST /v1/apps/{id}/domains` (`admin` scope): normalize, suffix allow-list, DNS preflight, then a `routes` row. 201; 409 if another app has the hostname; 422 for a bad name or DNS; 503 if the preflight cannot run. An app may have several hostnames |
+| `shipyard domain remove APP example.com` | `DELETE /v1/apps/{id}/domains/{hostname}` → 204 |
+| `shipyard domain list APP` | `GET /v1/apps/{id}/domains` (hostname, the deployment it targets, when DNS was checked) |
 | — | `POST /hooks/github` (public, HMAC-verified) |
 
 - **Routing and errors.** Standard-library routing (`GET /v1/apps/{id}`) is sufficient, so no router framework is needed `[GO-ROUTING]`. Errors use `application/problem+json` `[RFC9457]`.
@@ -233,14 +310,36 @@ The reconciler runs at worker start and then every 60 s by default.
   - The server sends a `:` keepalive comment about every 15 s.
   - The API is served over HTTP/2 through Caddy, which avoids the browser limit of 6 connections that applies over HTTP/1.1 `[MDN-SSE]`. Caddy flushes `text/event-stream` immediately `[CADDY-RP]`.
   - Introduce WebSockets only when bidirectional interaction is needed.
+  - As implemented for operation events (P2.7a, `internal/api/events.go`):
+    - **Frames.** Each frame is `id: <seq>` with a JSON `data` line (`seq`, `ts`, `level`, `message`). The stream starts with `retry: 2000`.
+    - **Resume.** A malformed `Last-Event-ID` is 422.
+    - **Source.** The API polls PostgreSQL every 500 ms, with no LISTEN/NOTIFY yet.
+    - **End.** A finished operation ends with `event: end` after two empty polls, because the worker appends events just after it finishes (the drain plan).
+    - **Shutdown.** Streams close as soon as the API starts shutting down, so they do not hold it up, and clients resume on the next process.
+    - **Client.** The client reconnects with `Last-Event-ID`, treats 45 s of silence as a dead connection, and gives up after 5 failed reconnects in a row.
 - **Log limits.** Historical logs are bounded tails. Known secret values are redacted, but redaction cannot catch every secret an app prints.
+  - As implemented (P2.7b, ADR-0008):
+    - **Path.** The worker serves `GET /logs` on its private socket (`SHIPYARD_WORKER_SOCKET`, mode 0660, shared group). The API authenticates and proxies it as SSE, so the API never reads Docker (invariant 1).
+    - **Which container.** Only the active deployment's container, named by PostgreSQL.
+    - **Format.** Lines are timestamped, marked stdout or stderr, and cut at 16 KiB. Streams have no ids, so a reconnect starts a fresh tail.
+    - **Redaction.** It happens in the worker: every secret value (not plain ones) of at least 6 characters becomes `[REDACTED]`. If the secrets cannot be read, nothing is streamed.
+    - **Deploy output.** The same redaction now covers the candidate's output that a failed deploy copies into the operation's events. If the secrets cannot be read there, the output is withheld.
 
 ## 7. Security and operational defaults
 
 **Access**
 
-- The API and CLI require bearer tokens with scopes and expiry. Every mutation writes an audit event.
+- The API and CLI require bearer tokens with scopes and expiry `[RFC6750]`.
+  - Scopes nest: `read` (list and inspect) ⊂ `deploy` (plus deploys and rollbacks, e.g. for CI) ⊂ `admin` (everything).
+  - The first token is created on the server with `shipyard-api token create`. Tokens are revoked with `shipyard-api token revoke <prefix>`.
+  - Unknown, expired, revoked, and malformed tokens get the same 401, so a client cannot tell them apart.
+- Every authenticated mutation, whether allowed or denied, writes an audit event naming the token prefix, the route, and the path. Anonymous failures are logged only, so they cannot fill the audit table.
 - The API listens on localhost or a Unix socket and is exposed only through Caddy over TLS.
+  - As implemented (P2.8, ADR-0003 note):
+    - **Listen.** Any other listen address is refused, and no override exists.
+    - **Publishing.** `SHIPYARD_API_HOSTNAME` publishes the API on its own name over HTTPS, with HTTP/2 by default `[CADDY-OPTIONS]`. Only `/v1/*` and `/hooks/github` reach it; everything else on that host is 404.
+    - **Socket.** Caddy reaches the API's socket (`unix:/run/shipyard-api/api.sock`, mode 0660, shared group) through a read-only bind mount of its directory, so publishing requires a socket, not TCP.
+    - **Reserved name.** An app cannot take the API's hostname (409).
 - The webhook path is the only unauthenticated public endpoint, and it must pass HMAC verification.
 
 **GitHub** `[GH-VALIDATE][GH-BP][GH-EVENTS]`
@@ -264,6 +363,12 @@ The reconciler runs at worker start and then every 60 s by default.
 - Always apply: `--cap-drop ALL`, with capabilities added back per app only from an allowlist; `--security-opt no-new-privileges`; `--pids-limit`; `--memory`; `--cpus`; `--restart unless-stopped`; the `local` log driver; one user-defined network per app.
 - Never use: `--privileged`, `--network host`, the Docker socket, host bind mounts, or `-p`.
 - `--read-only` and `--init` are opt-in per app.
+- How `internal/runtime` enforces this `[MOBY-CLIENT]`:
+  - Its `Spec` has no field for any forbidden option, so they cannot be requested. The flag set is built in one function, and a unit test (CI) and a `docker` test (owner's machine) check it. The `docker` test also checks from inside the container: `NoNewPrivs: 1`, empty capability sets, and the cgroup `pids.max`, `memory.max`, and `cpu.max`.
+  - The capability allowlist is `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `NET_BIND_SERVICE`, `SETGID`, and `SETUID`, all in Docker's default set `[DK-SEC]`. The pids limit defaults to 512. Neither has a per-app setting yet.
+  - The `local` log driver is set on each container, because the daemon default may still be `json-file`.
+  - `Create` first ensures the app network, because Engine 29 accepts a missing network at create and fails only at start.
+  - It never adopts or touches a network or container without its `io.shipyard.*` labels. `Start`, `Stop`, `Remove`, and `Inspect` check the labels first, so a wrong ID cannot affect an unrelated container on the host.
 
 **Docker daemon** `[DK-LOG][DK-LOG-LOCAL][DK-LIVE]`
 
@@ -275,6 +380,22 @@ The reconciler runs at worker start and then every 60 s by default.
 
 - The admin API listens on a Unix socket in a directory that only Caddy and the worker can access. App containers share a network with Caddy, so a TCP admin listener would let them rewrite routes.
 - Mount the data directory (certificates and ACME account) as a persistent volume and back it up.
+- How the worker runs it (`runtime.EnsureEdge`, P2.1) `[CADDY-IMAGE][CADDY-CLI]`:
+  - **Startup.** At every start, the worker ensures the `shipyard-caddy` container, its `shipyard-caddy` bridge network, and its `-data` and `-config` volumes. It then joins the container to every app network; new app networks are joined as they are created.
+  - **Recreation.** A label holding a hash of the spec (image, ports, socket directory, group) makes a changed spec recreate the container. The volumes are kept.
+  - **Image.** The official image, pinned by digest. It runs `caddy run --resume`, so a restart serves the last loaded config.
+  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by the worker's group with mode `2770`. It is bind-mounted at the same path, and is the only host path Caddy sees.
+  - **User.** Caddy runs as `0:<worker gid>`, so it can create the socket there without `CAP_DAC_OVERRIDE`.
+  - **Hardening.** `--cap-drop ALL` plus `NET_BIND_SERVICE`, `no-new-privileges`, a read-only root filesystem with a small `/tmp` tmpfs, 512 MiB, 1 CPU, 512 pids, the `local` log driver, and `unless-stopped`.
+  - **The capability is required.** The image's binary has `cap_net_bind_service=ep`: without the capability, even its exec fails.
+  - **Ports.** 80/tcp, 443/tcp, and 443/udp are published on all interfaces by default. The bind address and ports are configurable for development and tests.
+  - **Admin address in loaded configs.** A config loaded later must keep the admin address on this socket; P2.2's renderer always includes it.
+- **The rendered config** (`routing.Render`, P2.2) `[CADDY-JSON]` is deterministic: routes are sorted by hostname, and the same rows give the same bytes. Any invalid input renders nothing, so a broken config is never loaded. It contains:
+  - `admin.listen` on the socket (`|0660`), and one server `shipyard` on `:443`. Automatic HTTPS adds the `:80` redirect and HTTP challenges.
+  - The API hostname, if set. It proxies only `/v1/*` and `/hooks/github` to the API upstream (`host:port` or `unix//path`); anything else on that host is 404.
+  - One terminal route per hostname: `reverse_proxy` to the route's `upstream` (`host:port` only, never a socket), or `503 no active deployment` while there is none.
+  - An unrouted hostname gets no certificate, so its TLS handshake fails.
+  - Issuers: Caddy's defaults, Let's Encrypt with an email, the Let's Encrypt staging CA `[LE-STAGING]`, or Caddy's internal CA (tests).
 
 **Domains and TLS** `[CADDY-HTTPS][LE-LIMITS]`
 
@@ -282,11 +403,23 @@ The reconciler runs at worker start and then every 60 s by default.
 - One app per hostname. An optional allow-list of domain suffixes restricts what users can claim.
 - Never enable on-demand TLS without an `ask` endpoint.
 - Development and CI use the Let's Encrypt staging CA.
+- As implemented (P2.5):
+  - **Preflight.** The API resolves the hostname, and **every** A/AAAA record must be one of `SHIPYARD_PUBLIC_IPS`. One stray record would send the ACME validation elsewhere.
+    - No record gives 422, and a failed lookup gives 503.
+    - With the preflight on and no public IPs configured, adding is refused (503). `SHIPYARD_DNS_PREFLIGHT=false` turns it off, and `dns_checked_at` then stays null.
+  - **Names.** Hostnames are lowercased with the trailing dot removed. Only exact FQDNs are allowed: no wildcards, no IP literals, no single labels. `SHIPYARD_DOMAIN_SUFFIXES` is the optional allow-list, matched at a label boundary.
+  - **API boundary.** The API only writes the `routes` row (invariant 1). Under the app lock, a hostname added to a serving app targets the active deployment at once: with the upstream its other routes use, or else `<deterministic container name>:<internal_port>`. Otherwise it serves "no active deployment" until the next deploy.
+  - **Activation.** It also moves the app's routes that point at the superseded deployment or at none, so a hostname added during a switch is not left on a drained container.
+  - **Reaching Caddy.** The worker applies added and removed hostnames on its next reconcile (`SHIPYARD_RECONCILE_INTERVAL`, default 60 s), and right after each activation.
+  - **The staging toggle** is the worker's `SHIPYARD_CADDY_CA=staging`, from P2.3.
 
 **Secrets** `[OWASP-CRYPTO][GO-GCM]`
 
 - Use envelope encryption. Each value gets a random DEK and is encrypted with AES-256-GCM (`cipher.NewGCMWithRandomNonce`), with AAD `(app_id, key, value_id)`. The DEK is wrapped by a KEK that carries a `kek_id`.
 - Keep the KEK in a root-owned file readable only by the `shipyard` group (`0640`, shared by the API and worker users) or in a systemd credential. It is **never in PostgreSQL** and never in the same backup as the database.
+  - A KEK file is `<kek_id>.key` holding exactly 32 raw bytes, e.g. `head -c 32 /dev/urandom`. Loading refuses a file that other users can access.
+  - All loaded KEKs can open; only the active one seals. That is what makes rotation possible.
+- Setting a key creates a new revision that references the unchanged value rows, so the API never decrypts. Only the worker's `Resolve` opens values, to start a container. Concurrent writers are serialized by a row lock on the app.
 - Document and test rotation and recovery before production (ADR-0005).
 
 **Host firewall** `[DK-FW]`
@@ -310,15 +443,18 @@ The reconciler runs at worker start and then every 60 s by default.
 
 ```text
 cmd/shipyard/          CLI
+internal/client/       typed HTTP client for the API (used by the CLI)
 cmd/shipyard-api/      HTTP server and webhook receiver
 cmd/shipyard-worker/   deployment worker and reconciler
 internal/api/          handlers, authn/authz, problem+json errors, SSE
 internal/webhook/      GitHub signature verification and event mapping
-internal/app/          deployment use cases and state transitions (pure logic)
+internal/app/          deployment use cases and state transitions, behind ports it declares
+                       (adapters are wired in cmd/shipyard-worker, so the API never links Docker)
 internal/queue/        operation claim/lease/heartbeat on PostgreSQL
 internal/source/       git fetch, ancestry check, GitHub App tokens
 internal/build/        BuildKit/buildx invocation and metadata capture
 internal/runtime/      Docker container lifecycle (moby client)
+internal/health/       HTTP health gate for candidates
 internal/routing/      Caddy config rendering and admin API client
 internal/reconcile/    startup and periodic reconciliation
 internal/secrets/      envelope encryption and environment revisions

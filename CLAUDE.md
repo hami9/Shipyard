@@ -65,7 +65,7 @@ Source evidence for each invariant is in [docs/SOURCES.md](docs/SOURCES.md) and 
 | Database | PostgreSQL 18 via `pgx/v5`. Forward-only SQL migrations in `migrations/`, applied by the in-house runner (`shipyard-api migrate`). |
 | Docker | Engine 29.x through `github.com/moby/moby/client`. **Not** the deprecated `github.com/docker/docker`. |
 | Builds | `docker buildx` with a dedicated `docker-container` builder named `shipyard` |
-| Edge | Caddy v2, JSON config through `POST /load` on the admin Unix socket |
+| Edge | Caddy v2, whole JSON config through `POST /config/` with `If-Match` on the admin Unix socket (`/load` ignores `If-Match`: ADR-0003 note) |
 | Errors | `application/problem+json` (RFC 9457) |
 | Streaming | SSE with `id` and `Last-Event-ID` resume. WebSockets only if bidirectional traffic is needed. |
 | UI | React in `web/`, Phase 6 only. It must never be required for a deploy. |
@@ -99,6 +99,8 @@ make build              # static binaries into ./bin
 make test               # unit tests (go test -race ./...)
 make lint               # gofmt check, go vet, staticcheck (incl. integration files)
 make test-integration   # needs PostgreSQL: make dev-up first
+make test-docker        # needs Docker Engine + buildx; owner's machine only (tag: docker)
+make test-e2e           # real binaries + Docker + PostgreSQL + git; owner's machine only (tag: e2e)
 make dev-up / dev-down  # local PostgreSQL 18 on 127.0.0.1:54320
 make migrate            # apply migrations to $SHIPYARD_DATABASE_URL
 make run-api / run-worker
