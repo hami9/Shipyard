@@ -398,6 +398,18 @@ func (r *Runtime) Remove(ctx context.Context, id string) error {
 	return nil
 }
 
+// ImageExists reports whether an image ID is still on the host, so a
+// rollback knows whether it can run without rebuilding (invariant 6).
+func (r *Runtime) ImageExists(ctx context.Context, id string) (bool, error) {
+	if _, err := r.cli.ImageInspect(ctx, id); err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect image %s: %w", id, err)
+	}
+	return true, nil
+}
+
 // Managed is one of Shipyard's app containers, as the reconciler sees it.
 type Managed struct {
 	ID           string

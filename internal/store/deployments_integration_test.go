@@ -142,6 +142,48 @@ func TestReplaceContainer(t *testing.T) {
 	}
 }
 
+// P3.3: a rollback deployment copies its source's commit and image, links
+// it, pins the chosen revision, and starts in status starting. A source of
+// another app, or without an image, is refused.
+func TestCreateRollbackDeployment(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	app, other := f.app(), f.app()
+	src := f.healthy(f.claimed(app, "w1"), "w1")
+	if _, err := f.s.ActivateDeployment(ctx, src.ID, "w1", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	src, _ = f.s.DeploymentByID(ctx, src.ID)
+
+	f.enqueue(app, "rb-"+uniq()) // a rollback operation, claimed
+	op, _ := f.s.ClaimOperation(ctx, "w1", time.Minute)
+	d, err := f.s.CreateRollbackDeployment(ctx, "w1", store.NewRollback{OperationID: op.ID, Source: src})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Kind != "rollback" || d.SourceDeployment == nil || *d.SourceDeployment != src.ID || d.ImageID != testImage ||
+		d.SourceCommitSHA != testSHA || d.Status != store.DeployStarting || d.StartingAt == nil || d.EnvRevisionID != nil || d.ContainerID != "" {
+		t.Fatalf("rollback deployment = %+v", d)
+	}
+	if got, _ := f.s.Releases(ctx, app, "", 1); got[0].ID != d.ID || *got[0].SourceDeployment != src.ID {
+		t.Fatalf("history head = %+v", got[0])
+	}
+
+	// Another app's deployment, or none built, cannot be a source.
+	f.enqueue(other, "rb-"+uniq())
+	op2, _ := f.s.ClaimOperation(ctx, "w1", time.Minute)
+	if _, err := f.s.CreateRollbackDeployment(ctx, "w1", store.NewRollback{OperationID: op2.ID, Source: src}); !errors.Is(err, store.ErrLeaseLost) {
+		t.Fatalf("cross-app source: %v", err)
+	}
+	unbuilt, _ := f.s.CreateDeployment(ctx, "w1", store.NewDeployment{OperationID: op2.ID, SourceCommitSHA: testSHA})
+	f.enqueue(other, "rb-"+uniq())
+	f.sql(`UPDATE operations SET status = 'succeeded', finished_at = now(), lease_owner = NULL, lease_expires_at = NULL WHERE id = $1`, op2.ID)
+	op3, _ := f.s.ClaimOperation(ctx, "w1", time.Minute)
+	if _, err := f.s.CreateRollbackDeployment(ctx, "w1", store.NewRollback{OperationID: op3.ID, Source: unbuilt}); !errors.Is(err, store.ErrLeaseLost) {
+		t.Fatalf("unbuilt source: %v", err)
+	}
+}
+
 func TestDeploymentLifecycle(t *testing.T) {
 	f := newQueueFixture(t)
 	ctx := t.Context()

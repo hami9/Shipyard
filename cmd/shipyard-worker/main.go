@@ -246,10 +246,10 @@ func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deploye
 	defer release()
 	var err error
 	switch op.Kind {
-	case "deploy":
+	case app.KindDeploy, app.KindRollback:
 		err = d.Run(held, op, q.Owner())
-	default: // rollback arrives in Phase 3
-		_, err = s.FailOperation(held, op.ID, q.Owner(), fmt.Sprintf("operation kind %q is not supported yet", op.Kind), 0)
+	default:
+		_, err = s.FailOperation(held, op.ID, q.Owner(), fmt.Sprintf("operation kind %q is not supported", op.Kind), 0)
 	}
 	if err != nil {
 		log.Warn("operation not finished; it resumes after its lease expires", slog.Any("err", err))

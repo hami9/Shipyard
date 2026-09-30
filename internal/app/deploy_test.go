@@ -39,6 +39,22 @@ type fakeStore struct {
 	activateErr error
 	upstream    string
 	hosts       []string
+	// rollback: earlier deployments by ID
+	byID map[string]store.Deployment
+}
+
+func (s *fakeStore) DeploymentByID(_ context.Context, id string) (store.Deployment, error) {
+	d, ok := s.byID[id]
+	if !ok {
+		return store.Deployment{}, store.ErrNotFound
+	}
+	return d, nil
+}
+func (s *fakeStore) CreateRollbackDeployment(_ context.Context, _ string, n store.NewRollback) (store.Deployment, error) {
+	src := n.Source.ID
+	s.dep = &store.Deployment{ID: "dep-1", OperationID: n.OperationID, Kind: KindRollback, SourceDeployment: &src,
+		SourceCommitSHA: n.Source.SourceCommitSHA, ImageID: n.Source.ImageID, EnvRevisionID: n.EnvRevisionID, Status: store.DeployStarting}
+	return *s.dep, nil
 }
 
 func (s *fakeStore) AppByID(context.Context, string) (store.App, error) { return s.app, nil }
@@ -161,6 +177,11 @@ type fakeRuntime struct {
 	created []Container
 	calls   []string
 	state   ContainerState
+	images  map[string]bool // present images; nil: every image is
+}
+
+func (f *fakeRuntime) ImageExists(_ context.Context, id string) (bool, error) {
+	return f.images == nil || f.images[id], nil
 }
 
 func (f *fakeRuntime) Create(_ context.Context, c Container) (string, error) {
