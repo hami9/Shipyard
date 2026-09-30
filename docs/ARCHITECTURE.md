@@ -245,7 +245,7 @@ Rollback is a new operation with `kind = rollback` that targets a prior successf
 
 ### Reconciler
 
-The reconciler runs at worker start and then every 60 s by default.
+The reconciler runs at worker start and then every 60 s by default. Since P3.2 it is `internal/reconcile`, and one pass runs step 1, the restore part of step 2, step 3, and then the janitor part of step 2. Each step carries on past a failing item.
 
 1. Re-queue operations whose leases expired; the next claim increments `attempt` (step 2 of §5). Once `max_attempts` is reached, mark them failed, together with their in-progress deployment, in the same statement, so step 2 removes its container.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
@@ -253,7 +253,12 @@ The reconciler runs at worker start and then every 60 s by default.
      - superseded containers are drained once their observation window is over (§5 step 8);
      - containers of `failed` or `cancelled` deployments are removed;
      - a container whose deployment is not in this database is left alone. It belongs to another Shipyard database on the same engine (a test run or a development worker), and Shipyard removes only what it can show it owns.
-   - Not yet: recreating a missing active container, and removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
+   - Since P3.2 (`internal/reconcile`, before the Caddy sync): every active deployment's container is checked.
+     - A stopped one is started.
+     - A missing one is recreated from the deployment's image ID and environment revision, under the same deterministic name, so its routes resolve without a Caddy change. The new ID is recorded before the start, and only while the deployment is still active with the old container (`ReplaceContainer`).
+     - No health gate runs: it is the release that passed one, from the same image and configuration.
+     - A pruned image cannot be recreated, and the reconciler logs it on every pass until a deploy or rollback.
+   - Not yet: removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
 3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
 

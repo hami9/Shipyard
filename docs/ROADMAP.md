@@ -158,7 +158,7 @@ flowchart LR
 **Goal:** Shipyard survives crashes, restores from backup, and rolls back without rebuilding.
 
 - [x] **P3.1** Deployment history: `GET /v1/apps/{id}/deployments` and `shipyard releases APP`.
-- [ ] **P3.2** `internal/reconcile`, run at startup and every 60 s:
+- [x] **P3.2** `internal/reconcile`, run at startup and every 60 s. "Remove orphans" covers containers of failed deployments; containers whose deployment is not in the database are left alone (P2.6), and a deleted app's containers wait for P3.8:
   - Re-queue or fail expired leases.
   - Reconcile containers by label: remove orphans, recreate missing active containers.
   - Re-render and load the Caddy config on drift.

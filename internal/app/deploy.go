@@ -95,6 +95,10 @@ type Image struct {
 	Metadata json.RawMessage
 }
 
+// ErrContainerGone is what a Runtime reports for a container that no longer
+// exists, so callers need not know the runtime's errors.
+var ErrContainerGone = errors.New("container is gone")
+
 // Runtime runs containers (internal/runtime). Every call is idempotent.
 type Runtime interface {
 	Create(ctx context.Context, c Container) (string, error)

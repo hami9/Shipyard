@@ -140,6 +140,41 @@ func (s *Store) DeploymentByID(ctx context.Context, id string) (Deployment, erro
 	return scanDeployment(s.q.QueryRow(ctx, `SELECT `+deployColumns+` FROM deployments WHERE id = $1`, id))
 }
 
+// ActiveDeployments returns every app's serving deployment, for the
+// reconciler (P3.2).
+func (s *Store) ActiveDeployments(ctx context.Context) ([]Deployment, error) {
+	rows, err := s.q.Query(ctx, `SELECT `+deployColumns+` FROM deployments WHERE status = 'active' ORDER BY app_id`)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+	var out []Deployment
+	for rows.Next() {
+		d, err := scanDeployment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, mapError(rows.Err())
+}
+
+// ReplaceContainer records the container the reconciler recreated for an
+// active deployment whose container was gone. It changes nothing unless the
+// deployment is still active with container old: a deploy that superseded
+// it meanwhile wins, with ErrConflict.
+func (s *Store) ReplaceContainer(ctx context.Context, id, old, container string) error {
+	tag, err := s.q.Exec(ctx, `UPDATE deployments SET container_id = $3
+		WHERE id = $1 AND status = 'active' AND container_id = $2`, id, old, container)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: deployment %s is no longer active with container %.12s", ErrConflict, id, old)
+	}
+	return nil
+}
+
 // ActiveDeployment returns the app's serving deployment, or ErrNotFound.
 func (s *Store) ActiveDeployment(ctx context.Context, appID string) (Deployment, error) {
 	return scanDeployment(s.q.QueryRow(ctx, `SELECT `+deployColumns+` FROM deployments WHERE app_id = $1 AND status = 'active'`, appID))
