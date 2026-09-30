@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); `releases` (P3.1). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.1: deployment history (`GET /v1/apps/{app}/deployments`, `shipyard releases`) |
-| **Next task** | P3.2: `internal/reconcile`. The janitor, requeue, and Caddy sync exist in the worker already; what is missing is recreating a missing active container, and moving the steps into their own package |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); `reconcile` (P3.2). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.2: `internal/reconcile`, which also restores a stopped or missing active container |
+| **Next task** | P3.3: the rollback operation (the target's image ID and environment revision; "unavailable" if the image is gone; a warning about rotated secrets) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-09-29 |
@@ -53,6 +53,41 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-30: P3.2 reconcile package
+
+- **Phase / task:** P3.2: `internal/reconcile`, run at startup and every 60 s
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`internal/reconcile.Reconciler`** replaces the worker's inline loop. One pass:
+  1. requeue or fail expired operations;
+  2. **restore active containers** (new);
+  3. sync Caddy;
+  4. run the janitor.
+  Each step carries on past a failing item, and `Run` passes at start and then every interval.
+- **Restore:**
+  - a running or restarting container is left alone, and a stopped one is started;
+  - a missing one is recreated from the deployment's image ID, environment revision, and app limits, under the same name, recorded (`store.ReplaceContainer`, only while still active with the old ID), then started;
+  - a pruned image or a deployment superseded meanwhile is logged and skipped. The janitor removes a container recreated for a now-superseded deployment.
+- **Ports:** `app.ErrContainerGone`; the worker's `Inspect` adapter maps `runtime.ErrNotFound` to it. `store.ActiveDeployments`.
+
+**Decisions**
+- **No health gate on restore:** it is the same release, from the same image and configuration, that already passed one (invariants 5 and 6). The restart policy handles crash loops.
+- **The same deterministic name** means the routes resolve to the new container at once. No Caddy change is needed.
+- Orphans without a database row are still left alone (P2.6), and deleted apps wait for P3.8. This is noted on the roadmap item.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of the test), `make test`, `make test-integration`: all ok. `-race -count=5` on `reconcile`: ok.
+  - `TestPass`: the order requeue → start the stopped container → create → record → start → sync → sweep, and running and restarting containers left alone.
+  - `TestPassCarriesOn`: the image is gone, and the deployment was superseded meanwhile (not started).
+  - `TestRun`: synctest, 4 passes in 3 minutes.
+  - `TestReplaceContainer`: all active deployments listed; a stale or superseded deployment gives `ErrConflict`.
+- **`make test-e2e`: PASS (271 s).** `docker rm -f` of the active container: within about a second a new one runs under the same name, and Caddy serves it with `GREETING` intact. `docker stop`: the same container is started again, and Caddy serves it.
+- No leftovers. Docker tests were not run (no runtime or routing change).
+
+**Next**
+- P3.3: rollback.
 
 ### 2026-09-29: P3.1 release history
 

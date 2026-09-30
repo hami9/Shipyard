@@ -25,6 +25,7 @@ import (
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
 	"github.com/hami9/shipyard/internal/queue"
+	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/routing"
 	"github.com/hami9/shipyard/internal/runtime"
 	"github.com/hami9/shipyard/internal/secrets"
@@ -139,10 +140,14 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		deployer.Router = router
 	}
 	q := queue.New(s, log, cfg.WorkerID, 0, cfg.PollInterval)
-	janitor := &app.Janitor{Store: s, Runtime: runtimeAdapter{rt}, Window: cfg.ObservationWindow, Log: log}
+	rec := &reconcile.Reconciler{Queue: s, Store: s, Runtime: runtimeAdapter{rt}, Env: env, Log: log,
+		Janitor: &app.Janitor{Store: s, Runtime: runtimeAdapter{rt}, Window: cfg.ObservationWindow, Log: log}}
+	if router != nil {
+		rec.Router = router
+	}
 
 	var wg sync.WaitGroup
-	wg.Go(func() { reconcile(ctx, cfg.ReconcileInterval, s, router, janitor, log) })
+	wg.Go(func() { rec.Run(ctx, cfg.ReconcileInterval) })
 	log.Info("worker ready", slog.Duration("poll_interval", cfg.PollInterval), slog.String("work_dir", cfg.WorkDir))
 	for {
 		op, err := q.Next(ctx)
@@ -251,45 +256,4 @@ func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deploye
 		return
 	}
 	log.Info("operation finished")
-}
-
-// reconcile runs the reconciler steps implemented so far, at start and then
-// every interval (ARCHITECTURE §5, Reconciler):
-//  1. return operations of crashed workers to the queue;
-//  3. make Caddy serve the routes table, so added or removed domains apply;
-//  2. then drain superseded containers whose observation window is over,
-//     and remove failed or orphaned ones (app.Janitor). It runs after the
-//     sync, so Caddy no longer points at a container it stops.
-//
-// A route switch in progress is not disturbed: Sync keeps it in the render
-// until its deploy releases it (routing.Router).
-func reconcile(ctx context.Context, every time.Duration, s *store.Store, router *routing.Router, janitor *app.Janitor, log *slog.Logger) {
-	tick := time.NewTicker(every)
-	defer tick.Stop()
-	for {
-		requeued, failed, err := s.RequeueExpired(ctx)
-		switch {
-		case err != nil && ctx.Err() == nil:
-			log.Warn("requeue expired operations failed", slog.Any("err", err))
-		case requeued+failed > 0:
-			log.Info("expired operations requeued", slog.Int("requeued", requeued), slog.Int("failed", failed))
-		}
-		if router != nil {
-			changed, err := router.Sync(ctx)
-			switch {
-			case err != nil && ctx.Err() == nil:
-				log.Warn("caddy sync failed", slog.Any("err", err))
-			case changed:
-				log.Info("caddy config reloaded from the routes table")
-			}
-		}
-		if removed, err := janitor.Sweep(ctx, time.Now()); err != nil && ctx.Err() == nil {
-			log.Warn("container cleanup incomplete", slog.Int("removed", len(removed)), slog.Any("err", err))
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-	}
 }

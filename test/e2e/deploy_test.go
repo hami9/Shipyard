@@ -179,6 +179,26 @@ func TestPhase1ExitCriteria(t *testing.T) {
 			t.Fatalf("after the switch caddy serves %q on %s, want the second container %s", got, hn, second[:12])
 		}
 	}
+	// P3.2: the reconciler brings the active release back. A container that
+	// is gone is recreated from the deployment's image and environment under
+	// the same name, so Caddy reaches it without a config change; a stopped
+	// one is started.
+	name := h.docker("inspect", "--format", "{{.Name}}", second)
+	h.docker("rm", "--force", second)
+	third := h.waitRunning(func(id string) bool { return id != second })
+	if got := h.docker("inspect", "--format", "{{.Name}}", third); got != name {
+		t.Fatalf("recreated as %s, want the same name %s", got, name)
+	}
+	if got := h.viaCaddy(host, "/env?key=GREETING"); got != "hello from e2e" {
+		t.Fatalf("recreated container: GREETING through caddy = %q", got)
+	}
+	h.docker("stop", "--time", "1", third)
+	if got := h.waitRunning(func(string) bool { return true }); got != third {
+		t.Fatalf("a stopped active container came back as %s, want %s started again", got, third)
+	}
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != third[:12] {
+		t.Fatalf("after the restore caddy serves %q, want %s", got, third[:12])
+	}
 	// P3.1: the history, newest first: the active release, the two failed
 	// deploys of steps 4 and 4b, the failed build of step 2 (the off-branch
 	// commit of step 3 was refused before a deployment existed), and the
@@ -552,6 +572,21 @@ func (h *harness) wantOp(id, status, errPart string) {
 		return
 	}
 	h.t.Fatalf("operation %s did not finish:\n%s", id, out)
+}
+
+// waitRunning waits up to 30 s until the app has exactly one running
+// container that ok accepts, and returns it.
+func (h *harness) waitRunning(ok func(id string) bool) string {
+	h.t.Helper()
+	var ids []string
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		ids = strings.Fields(h.docker("ps", "-q", "--no-trunc", "--filter", "label=io.shipyard.app="+h.slug))
+		if len(ids) == 1 && ok(ids[0]) {
+			return ids[0]
+		}
+	}
+	h.t.Fatalf("running containers of %s: %v", h.slug, ids)
+	return ""
 }
 
 // onlyRunning returns the app's one running container.

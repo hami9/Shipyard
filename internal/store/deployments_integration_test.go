@@ -104,6 +104,44 @@ func TestReleases(t *testing.T) {
 	}
 }
 
+// P3.2: the reconciler finds every active deployment and records a
+// recreated container only while the deployment is still active with the
+// container it replaced.
+func TestReplaceContainer(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	a, b := f.app(), f.app()
+	da := f.healthy(f.claimed(a, "w1"), "w1")
+	db := f.healthy(f.claimed(b, "w1"), "w1")
+	for _, d := range []store.Deployment{da, db} {
+		if _, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.healthy(f.claimed(a, "w1"), "w1") // in progress: not active
+	active, err := f.s.ActiveDeployments(ctx)
+	if err != nil || len(active) != 2 || active[0].Status != store.DeployActive || active[1].Status != store.DeployActive {
+		t.Fatalf("active = %+v, %v", active, err)
+	}
+
+	next := strings.Repeat("d2", 32)
+	if err := f.s.ReplaceContainer(ctx, da.ID, testContainer, next); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.s.DeploymentByID(ctx, da.ID); got.ContainerID != next || got.Status != store.DeployActive {
+		t.Fatalf("after replace = %+v", got)
+	}
+	// A stale view (the old container again) or a deployment that is no
+	// longer active changes nothing.
+	if err := f.s.ReplaceContainer(ctx, da.ID, testContainer, strings.Repeat("e3", 32)); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale replace: %v", err)
+	}
+	f.sql(`UPDATE deployments SET status = 'superseded', ended_at = now() WHERE id = $1`, db.ID)
+	if err := f.s.ReplaceContainer(ctx, db.ID, testContainer, next); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("superseded replace: %v", err)
+	}
+}
+
 func TestDeploymentLifecycle(t *testing.T) {
 	f := newQueueFixture(t)
 	ctx := t.Context()

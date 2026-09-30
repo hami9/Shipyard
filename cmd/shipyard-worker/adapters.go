@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/hami9/shipyard/internal/app"
@@ -59,6 +61,9 @@ func (a runtimeAdapter) Start(ctx context.Context, id string) error { return a.r
 
 func (a runtimeAdapter) Inspect(ctx context.Context, id string) (app.ContainerState, error) {
 	st, err := a.r.Inspect(ctx, id)
+	if errors.Is(err, runtime.ErrNotFound) {
+		return app.ContainerState{}, fmt.Errorf("%w: %w", app.ErrContainerGone, err)
+	}
 	if err != nil {
 		return app.ContainerState{}, err
 	}
