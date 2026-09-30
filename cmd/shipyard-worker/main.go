@@ -141,7 +141,8 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 	q := queue.New(s, log, cfg.WorkerID, 0, cfg.PollInterval)
 	rec := &reconcile.Reconciler{Queue: s, Store: s, Runtime: runtimeAdapter{rt}, Env: env, Log: log,
-		Janitor: &app.Janitor{Store: s, Runtime: runtimeAdapter{rt}, Window: cfg.ObservationWindow, Log: log}}
+		Janitor: &app.Janitor{Store: s, Runtime: runtimeAdapter{rt}, Window: cfg.ObservationWindow, Log: log},
+		Images:  &app.ImagePruner{Store: s, Runtime: runtimeAdapter{rt}, Keep: cfg.RetainImages, Log: log}}
 	if router != nil {
 		rec.Router = router
 	}

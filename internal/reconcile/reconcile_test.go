@@ -64,15 +64,16 @@ func (f *fakes) Sweep(context.Context, time.Time) ([]string, error) {
 	f.call("sweep")
 	return nil, nil
 }
+func (f *fakes) Prune(context.Context) ([]string, error) { f.call("prune"); return nil, nil }
 
 func newReconciler(f *fakes) (*Reconciler, *strings.Builder) {
 	var logs strings.Builder
-	return &Reconciler{Queue: f, Store: f, Runtime: f, Env: f, Router: f, Janitor: f,
+	return &Reconciler{Queue: f, Store: f, Runtime: f, Env: f, Router: f, Janitor: f, Images: f,
 		Log: slog.New(slog.NewTextHandler(&logs, nil))}, &logs
 }
 
 // P3.2: one pass requeues, restores active containers, syncs Caddy, then
-// sweeps; a gone container is recreated from its image and environment and
+// sweeps, then (P3.4) prunes images; a gone container is recreated from its image and environment and
 // recorded before it starts; a stopped one is started; a serving or
 // restarting one is left alone.
 func TestPass(t *testing.T) {
@@ -98,6 +99,7 @@ func TestPass(t *testing.T) {
 		"start new-d3",
 		"sync",
 		"sweep",
+		"prune",
 	}
 	if !slices.Equal(f.calls, want) {
 		t.Fatalf("calls =\n%s\nwant\n%s", strings.Join(f.calls, "\n"), strings.Join(want, "\n"))
@@ -119,12 +121,12 @@ func TestPassCarriesOn(t *testing.T) {
 	}{
 		"image gone": {
 			mutate: func(f *fakes) { f.createErr = errors.New("No such image: sha256:3") },
-			want:   []string{"requeue", "create web-a3 d3 sha256:3 env=map[] cpus=0.5 stop=7s", "sweep"},
+			want:   []string{"requeue", "create web-a3 d3 sha256:3 env=map[] cpus=0.5 stop=7s", "sweep", "prune"},
 			log:    "No such image",
 		},
 		"superseded meanwhile": {
 			mutate: func(f *fakes) { f.replaceErr = store.ErrConflict },
-			want:   []string{"requeue", "create web-a3 d3 sha256:3 env=map[] cpus=0.5 stop=7s", "record d3 c-gone->new-d3", "sweep"},
+			want:   []string{"requeue", "create web-a3 d3 sha256:3 env=map[] cpus=0.5 stop=7s", "record d3 c-gone->new-d3", "sweep", "prune"},
 			log:    "record recreated container",
 		},
 	} {

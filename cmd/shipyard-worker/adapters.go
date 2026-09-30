@@ -85,6 +85,16 @@ func (a runtimeAdapter) ImageExists(ctx context.Context, id string) (bool, error
 	return a.r.ImageExists(ctx, id)
 }
 
+func (a runtimeAdapter) ListImages(ctx context.Context) ([]string, error) { return a.r.ListImages(ctx) }
+
+func (a runtimeAdapter) RemoveImage(ctx context.Context, id string) error {
+	err := a.r.RemoveImage(ctx, id)
+	if errors.Is(err, runtime.ErrInUse) {
+		return fmt.Errorf("%w: %w", app.ErrImageInUse, err)
+	}
+	return err
+}
+
 func (a runtimeAdapter) StreamLogs(ctx context.Context, id string, tail int, follow bool, fn func(applogs.Line) error) error {
 	return a.r.StreamLogs(ctx, id, tail, follow, func(l runtime.LogLine) error {
 		return fn(applogs.Line{TS: l.TS, Stream: l.Stream, Text: l.Text})

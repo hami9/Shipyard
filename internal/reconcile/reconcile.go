@@ -51,7 +51,13 @@ type Sweeper interface {
 	Sweep(ctx context.Context, now time.Time) ([]string, error)
 }
 
-// Reconciler runs the steps; Router is nil when Caddy is disabled.
+// Pruner removes images retention no longer keeps (app.ImagePruner).
+type Pruner interface {
+	Prune(ctx context.Context) ([]string, error)
+}
+
+// Reconciler runs the steps; Router is nil when Caddy is disabled. A nil
+// Images skips image retention.
 type Reconciler struct {
 	Queue   Queue
 	Store   Store
@@ -59,6 +65,7 @@ type Reconciler struct {
 	Env     Env
 	Router  Router
 	Janitor Sweeper
+	Images  Pruner
 	Log     *slog.Logger
 }
 
@@ -82,7 +89,9 @@ func (r *Reconciler) Run(ctx context.Context, every time.Duration) {
 //  2. restore active deployments whose container is gone or stopped;
 //  3. make Caddy serve the routes table (a switch in progress is kept);
 //  4. drain superseded containers and remove failed ones (app.Janitor),
-//     after the sync, so Caddy no longer points at what it stops.
+//     after the sync, so Caddy no longer points at what it stops;
+//  5. remove images retention no longer keeps (ADR-0006), after the
+//     cleanup, so the containers that used them are gone.
 func (r *Reconciler) Pass(ctx context.Context) {
 	warn := func(msg string, err error) {
 		if ctx.Err() == nil {
@@ -110,6 +119,11 @@ func (r *Reconciler) Pass(ctx context.Context) {
 	}
 	if removed, err := r.Janitor.Sweep(ctx, time.Now()); err != nil {
 		warn(fmt.Sprintf("container cleanup incomplete (%d removed)", len(removed)), err)
+	}
+	if r.Images != nil {
+		if removed, err := r.Images.Prune(ctx); err != nil {
+			warn(fmt.Sprintf("image retention incomplete (%d removed)", len(removed)), err)
+		}
 	}
 }
 

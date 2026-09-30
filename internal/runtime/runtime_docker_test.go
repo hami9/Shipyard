@@ -421,6 +421,71 @@ func TestImageExists(t *testing.T) {
 	}
 }
 
+// P3.4: retention lists and removes only images Shipyard built, tagged or
+// left untagged by a rebuild. An image a stopped container uses stays
+// (ErrInUse); a foreign image is refused; a missing one is not an error.
+func TestRemoveImage(t *testing.T) {
+	r := newRuntime(t)
+	ctx := t.Context()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\nCOPY x /x\nCMD [\"/x\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "x"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tag := "shipyard-test/retention:" + strings.ToLower(rand.Text()[:8])
+	build := func(name, label string) string {
+		t.Helper()
+		id := dockerOut(t, "build", "-q", "--label", labelManaged+"=true", "--label", "test="+label, "-t", tag+name, dir)
+		t.Cleanup(func() { exec.Command("docker", "image", "rm", "--force", id).Run() })
+		return id
+	}
+	used, old, current := build("u", "used"), build("t", "old"), build("c", "current")
+	// Moving the tag leaves old untagged, as a rebuild of the same commit
+	// with buildx --load does. (The docker driver's build would delete it.)
+	dockerOut(t, "tag", current, tag+"t")
+	container := dockerOut(t, "create", "--network", "none", used)
+	t.Cleanup(func() { exec.Command("docker", "rm", "--force", container).Run() })
+
+	list, err := r.ListImages(ctx)
+	if err != nil || !slices.Contains(list, used) || !slices.Contains(list, old) || !slices.Contains(list, current) || slices.Contains(list, probeImage) {
+		t.Fatalf("ListImages = %v, %v; want the three managed images, not the probe", list, err)
+	}
+	// current now has two tags: Docker refuses it by ID, and it stays.
+	if err := r.RemoveImage(ctx, current); !errors.Is(err, ErrInUse) {
+		t.Fatalf("image with two tags: %v, want ErrInUse", err)
+	}
+	// Removing the other name only untags it.
+	dockerOut(t, "image", "rm", tag+"c")
+	for _, id := range []string{old, current, old} { // the second time old is gone
+		if err := r.RemoveImage(ctx, id); err != nil {
+			t.Fatalf("remove %.19s: %v", id, err)
+		}
+		if ok, _ := r.ImageExists(ctx, id); ok {
+			t.Fatalf("%.19s still exists", id)
+		}
+	}
+	if err := r.RemoveImage(ctx, used); !errors.Is(err, ErrInUse) {
+		t.Fatalf("image of a stopped container: %v, want ErrInUse", err)
+	}
+	if err := r.RemoveImage(ctx, probeImage); !errors.Is(err, ErrNotManaged) {
+		t.Fatalf("foreign image: %v, want ErrNotManaged", err)
+	}
+	if err := r.RemoveImage(ctx, "shipyard/web:abc"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a tag: %v, want ErrInvalid", err)
+	}
+	for _, id := range []string{used, probeImage} {
+		if ok, _ := r.ImageExists(ctx, id); !ok {
+			t.Fatalf("%.19s was removed", id)
+		}
+	}
+	dockerOut(t, "rm", container)
+	if err := r.RemoveImage(ctx, used); err != nil {
+		t.Fatalf("once its container is gone: %v", err)
+	}
+}
+
 // The janitor sees Shipyard's app containers, running or not, and nothing
 // else: not foreign containers, not ones with a forged managed label.
 func TestListManaged(t *testing.T) {

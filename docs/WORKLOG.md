@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); `rollback` (P3.3). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.3: the rollback operation (`shipyard rollback`), with the rotated-secrets choice and the image check |
-| **Next task** | P3.4: the retention job per ADR-0006 (images, the BuildKit cache cap, the operation event cap) |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); `retention` (P3.4a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.4a: image retention (the active image plus the last `SHIPYARD_RETAIN_IMAGES` earlier releases' per app) |
+| **Next task** | P3.4b: the BuildKit cache cap and the operation event cap (ADR-0006) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
-| **Last updated** | 2026-09-29 |
+| **Last updated** | 2026-09-30 |
 
 ## Entry template
 
@@ -53,6 +53,37 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-09-30: P3.4a image retention
+
+- **Phase / task:** P3.4a: image retention per ADR-0006 (P3.4 split: P3.4b is the build cache and event caps)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`store.PrunableImages(present, keep)`:** of the images present on the host, those a deployment here recorded and retention does not keep. Kept per app: the active image, the last `keep` superseded images ranked by when each last served (an image served twice counts once), images of deployments in progress, and the target of a queued or running rollback.
+- **`app.ImagePruner`:** lists managed images, asks the store, removes. An image in use stays for a later pass; other failures are joined.
+- **`runtime.ListImages`** (by the `io.shipyard.managed` label, so untagged images are included) and **`runtime.RemoveImage`** (managed images only, never forced; `ErrInUse` on a 409).
+- **Reconciler step 5**, after the janitor. **Config:** `SHIPYARD_RETAIN_IMAGES` (default 5, 0–1000).
+- **e2e cleanup** now removes the app's images by label. The name filter missed untagged ones: 43 images from earlier e2e runs were left on the owner's machine (not removed; see Next).
+
+**Decisions**
+- **Rank by distinct image, not by deployment row:** rolling back and forth between two releases would otherwise use up the rollback depth.
+- **Run every reconcile pass,** not daily: one list and one query, and disk frees soon after a failed deploy. The BuildKit prune (P3.4b) stays daily per ADR-0006.
+- **An image the database never recorded is never removed,** as with containers (P2.6). This also covers the window between a build and `RecordImage`.
+
+**Verification** (WSL2, Engine 29.8.1 with the containerd image store, PostgreSQL 18)
+- `make lint` (after two gofmt fixes), `make test`, `make test-integration`: all ok (`TestLeaseHandover` failed once in an earlier run: the known pre-existing flake).
+  - Unit: `TestImagePrune` (the in-use image kept quietly, another failure reported without stopping the pass), `TestImagePruneNothing`, `TestPass` (step 5 after the sweep), `TestLoadWorkerRetainImages`.
+  - Integration: `TestPrunableImages`: keep 2/0/5, per-app ranking, a twice-served image counted once, the active and in-progress images kept, only present and recorded images returned, and a queued rollback's target kept.
+- Docker: `TestRemoveImage` (a tagged and an untagged image removed; a stopped container's image and a twice-tagged one kept as `ErrInUse`; a foreign image `ErrNotManaged`; a tag `ErrInvalid`; a missing image ok), `TestImageExists`, `TestListManaged`: ok.
+- `make test-e2e` with `SHIPYARD_RETAIN_IMAGES=1`, first run: the retention checks passed (the two failed deploys' images removed, the active and previous ones kept). The run then failed later in the P3.2 restore step: the recreated container had stopped by the time the test ran `docker stop`, just after a `docker rm --force` the reconciler had raced ("marked for removal"). No retention action ran then. The test now logs the container's state if this happens again. Rerun: see the PR.
+
+**Problems / surprises**
+- On the containerd image store, `docker build` on the `docker` driver deletes the image whose tag it takes over; `docker tag` and `buildx build --load` leave it untagged. My first Docker test relied on the former and failed. Recorded as `DK-RMI`.
+
+**Next**
+- P3.4b: `buildx prune --max-used-space` daily (flag verified on buildx 0.37.1; `--keep-storage` no longer exists) and the operation event cap.
+- Owner: remove the 43 leftover untagged images of `e2e-*` apps if wanted (only those whose `io.shipyard.app` label starts with `e2e-`).
 
 ### 2026-09-30: P3.3 rollback
 

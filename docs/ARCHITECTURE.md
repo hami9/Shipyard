@@ -142,6 +142,13 @@ The model is PostgreSQL-first, implemented in [`migrations/0002_schema_v1.sql`](
 
 **Retention** is explicit and configurable. By default, Shipyard keeps the images of the last 5 successful deployments per app, keeps all deployment rows, and caps the BuildKit cache (ADR-0006).
 
+- As implemented for images (P3.4a, `app.ImagePruner`, Reconciler step 5):
+  - **Kept:** per app, the active release's image, and the images of the last `SHIPYARD_RETAIN_IMAGES` (default 5) superseded releases, ranked by when each image last served. An image served twice (a rollback to it) counts once. Also kept: images of deployments still in progress, and the target of a queued or running rollback.
+  - **Removed:** every other image a deployment in this database recorded, including failed deploys' images and older releases'. Rebuilding a commit leaves the previous image untagged (`DK-RMI`), so images are listed by the `io.shipyard.managed` label, not by name.
+  - **Never touched:** an image no deployment here recorded. It belongs to another installation, or to a build whose ID is not persisted yet.
+  - **Removal is never forced.** Docker keeps an image a container uses, running or stopped, or one with a second tag (`DK-RMI`), and the next pass tries again. A second tag is an operator's way to keep an image.
+  - The consequence: a rollback to an older release is "unavailable" (P3.3). The history keeps the row.
+
 ## 5. Deployment lifecycle
 
 ```mermaid
@@ -255,7 +262,7 @@ Rollback is a new operation with `kind = rollback` that targets a prior successf
 
 ### Reconciler
 
-The reconciler runs at worker start and then every 60 s by default. Since P3.2 it is `internal/reconcile`, and one pass runs step 1, the restore part of step 2, step 3, and then the janitor part of step 2. Each step carries on past a failing item.
+The reconciler runs at worker start and then every 60 s by default. Since P3.2 it is `internal/reconcile`, and one pass runs step 1, the restore part of step 2, step 3, the janitor part of step 2, and then step 5. Each step carries on past a failing item.
 
 1. Re-queue operations whose leases expired; the next claim increments `attempt` (step 2 of §5). Once `max_attempts` is reached, mark them failed, together with their in-progress deployment, in the same statement, so step 2 removes its container.
 2. List containers labelled `io.shipyard.managed=true`. Remove orphaned candidates, and recreate a missing active container from its image ID.
@@ -271,6 +278,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
    - Not yet: removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
 3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
+5. Since P3.4a: remove the images retention no longer keeps (§4, Retention). It runs last, after the janitor, so the containers that used them are gone.
 
 ## 6. API and CLI shape
 

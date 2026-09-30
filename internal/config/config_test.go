@@ -261,6 +261,19 @@ func TestLoadWorkerObservationWindow(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerRetainImages(t *testing.T) {
+	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
+		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))
+		if err != nil || cfg.RetainImages != want {
+			t.Errorf("%q = %d, %v; want %d", value, cfg.RetainImages, err, want)
+		}
+	}
+	for _, bad := range []string{"-1", "1001", "five", "2.5"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: bad}))
+		checkErr(t, err, EnvRetainImages)
+	}
+}
+
 func TestLoadWorkerCaddy(t *testing.T) {
 	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
 	if err != nil {

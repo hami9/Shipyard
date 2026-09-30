@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Deployment statuses (ARCHITECTURE §5).
@@ -201,6 +203,47 @@ func (s *Store) ReplaceContainer(ctx context.Context, id, old, container string)
 		return fmt.Errorf("%w: deployment %s is no longer active with container %.12s", ErrConflict, id, old)
 	}
 	return nil
+}
+
+// PrunableImages returns which of the present image IDs retention may
+// remove (ADR-0006): those a deployment in this database recorded, except
+//   - the images of each app's last keep releases that served traffic
+//     (superseded; an image served several times counts once),
+//   - the active release's image,
+//   - images of deployments still in progress,
+//   - the target image of a queued or running rollback.
+//
+// An image no deployment here recorded is never returned: it belongs to
+// another installation, or a build whose ID is not persisted yet.
+func (s *Store) PrunableImages(ctx context.Context, present []string, keep int) ([]string, error) {
+	rows, err := s.q.Query(ctx, `
+		WITH served AS (
+			SELECT app_id, image_id, max(coalesce(active_at, created_at)) AS last_served
+			FROM deployments
+			WHERE status = 'superseded' AND image_id IS NOT NULL
+			GROUP BY app_id, image_id
+		), ranked AS (
+			SELECT image_id, row_number() OVER (PARTITION BY app_id ORDER BY last_served DESC, image_id) AS n
+			FROM served
+			WHERE image_id NOT IN (SELECT image_id FROM deployments WHERE status = 'active')
+		), kept AS (
+			SELECT image_id FROM ranked WHERE n <= $2
+			UNION
+			SELECT image_id FROM deployments
+			WHERE image_id IS NOT NULL AND status NOT IN ('superseded', 'failed', 'cancelled')
+			UNION
+			SELECT d.image_id FROM operations o
+			JOIN deployments d ON d.app_id = o.app_id AND d.id::text = o.payload->>'target'
+			WHERE o.kind = 'rollback' AND o.status IN ('queued', 'running') AND d.image_id IS NOT NULL
+		)
+		SELECT DISTINCT image_id FROM deployments
+		WHERE image_id = ANY($1) AND image_id NOT IN (SELECT image_id FROM kept)
+		ORDER BY image_id`, present, keep)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	return ids, mapError(err)
 }
 
 // ActiveDeployment returns the app's serving deployment, or ErrNotFound.

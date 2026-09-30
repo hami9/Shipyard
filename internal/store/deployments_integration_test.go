@@ -5,6 +5,7 @@ package store_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -301,4 +302,64 @@ func TestFailDeployment(t *testing.T) {
 	if err := f.s.RecordImage(ctx, d.ID, "w1", testImage, nil); !errors.Is(err, store.ErrLeaseLost) {
 		t.Fatalf("write after failure: %v", err)
 	}
+}
+
+// P3.4: retention keeps each app's active image, the images of its last
+// keep superseded releases (an image served twice counts once, at its
+// latest), images of deployments in progress, and a pending rollback's
+// target. It returns only images a deployment here recorded.
+func TestPrunableImages(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	img := func(n int) string { return "sha256:" + strings.Repeat(fmt.Sprintf("%02x", n), 32) }
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	dep := func(app, status string, image, hour int) string {
+		t.Helper()
+		var opID, id string
+		if err := f.db.QueryRow(ctx, `INSERT INTO operations (app_id, kind, idempotency_key, status, finished_at)
+			VALUES ($1, 'deploy', $2, 'succeeded', now()) RETURNING id`, app, "k-"+uniq()).Scan(&opID); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.db.QueryRow(ctx, `INSERT INTO deployments (app_id, operation_id, kind, source_commit_sha, image_id,
+				container_id, status, active_at, failure_reason)
+			VALUES ($1, $2, 'build', $3, $4, $5, $6, $7, CASE WHEN $6 = 'failed' THEN 'x' END) RETURNING id`,
+			app, opID, testSHA, img(image), testContainer, status, base.Add(time.Duration(hour)*time.Hour)).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a, b := f.app(), f.app()
+	first := dep(a, "superseded", 1, 1)
+	dep(a, "superseded", 2, 2)
+	dep(a, "superseded", 3, 3)
+	dep(a, "superseded", 2, 4) // image 2 served again (a rollback), latest
+	dep(a, "active", 5, 5)
+	dep(a, "superseded", 5, 0) // the active image, served before too
+	dep(a, "failed", 6, 6)
+	dep(a, "building", 7, 7)
+	dep(b, "superseded", 8, 0) // another app's last release
+	// Image 9 is not recorded here.
+	present := []string{img(1), img(2), img(3), img(5), img(6), img(7), img(8), img(9)}
+
+	check := func(present []string, keep int, want ...int) {
+		t.Helper()
+		got, err := f.s.PrunableImages(ctx, present, keep)
+		var wantIDs []string
+		for _, n := range want {
+			wantIDs = append(wantIDs, img(n))
+		}
+		if err != nil || strings.Join(got, ",") != strings.Join(wantIDs, ",") {
+			t.Fatalf("keep %d: prunable = %v, %v; want images %v", keep, got, err, want)
+		}
+	}
+	check(present, 2, 1, 6)
+	check(present, 0, 1, 2, 3, 6, 8)
+	check(present, 5, 6)
+	check([]string{img(3), img(9)}, 2)    // only what is present
+	check([]string{img(1), img(9)}, 2, 1) // an unknown image never
+
+	// A queued rollback to the first release keeps its image.
+	f.sql(`INSERT INTO operations (app_id, kind, idempotency_key, payload)
+		VALUES ($1, 'rollback', $2, jsonb_build_object('target', $3::text))`, a, "rb-"+uniq(), first)
+	check(present, 2, 6)
 }

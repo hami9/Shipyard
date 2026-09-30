@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -48,6 +49,7 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	}
 	h.wantOp(op1, "succeeded", "")
 	first := h.onlyRunning()
+	firstImage := h.docker("inspect", "--format", "{{.Image}}", first)
 	if got := h.docker("inspect", "--format", `{{index .Config.Labels "io.shipyard.commit"}}`, first); got != h.repo.good {
 		t.Fatalf("running commit %s, want the pinned %s", got, h.repo.good)
 	}
@@ -179,6 +181,11 @@ func TestPhase1ExitCriteria(t *testing.T) {
 			t.Fatalf("after the switch caddy serves %q on %s, want the second container %s", got, hn, second[:12])
 		}
 	}
+	// P3.4: image retention (1 earlier release here) removes the images of
+	// the failed deploys of steps 4 and 4b; the active release's and the
+	// superseded first release's (the rollback target) stay.
+	secondImage := h.docker("inspect", "--format", "{{.Image}}", second)
+	h.waitImages(firstImage, secondImage)
 	// P3.2: the reconciler brings the active release back. A container that
 	// is gone is recreated from the deployment's image and environment under
 	// the same name, so Caddy reaches it without a config change; a stopped
@@ -192,7 +199,11 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if got := h.viaCaddy(host, "/env?key=GREETING"); got != "hello from e2e" {
 		t.Fatalf("recreated container: GREETING through caddy = %q", got)
 	}
-	h.docker("stop", "--time", "1", third)
+	if out, err := exec.Command("docker", "stop", "--timeout", "1", third).CombinedOutput(); err != nil {
+		state, _ := exec.Command("docker", "inspect", "--format", "{{json .State}} restarts={{.RestartCount}}", third).CombinedOutput()
+		logs, _ := exec.Command("docker", "logs", "--tail", "20", third).CombinedOutput()
+		t.Fatalf("docker stop %s: %v\n%s\nstate: %s\nlogs:\n%s", third[:12], err, out, state, logs)
+	}
 	if got := h.waitRunning(func(string) bool { return true }); got != third {
 		t.Fatalf("a stopped active container came back as %s, want %s started again", got, third)
 	}
@@ -255,6 +266,9 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if rel := h.cli("", "releases", slug, "--limit", "1"); !strings.Contains(rel, "active") || !strings.Contains(rel, "rollback of "+firstDep) {
 		t.Fatalf("history after the rollback:\n%s", rel)
 	}
+	// The rollback runs the first image again; the second release is now
+	// the one earlier release retention keeps.
+	h.waitImages(firstImage, secondImage)
 	// A removed hostname leaves Caddy at the next sync: no route, no certificate.
 	h.cli("", "domain", "remove", slug, extra)
 	h.gone(extra)
@@ -302,7 +316,9 @@ func start(t *testing.T) *harness {
 			exec.Command("docker", "rm", "--force", "--volumes", id).Run()
 		}
 		exec.Command("docker", "network", "rm", "shipyard-app-"+h.slug).Run()
-		out, _ = exec.Command("docker", "image", "ls", "-q", "shipyard/"+h.slug).Output()
+		// By label: a rebuild of the same commit leaves the previous image
+		// untagged, out of reach of a name filter.
+		out, _ = exec.Command("docker", "image", "ls", "-a", "-q", "--no-trunc", "--filter", "label=io.shipyard.app="+h.slug).Output()
 		for _, id := range strings.Fields(string(out)) {
 			exec.Command("docker", "image", "rm", "--force", id).Run()
 		}
@@ -347,7 +363,8 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
-		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s"), "shipyard-worker", "run")
+		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
+		"SHIPYARD_RETAIN_IMAGES=1"), "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h
@@ -619,6 +636,21 @@ func (h *harness) waitRunning(ok func(id string) bool) string {
 	}
 	h.t.Fatalf("running containers of %s: %v", h.slug, ids)
 	return ""
+}
+
+// waitImages waits until the app's images on the host are exactly want.
+func (h *harness) waitImages(want ...string) {
+	h.t.Helper()
+	slices.Sort(want)
+	var got []string
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		got = strings.Fields(h.docker("image", "ls", "-a", "-q", "--no-trunc", "--filter", "label=io.shipyard.app="+h.slug))
+		slices.Sort(got)
+		if got = slices.Compact(got); slices.Equal(got, want) {
+			return
+		}
+	}
+	h.t.Fatalf("images of %s: %v, want %v", h.slug, got, want)
 }
 
 // onlyRunning returns the app's one running container.

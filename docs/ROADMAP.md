@@ -166,7 +166,9 @@ flowchart LR
   - Uses the target's image ID and environment revision.
   - Returns "unavailable" if the image is gone.
   - Warns about rotated secrets and offers `--with-current-config`.
-- [ ] **P3.4** Retention job per ADR-0006: images, the BuildKit cache cap, and the operation event cap.
+- [ ] **P3.4** Retention job per ADR-0006, split in two:
+  - [x] **P3.4a** Images: per app, the active release's and the last `SHIPYARD_RETAIN_IMAGES` (default 5) earlier releases' images are kept; other images this database recorded are removed, never forced. Reconciler step 5.
+  - [ ] **P3.4b** The BuildKit cache cap (daily `buildx prune` down to 10 GB) and the operation event cap (the last 20 operations per app, 5 MB each).
 - [ ] **P3.5** Backup:
   - `pg_dump -Fc` and a Caddy data tarball to target A, and the KEK to separate target B.
   - Run by systemd timers.

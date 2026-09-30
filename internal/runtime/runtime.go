@@ -410,6 +410,56 @@ func (r *Runtime) ImageExists(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
+// ErrInUse: Docker refuses to remove an image without force (409): a
+// container still uses it, or it has more than one tag [DK-RMI].
+var ErrInUse = errors.New("image in use")
+
+// ListImages returns the IDs of the images Shipyard built (by label),
+// tagged or not.
+func (r *Runtime) ListImages(ctx context.Context) ([]string, error) {
+	res, err := r.cli.ImageList(ctx, client.ImageListOptions{
+		Filters: make(client.Filters).Add("label", labelManaged+"=true"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list images: %w", err)
+	}
+	var out []string
+	for _, img := range res.Items {
+		if imageIDRE.MatchString(img.ID) {
+			out = append(out, img.ID)
+		}
+	}
+	return out, nil
+}
+
+// RemoveImage deletes an image Shipyard built, with its tag, never forced:
+// an image a container uses, running or stopped, or one an operator tagged
+// again, stays and is ErrInUse. A missing image is not an error.
+func (r *Runtime) RemoveImage(ctx context.Context, id string) error {
+	if !imageIDRE.MatchString(id) {
+		return fmt.Errorf("%w: image must be an Engine image ID, got %q", ErrInvalid, id)
+	}
+	got, err := r.cli.ImageInspect(ctx, id)
+	switch {
+	case cerrdefs.IsNotFound(err):
+		return nil
+	case err != nil:
+		return fmt.Errorf("inspect image %s: %w", id, err)
+	case got.Config == nil || got.Config.Labels[labelManaged] != "true":
+		return fmt.Errorf("image %s: %w", id, ErrNotManaged)
+	}
+	// Ours have one tag, shipyard/<slug>:<sha12>, or none once a rebuild
+	// moved it; a second tag is someone's intent to keep it [DK-RMI].
+	_, err = r.cli.ImageRemove(ctx, id, client.ImageRemoveOptions{PruneChildren: true})
+	switch {
+	case err == nil, cerrdefs.IsNotFound(err):
+		return nil
+	case cerrdefs.IsConflict(err):
+		return fmt.Errorf("remove image %s: %w: %w", id, ErrInUse, err)
+	}
+	return fmt.Errorf("remove image %s: %w", id, err)
+}
+
 // Managed is one of Shipyard's app containers, as the reconciler sees it.
 type Managed struct {
 	ID           string

@@ -35,6 +35,7 @@ All notable changes to Shipyard are recorded here.
   - If a secret changed since, the rollback is refused and names the keys. Pick `--with-old-config` or `--with-current-config`.
   - If the image is gone from the host, the rollback fails at once as unavailable.
   - `shipyard releases` marks it "rollback of …".
+- **Image retention:** the worker removes images a rollback can no longer need. Each app keeps the running release's image and those of its last `SHIPYARD_RETAIN_IMAGES` (default 5) earlier releases; failed deploys' images and older ones go. Images a container still uses stay, and images Shipyard did not record are never touched.
 - **Self-healing:** the worker brings the running release back when its container disappears. It recreates the container from the same image and environment, or starts it if it was stopped. The check runs within `SHIPYARD_RECONCILE_INTERVAL`, and no change to Caddy is needed.
 - **Release history:** `shipyard releases APP [--limit N] [--before ID]` (`GET /v1/apps/{app}/deployments`) lists an app's deployments, newest first, with commit, image ID, environment revision, status, and failure reason. Pages continue with `--before`.
 - **Published API:** set `SHIPYARD_API_HOSTNAME` and Caddy serves the API there over HTTPS (HTTP/2): `/v1/*` and `/hooks/github` only. The API must listen on a Unix socket (`SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock`, now in `shipyard.env` for both services), which the worker mounts read-only into Caddy. Apps cannot take the API's hostname.

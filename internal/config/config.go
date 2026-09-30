@@ -53,6 +53,7 @@ const (
 	EnvReconcileInterval  = "SHIPYARD_RECONCILE_INTERVAL"
 	EnvObservationWindow  = "SHIPYARD_OBSERVATION_WINDOW"
 	EnvWorkerSocket       = "SHIPYARD_WORKER_SOCKET"
+	EnvRetainImages       = "SHIPYARD_RETAIN_IMAGES"
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
 	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
@@ -78,6 +79,10 @@ const (
 	DefaultCaddyAdminDir     = "/run/shipyard/caddy"
 	// DefaultWorkerSocket is in the worker's systemd RuntimeDirectory (ADR-0008).
 	DefaultWorkerSocket = "/run/shipyard-worker/logs.sock"
+	// DefaultRetainImages is how many earlier releases per app keep their
+	// image for rollback, besides the active one (ADR-0006).
+	DefaultRetainImages = 5
+	maxRetainImages     = 1000
 	minPollInterval     = 100 * time.Millisecond
 )
 
@@ -164,6 +169,9 @@ type Worker struct {
 	// after a switch before the reconciler stops it gracefully. 0 stops it
 	// at the next reconcile.
 	ObservationWindow time.Duration
+	// RetainImages is how many earlier releases per app keep their image
+	// (rollback targets); 0 keeps only the active release's.
+	RetainImages int
 	// WorkDir holds one checkout per running operation (mode 0700).
 	WorkDir string
 	// SourceBaseURL is where repositories are cloned from: https, or
@@ -277,6 +285,15 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 			r.fail(EnvObservationWindow, fmt.Errorf("%q must be a duration between 0s and 24h", s))
 		} else {
 			cfg.ObservationWindow = d
+		}
+	}
+	cfg.RetainImages = DefaultRetainImages
+	if s := r.str(EnvRetainImages, ""); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 || n > maxRetainImages {
+			r.fail(EnvRetainImages, fmt.Errorf("%q must be a number between 0 and %d", s, maxRetainImages))
+		} else {
+			cfg.RetainImages = n
 		}
 	}
 	if !filepath.IsAbs(cfg.WorkDir) {
