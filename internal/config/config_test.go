@@ -287,6 +287,47 @@ func TestLoadWorkerRetention(t *testing.T) {
 	}
 }
 
+// P3.5: the backup targets must be separate from each other and from the
+// live KEK directory (ADR-0005, ADR-0006).
+func TestLoadWorkerBackup(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	want := Backup{Dir: "/var/backups/shipyard", KEKDir: "/var/backups/shipyard-kek", PGDump: "pg_dump", KeepDaily: 14, KeepWeekly: 8}
+	if err != nil || cfg.Backup != want {
+		t.Fatalf("defaults = %+v, %v", cfg.Backup, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/b",
+		EnvBackupHook: "rclone copy $SHIPYARD_BACKUP_PATH a:", EnvBackupKEKHook: "true", EnvBackupKeepDaily: "3", EnvBackupKeepWeekly: "0",
+		EnvBackupPGDump: "/usr/lib/postgresql/18/bin/pg_dump"}))
+	want = Backup{Dir: "/mnt/a", KEKDir: "/mnt/b", Hook: "rclone copy $SHIPYARD_BACKUP_PATH a:", KEKHook: "true",
+		PGDump: "/usr/lib/postgresql/18/bin/pg_dump", KeepDaily: 3, KeepWeekly: 0}
+	if err != nil || cfg.Backup != want {
+		t.Fatalf("set = %+v, %v", cfg.Backup, err)
+	}
+	for name, tc := range map[string]struct {
+		vars map[string]string
+		key  string
+	}{
+		"relative":            {map[string]string{EnvBackupDir: "backups"}, EnvBackupDir},
+		"root":                {map[string]string{EnvBackupKEKDir: "/"}, EnvBackupKEKDir},
+		"unclean":             {map[string]string{EnvBackupDir: "/mnt/a/../b"}, EnvBackupDir},
+		"same":                {map[string]string{EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/a"}, EnvBackupKEKDir},
+		"keys inside data":    {map[string]string{EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/a/kek"}, EnvBackupKEKDir},
+		"data inside keys":    {map[string]string{EnvBackupDir: "/mnt/b/data", EnvBackupKEKDir: "/mnt/b"}, EnvBackupKEKDir},
+		"data in live keys":   {map[string]string{EnvBackupDir: "/etc/shipyard/kek/backup"}, EnvBackupDir},
+		"live keys in data":   {map[string]string{EnvBackupDir: "/etc/shipyard"}, EnvBackupDir},
+		"backup is live keys": {map[string]string{EnvBackupKEKDir: "/etc/shipyard/kek"}, EnvBackupKEKDir},
+		"relative pg_dump":    {map[string]string{EnvBackupPGDump: "bin/pg_dump"}, EnvBackupPGDump},
+		"no dailies":          {map[string]string{EnvBackupKeepDaily: "0"}, EnvBackupKeepDaily},
+		"weeklies":            {map[string]string{EnvBackupKeepWeekly: "-1"}, EnvBackupKeepWeekly},
+	} {
+		tc.vars[EnvDatabaseURL] = testDB
+		_, err := LoadWorker(env(tc.vars))
+		if err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s: err = %v, want %s", name, err, tc.key)
+		}
+	}
+}
+
 func TestParseSize(t *testing.T) {
 	for s, want := range map[string]int64{"1": 1, "4096": 4096, "1k": 1024, "10g": 10 << 30, "10GB": 10 << 30, "1t": 1 << 40, "1024t": 1 << 50} {
 		if got, ok := parseSize(s); !ok || got != want {

@@ -282,6 +282,59 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if n := h.docker("ps", "-aq", "--filter", "label=io.shipyard.app="+slug); strings.Count(n, "\n") != 0 {
 		t.Fatalf("leftover containers of %s:\n%s", slug, n)
 	}
+	h.checkBackup()
+}
+
+// checkBackup runs `shipyard-worker backup` beside the running worker
+// (P3.5): target A gets a pg_dump archive that pg_restore can read, Caddy's
+// data with its CA, and a manifest; target B gets the KEK; the hook sees the
+// new backup. pg_dump and pg_restore come from the postgres:18 image, as the
+// test host has no PostgreSQL client.
+func (h *harness) checkBackup() {
+	t := h.t
+	t.Helper()
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	pgDump := filepath.Join(dir, "pg_dump")
+	script := "#!/bin/sh\nexec docker run --rm -i --network host -e PGPASSWORD postgres:18 pg_dump \"$@\"\n"
+	if err := os.WriteFile(pgDump, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := run(t, dir, append(slices.Clone(h.workerEnv), "SHIPYARD_BACKUP_DIR="+a, "SHIPYARD_BACKUP_KEK_DIR="+b,
+		"SHIPYARD_BACKUP_PG_DUMP="+pgDump, "SHIPYARD_BACKUP_HOOK=ls \"$SHIPYARD_BACKUP_PATH\" > "+filepath.Join(dir, "hook")),
+		h.bin+"/shipyard-worker", "backup")
+	backups, _ := os.ReadDir(a)
+	if len(backups) != 1 {
+		t.Fatalf("target A has %d backups:\n%s", len(backups), out)
+	}
+	one := filepath.Join(a, backups[0].Name())
+	dump, err := os.ReadFile(filepath.Join(one, "database.dump"))
+	if err != nil || !bytes.HasPrefix(dump, []byte("PGDMP")) {
+		t.Fatalf("database.dump: %v, starts %q", err, dump[:min(len(dump), 8)])
+	}
+	list := exec.Command("docker", "run", "--rm", "-i", "postgres:18", "pg_restore", "--list")
+	list.Stdin = bytes.NewReader(dump)
+	toc, err := list.CombinedOutput()
+	for _, table := range []string{"deployments", "secret_values", "routes", "operation_events"} {
+		if err != nil || !bytes.Contains(toc, []byte("TABLE DATA public "+table+" ")) {
+			t.Fatalf("pg_restore --list lacks %s: %v\n%s", table, err, toc)
+		}
+	}
+	caddy := run(t, one, nil, "tar", "-tzf", "caddy-data.tar.gz")
+	if !strings.Contains(caddy, "data/caddy/pki/authorities/local/root.crt") {
+		t.Fatalf("caddy data lacks the local CA:\n%s", caddy)
+	}
+	manifest, _ := os.ReadFile(filepath.Join(one, "manifest.json"))
+	if !bytes.Contains(manifest, []byte(`"e2e"`)) || !bytes.Contains(manifest, []byte(`"database.dump"`)) {
+		t.Fatalf("manifest:\n%s", manifest)
+	}
+	want, _ := os.ReadFile(filepath.Join(h.kek, "e2e.key"))
+	if got, err := os.ReadFile(filepath.Join(b, "e2e.key")); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("target B: %v", err)
+	}
+	if hook, _ := os.ReadFile(filepath.Join(dir, "hook")); !bytes.Contains(hook, []byte("manifest.json")) {
+		t.Fatalf("the hook saw %q", hook)
+	}
 }
 
 // apiHost is the name Caddy publishes the API on (P2.8).
@@ -299,6 +352,11 @@ type harness struct {
 	ops    []string // every operation deployed, for dumpEvents
 	opRE   *regexp.Regexp
 	status *regexp.Regexp
+
+	// workerEnv is the running worker's environment, for `shipyard-worker
+	// backup`; kek is its KEK directory.
+	workerEnv []string
+	kek       string
 }
 
 type repo struct{ good, offBranch string }
@@ -366,12 +424,14 @@ func start(t *testing.T) *harness {
 
 	h.spawn("api", append(common, "SHIPYARD_DNS_PREFLIGHT=false"), "shipyard-api", "serve")
 	waitUnix(t, apiSock)
-	h.spawn("worker", append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
+	h.kek = kek
+	h.workerEnv = append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
-		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2"), "shipyard-worker", "run")
+		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2")
+	h.spawn("worker", h.workerEnv, "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h

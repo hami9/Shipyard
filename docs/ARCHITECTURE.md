@@ -438,6 +438,15 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 - Persist operation phases, use leases with expiry, and treat duplicate events as normal.
 - Monitor disk usage for images, the build cache, and logs.
 - Back up PostgreSQL nightly with `pg_dump -Fc`, and back up the KEK and the Caddy data directory to separate off-host locations.
+  - As implemented (P3.5, `shipyard-worker backup`, `internal/backup`), run nightly by `shipyard-backup.timer`:
+    - **Target A** (`SHIPYARD_BACKUP_DIR`): one directory per backup, named by its UTC time. It holds `database.dump` (`pg_dump --format=custom`, consistent while the database is in use `[PG-DUMP]`), `caddy-data.tar.gz` (the Caddy container's `/data`, read through Docker's archive API `[DK-CP]`), and `manifest.json` (sizes, SHA-256 checksums, and the IDs of the KEKs the dump needs).
+    - **Target B** (`SHIPYARD_BACKUP_KEK_DIR`): the KEK files. A key is only ever added: a retired KEK stays, and a KEK whose bytes changed under the same ID is an error, not an overwrite.
+    - **Separation.** A and B must not contain one another or the live KEK directory, so no single location holds both the ciphertext and its keys (ADR-0005). The config refuses anything else.
+    - **Off-host.** After each target is written, an optional command (`SHIPYARD_BACKUP_HOOK`, `SHIPYARD_BACKUP_KEK_HOOK`) copies it away; it gets `SHIPYARD_BACKUP_PATH` and never the database URL. The two hooks should point at different remote locations.
+    - **Whole or absent.** A backup appears under its final name only once every file and the manifest are written. A failed dump or archive leaves nothing behind and removes no older backup.
+    - **Rotation** of target A: the newest backup of each of the last 14 days and of each of the last 8 ISO weeks (`SHIPYARD_BACKUP_KEEP_DAILY`, `SHIPYARD_BACKUP_KEEP_WEEKLY`). It runs after every successful backup, even when the hook fails.
+    - **Secrets.** Files are readable by their owner only. The database password reaches pg_dump through `PGPASSWORD`, never its command line `[PG-DUMP]`.
+    - **Not included:** images (ADR-0006) and `shipyard.env`. The restore runbook (P3.6) recreates the latter.
 - Restores are **tested**, not assumed.
 
 **Observability**

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/netip"
@@ -289,6 +290,30 @@ func (r *Runtime) attachEdge(ctx context.Context, edge, netName string) error {
 	}
 	if _, err := r.cli.NetworkConnect(ctx, netName, client.NetworkConnectOptions{Container: c.ID}); err != nil {
 		return fmt.Errorf("attach edge to %s: %w", netName, wrap(err))
+	}
+	return nil
+}
+
+// ArchiveEdgeData writes the edge container's /data volume (certificates,
+// their private keys, and ACME accounts [CADDY-HTTPS]) to w as a tar stream
+// rooted at data/, for backups (ADR-0006). The archive API reads volumes
+// mounted in the container, running or stopped [DK-CP].
+func (r *Runtime) ArchiveEdgeData(ctx context.Context, name string, w io.Writer) error {
+	got, err := r.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("inspect edge %s: %w", name, wrap(err))
+	}
+	c := got.Container
+	if c.Config == nil || c.Config.Labels[labelRole] != roleEdge || c.Config.Labels[labelManaged] != "true" {
+		return fmt.Errorf("container %s: %w", name, ErrNotManaged)
+	}
+	res, err := r.cli.CopyFromContainer(ctx, c.ID, client.CopyFromContainerOptions{SourcePath: "/data"})
+	if err != nil {
+		return fmt.Errorf("archive %s:/data: %w", name, wrap(err))
+	}
+	defer res.Content.Close()
+	if _, err := io.Copy(w, res.Content); err != nil {
+		return fmt.Errorf("archive %s:/data: %w", name, err)
 	}
 	return nil
 }

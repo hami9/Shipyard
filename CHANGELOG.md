@@ -36,6 +36,11 @@ All notable changes to Shipyard are recorded here.
   - If the image is gone from the host, the rollback fails at once as unavailable.
   - `shipyard releases` marks it "rollback of …".
 - **Image retention:** the worker removes images a rollback can no longer need. Each app keeps the running release's image and those of its last `SHIPYARD_RETAIN_IMAGES` (default 5) earlier releases; failed deploys' images and older ones go. Images a container still uses stay, and images Shipyard did not record are never touched.
+- **Backups:** `shipyard-worker backup`, run nightly by the new `shipyard-backup.timer`.
+  - It writes a `pg_dump` archive, Caddy's certificates and keys, and a manifest with checksums to `SHIPYARD_BACKUP_DIR`, one directory per backup. It keeps 14 dailies and 8 weeklies (`SHIPYARD_BACKUP_KEEP_DAILY`, `SHIPYARD_BACKUP_KEEP_WEEKLY`).
+  - It copies the KEK files to `SHIPYARD_BACKUP_KEK_DIR`, which must be a separate location.
+  - `SHIPYARD_BACKUP_HOOK` and `SHIPYARD_BACKUP_KEK_HOOK` are optional commands that copy each target off-host.
+  - A failed backup leaves no partial files and removes no older backup.
 - **Build cache and log caps:** at start and daily (`SHIPYARD_RETENTION_INTERVAL`), the worker prunes the build cache down to `SHIPYARD_BUILD_CACHE_MAX` (default 10 GiB). It also keeps build and deploy logs only for each app's newest `SHIPYARD_RETAIN_OPERATIONS` (default 20) operations, each capped at `SHIPYARD_OPERATION_LOG_MAX` (default 5 MiB). A capped log keeps its beginning, its end, and every warning and error, and says what was removed.
 - **Self-healing:** the worker brings the running release back when its container disappears. It recreates the container from the same image and environment, or starts it if it was stopped. The check runs within `SHIPYARD_RECONCILE_INTERVAL`, and no change to Caddy is needed.
 - **Release history:** `shipyard releases APP [--limit N] [--before ID]` (`GET /v1/apps/{app}/deployments`) lists an app's deployments, newest first, with commit, image ID, environment revision, status, and failure reason. Pages continue with `--before`.

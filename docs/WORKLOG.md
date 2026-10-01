@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.4: retention (P3.4a images; P3.4b the build cache cap and the operation event cap) |
-| **Next task** | P3.5: backup (ADR-0006) |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.5: backup (`shipyard-worker backup` and its systemd timer) |
+| **Next task** | P3.6: the restore runbook and an automated restore drill |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
-| **Last updated** | 2026-09-30 |
+| **Last updated** | 2026-10-01 |
 
 ## Entry template
 
@@ -53,6 +53,44 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-01: P3.5 backup
+
+- **Phase / task:** P3.5: backup (ADR-0006)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`shipyard-worker backup`** (`internal/backup.Job`), one run and exit:
+  - **Target A** (`SHIPYARD_BACKUP_DIR`): `<UTC time>/database.dump` (`pg_dump --format=custom`, checked for the `PGDMP` magic), `caddy-data.tar.gz`, and `manifest.json` (sizes, SHA-256, KEK IDs). It is written under `.partial-…` and renamed when whole.
+  - **Target B** (`SHIPYARD_BACKUP_KEK_DIR`): the KEK files, add-only. A KEK changed under the same ID is an error.
+  - **Hooks** (`SHIPYARD_BACKUP_HOOK`, `SHIPYARD_BACKUP_KEK_HOOK`): `sh -c` with `SHIPYARD_BACKUP_PATH`, `PATH`, and `HOME` only.
+  - **Rotation** (`backup.Expired`, pure): the newest backup of each of the last 14 days and 8 ISO weeks; after each successful backup, even if the hook fails.
+- **`runtime.ArchiveEdgeData`:** the Caddy container's `/data` through Docker's archive API; managed edge containers only.
+- **Config:** the 7 `SHIPYARD_BACKUP_*` settings. A, B, and the live KEK directory must not contain one another.
+- **Deploy:** `shipyard-backup.service` (oneshot, the worker's user, `UMask=0077`, `TimeoutStartSec=2h`, `ReadWritePaths=` for both targets) and `shipyard-backup.timer` (02:30, `Persistent=true`).
+
+**Decisions** (the first two with the owner, recorded as a note in ADR-0006)
+- **Targets are local directories with a hook each,** so Shipyard depends on no upload tool.
+- **A worker subcommand, not shell scripts.**
+- **The password goes in `PGPASSWORD`,** not on pg_dump's command line, which `ps` shows. libpq warns about `PGPASSWORD` where other users can read a process's environment; on Linux that needs ptrace access `[PG-DUMP]`.
+- **All of A or nothing:** a restore never meets a half backup. The KEK backup is independent and runs even when the data backup fails.
+- **Not in the backup:** `shipyard.env` (ADR-0006 wants its copy encrypted, which needs a tool and key this task does not add). Left for P3.6's runbook; flagged to the owner.
+- **Size:** about 1,270 lines with tests and docs (about 430 of code outside tests), well over the ~400 guide. The parts are not useful apart.
+
+**Verification** (WSL2, Engine 29.8.1, PostgreSQL 18, systemd 255 man pages)
+- `make lint` (after gofmt of `config.go` and the e2e test), `make test`, `make test-integration`: all ok.
+  - `internal/backup`: `TestRun` (the three files, owner-only modes, the manifest's checksum and KEK IDs, both hooks, no password in pg_dump's arguments, the hook's environment, or the log), `TestRunDataFails` (a failed dump, wrong output, empty output, a failed Caddy archive: nothing left in A, the older backup kept, the KEKs still copied, no hook), `TestBackupKeys` (add-only; a changed key refused and not overwritten; no keys is an error), `TestRotateAndHookFailure` (expired backups and a stale partial directory removed, other entries untouched, a hook's failure reported, the same second refused), `TestDumpCommand`, `TestExpired` (8 cases, including a same-day pair and an ISO week across the new year).
+  - `TestLoadWorkerBackup`: defaults, set values, 12 refused settings.
+- Docker: `TestArchiveEdgeData` (a 0600 file in `/data` arrives with its mode, from a running and a stopped edge; no edge is `ErrNotFound`) and `TestEdgeRefusesForeignContainer` (a foreign container is not archived): ok.
+- **`make test-e2e`: PASS (363 s).** After the deploys and the rollback, `shipyard-worker backup` beside the running worker wrote one backup: `database.dump` starts with `PGDMP`, and `pg_restore --list` (PostgreSQL 18) shows the data of `deployments`, `secret_values`, `routes`, and `operation_events`; `caddy-data.tar.gz` holds Caddy's local CA; the manifest names the KEK; target B has the same key bytes; the hook listed the new backup. No leftovers.
+- Not run: the systemd units (no install on this machine yet; P5.7). Their options are checked against the man pages (`SYSTEMD-TIMER`).
+
+**Problems / surprises**
+- Docker's docs do not say whether `docker cp` includes a mounted volume. A probe showed it does, with file modes, for a running and a stopped container (`DK-CP`).
+- The test host has no `pg_dump`. The e2e uses the `postgres:18` image through a wrapper, which is also why the job takes `SHIPYARD_BACKUP_PG_DUMP`.
+
+**Next**
+- P3.6: the restore runbook and an automated drill: `pg_restore` the dump, put back the KEKs and Caddy's data, and let the reconciler converge.
 
 ### 2026-09-30: P3.4b cache and log caps
 

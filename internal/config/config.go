@@ -58,6 +58,13 @@ const (
 	EnvOperationLogMax    = "SHIPYARD_OPERATION_LOG_MAX"
 	EnvBuildCacheMax      = "SHIPYARD_BUILD_CACHE_MAX"
 	EnvRetentionInterval  = "SHIPYARD_RETENTION_INTERVAL"
+	EnvBackupDir          = "SHIPYARD_BACKUP_DIR"
+	EnvBackupKEKDir       = "SHIPYARD_BACKUP_KEK_DIR"
+	EnvBackupHook         = "SHIPYARD_BACKUP_HOOK"
+	EnvBackupKEKHook      = "SHIPYARD_BACKUP_KEK_HOOK"
+	EnvBackupPGDump       = "SHIPYARD_BACKUP_PG_DUMP"
+	EnvBackupKeepDaily    = "SHIPYARD_BACKUP_KEEP_DAILY"
+	EnvBackupKeepWeekly   = "SHIPYARD_BACKUP_KEEP_WEEKLY"
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
 	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
@@ -95,7 +102,15 @@ const (
 	DefaultBuildCacheMax     = 10 << 30
 	DefaultRetentionInterval = 24 * time.Hour
 	maxSize                  = 1 << 50
-	minPollInterval          = 100 * time.Millisecond
+	// ADR-0006: backups go to two separate targets, A (the database and
+	// Caddy's data) and B (the KEKs); A keeps 14 dailies and 8 weeklies.
+	DefaultBackupDir        = "/var/backups/shipyard"
+	DefaultBackupKEKDir     = "/var/backups/shipyard-kek"
+	DefaultBackupPGDump     = "pg_dump"
+	DefaultBackupKeepDaily  = 14
+	DefaultBackupKeepWeekly = 8
+
+	minPollInterval = 100 * time.Millisecond
 )
 
 var (
@@ -205,6 +220,27 @@ type Worker struct {
 	BuilderMemory string
 	BuilderCPUs   float64
 	Caddy         Caddy
+	Backup        Backup
+}
+
+// Backup configures `shipyard-worker backup` (ADR-0006).
+type Backup struct {
+	// Dir is target A: one directory per backup, holding the database dump
+	// and Caddy's data. KEKDir is target B, the KEK files, kept apart so no
+	// single location holds both the ciphertext and its keys.
+	Dir    string
+	KEKDir string
+	// Hook and KEKHook are optional shell commands run after each target is
+	// written, to copy it off-host; SHIPYARD_BACKUP_PATH names what to copy.
+	Hook    string
+	KEKHook string
+	// PGDump is the pg_dump to run: a name on PATH or an absolute path. Its
+	// major version must not be older than the server's [PG-DUMP].
+	PGDump string
+	// KeepDaily and KeepWeekly bound target A: the newest backup of each of
+	// the last KeepDaily days and of each of the last KeepWeekly weeks.
+	KeepDaily  int
+	KeepWeekly int
 }
 
 // Caddy configures the edge container the worker keeps running (ADR-0003).
@@ -317,6 +353,7 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	}
 	cfg.BuildCacheMax = r.size(EnvBuildCacheMax, DefaultBuildCacheMax, 1<<20)
 	cfg.OperationLogMax = r.size(EnvOperationLogMax, DefaultOperationLogMax, 1<<10)
+	cfg.Backup = r.backup(cfg.KEKDir)
 	if !filepath.IsAbs(cfg.WorkDir) {
 		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))
 	}
@@ -336,6 +373,46 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 		}
 	}
 	return cfg, r.err()
+}
+
+func (r *reader) backup(kekDir string) Backup {
+	b := Backup{
+		Dir:        r.str(EnvBackupDir, DefaultBackupDir),
+		KEKDir:     r.str(EnvBackupKEKDir, DefaultBackupKEKDir),
+		Hook:       r.str(EnvBackupHook, ""),
+		KEKHook:    r.str(EnvBackupKEKHook, ""),
+		PGDump:     r.str(EnvBackupPGDump, DefaultBackupPGDump),
+		KeepDaily:  r.intRange(EnvBackupKeepDaily, DefaultBackupKeepDaily, 1, 366),
+		KeepWeekly: r.intRange(EnvBackupKeepWeekly, DefaultBackupKeepWeekly, 0, 520),
+	}
+	clean := func(key, p string) bool {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p || p == "/" {
+			r.fail(key, fmt.Errorf("%q must be a clean absolute path, not /", p))
+			return false
+		}
+		return true
+	}
+	if okA, okB := clean(EnvBackupDir, b.Dir), clean(EnvBackupKEKDir, b.KEKDir); okA && okB {
+		// The two targets, and the live KEK directory, must not contain one
+		// another: ciphertext and keys never share a location (ADR-0005).
+		switch {
+		case within(b.Dir, b.KEKDir) || within(b.KEKDir, b.Dir):
+			r.fail(EnvBackupKEKDir, fmt.Errorf("%q and %s=%q must be separate directories", b.KEKDir, EnvBackupDir, b.Dir))
+		case within(b.Dir, kekDir) || within(kekDir, b.Dir):
+			r.fail(EnvBackupDir, fmt.Errorf("%q must be apart from %s=%q", b.Dir, EnvKEKDir, kekDir))
+		case within(b.KEKDir, kekDir) || within(kekDir, b.KEKDir):
+			r.fail(EnvBackupKEKDir, fmt.Errorf("%q must be apart from %s=%q", b.KEKDir, EnvKEKDir, kekDir))
+		}
+	}
+	if b.PGDump == "" || (strings.ContainsRune(b.PGDump, '/') && !filepath.IsAbs(b.PGDump)) {
+		r.fail(EnvBackupPGDump, fmt.Errorf("%q must be a command name or an absolute path", b.PGDump))
+	}
+	return b
+}
+
+// within reports whether path is dir or lies inside it (clean paths).
+func within(path, dir string) bool {
+	return path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, "/")+"/")
 }
 
 // defaultWorkerID identifies a worker process in operation leases.

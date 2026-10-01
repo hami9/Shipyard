@@ -20,6 +20,7 @@ import (
 	"github.com/hami9/shipyard/internal/api"
 	"github.com/hami9/shipyard/internal/app"
 	"github.com/hami9/shipyard/internal/applogs"
+	"github.com/hami9/shipyard/internal/backup"
 	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
@@ -37,6 +38,8 @@ const usage = `Usage: shipyard-worker <command>
 
 Commands:
   run       Run the deployment worker
+  backup    Write one backup: the database and Caddy's data to
+            SHIPYARD_BACKUP_DIR, the KEKs to SHIPYARD_BACKUP_KEK_DIR
   version   Print version information
 
 Configuration is read from SHIPYARD_* environment variables (see deploy/shipyard.env.example).
@@ -58,7 +61,7 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage)
 		return 0
-	case "run":
+	case "run", "backup":
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -76,11 +79,36 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if args[0] == "backup" {
+		if err := backupNow(ctx, cfg, log); err != nil {
+			log.Error("backup failed", slog.Any("err", err))
+			return 1
+		}
+		return 0
+	}
 	if err := work(ctx, cfg, log); err != nil {
 		log.Error("worker failed", slog.Any("err", err))
 		return 1
 	}
 	return 0
+}
+
+// backupNow writes one backup and exits (ADR-0006); a systemd timer runs it
+// nightly. It needs no database connection of its own: pg_dump makes one.
+func backupNow(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
+	b := cfg.Backup
+	job := &backup.Job{DatabaseURL: cfg.DatabaseURL, PGDump: b.PGDump, KEKSource: cfg.KEKDir,
+		Dir: b.Dir, KEKDir: b.KEKDir, Hook: b.Hook, KEKHook: b.KEKHook,
+		KeepDaily: b.KeepDaily, KeepWeekly: b.KeepWeekly, Version: buildinfo.Get().String(), Log: log}
+	if cfg.Caddy.Enabled {
+		rt, err := runtime.New()
+		if err != nil {
+			return err
+		}
+		defer rt.Close()
+		job.Caddy = edgeData{rt, cfg.Caddy.Name}
+	}
+	return job.Run(ctx)
 }
 
 // work claims operations one at a time until shutdown. A shutdown in the

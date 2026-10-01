@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/hami9/shipyard/internal/app"
@@ -111,6 +112,16 @@ func (a runtimeAdapter) ListManaged(ctx context.Context) ([]app.ManagedContainer
 		out[i] = app.ManagedContainer{ID: c.ID, App: c.App, DeploymentID: c.DeploymentID, Running: c.Running}
 	}
 	return out, nil
+}
+
+// edgeData is the Caddy container's data volume, for backups.
+type edgeData struct {
+	r    *runtime.Runtime
+	name string
+}
+
+func (e edgeData) ArchiveData(ctx context.Context, w io.Writer) error {
+	return e.r.ArchiveEdgeData(ctx, e.name, w)
 }
 
 func healthGate(ctx context.Context, url string, timeout time.Duration, alive func(context.Context) error) error {

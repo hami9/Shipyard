@@ -169,7 +169,7 @@ flowchart LR
 - [x] **P3.4** Retention job per ADR-0006, split in two:
   - [x] **P3.4a** Images: per app, the active release's and the last `SHIPYARD_RETAIN_IMAGES` (default 5) earlier releases' images are kept; other images this database recorded are removed, never forced. Reconciler step 5.
   - [x] **P3.4b** The BuildKit cache cap (daily `buildx prune` down to 10 GiB) and the operation event cap (the last 20 operations per app, 5 MiB each). A worker job, at start and every `SHIPYARD_RETENTION_INTERVAL`.
-- [ ] **P3.5** Backup:
+- [x] **P3.5** Backup (`shipyard-worker backup`; targets are local directories with an off-host hook each):
   - `pg_dump -Fc` and a Caddy data tarball to target A, and the KEK to separate target B.
   - Run by systemd timers.
 - [ ] **P3.6** Restore runbook plus an automated drill on a fresh VM or container host: restore the DB, KEK, and Caddy data, then the reconciler converges every app.

@@ -39,6 +39,13 @@ A disk-usage alarm fires at 80% of the Docker data root filesystem.
 | Caddy data dir | Tarball | Off-host location A | Nightly |
 | Shipyard config | `/etc/shipyard/shipyard.env` (contains the DB password; encrypt the copy) | Off-host location A | On change |
 
+*Note 2026-10-01 (P3.5), decided with the owner:*
+
+- The backup is a worker subcommand (`shipyard-worker backup`) run by a systemd timer, not shell scripts: it reuses the validated configuration and is unit-tested.
+- "Off-host location A/B" are two local directories, each with an optional hook command that copies it away (rsync, rclone, restic, or a mounted remote). Shipyard depends on none of those tools.
+- The KEKs are copied on every run (nightly), which covers "on every change" within a day. Target B only gains keys.
+- `shipyard.env` is not backed up yet: encrypting the copy needs a tool and a key that P3.5 does not add. P3.6 documents recreating it.
+
 Images are not backed up in the MVP. After a restore, active apps are rebuilt from their recorded SHAs, and rollback history before the restore becomes unavailable until an optional registry exists (post-MVP).
 
 **Production-ready gate:** a documented restore drill onto a fresh VPS must succeed. The drill restores the database, KEK, and Caddy data, then the reconciler brings every app back to its active SHA. It is repeated each release.

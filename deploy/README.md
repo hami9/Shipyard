@@ -7,6 +7,7 @@ Host configuration for running Shipyard on a single VPS. **This is a skeleton (P
 | `shipyard.env.example` | `/etc/shipyard/shipyard.env` (root:shipyard, `0640`) | Environment for both services. Contains the DB password |
 | `systemd/shipyard-api.service` | `/etc/systemd/system/` | API as user `shipyard-api`, **not** in the `docker` group, listening on a Unix socket |
 | `systemd/shipyard-worker.service` | `/etc/systemd/system/` | Worker as user `shipyard-worker`, in the `docker` group, which is root-equivalent |
+| `systemd/shipyard-backup.service`, `systemd/shipyard-backup.timer` | `/etc/systemd/system/` | Nightly `shipyard-worker backup` as user `shipyard-worker` (ADR-0006). Create `/var/backups/shipyard` and `/var/backups/shipyard-kek` first, owned by `shipyard-worker`, mode `0700`, then `systemctl enable --now shipyard-backup.timer` |
 | `docker/daemon.json` | `/etc/docker/daemon.json` | `local` log driver (rotates by default) and `live-restore` `[DK-LOG][DK-LIVE]` |
 | `caddy/caddy.json` | Caddy container bootstrap config | Admin API on a permissioned Unix socket only `[CADDY-API]` |
 | `dev/compose.yaml` | Nowhere (development only) | Local PostgreSQL 18 for `make dev-up` |

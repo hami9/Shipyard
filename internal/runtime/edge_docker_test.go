@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -196,6 +197,50 @@ func TestEdgeRefusesForeignContainer(t *testing.T) {
 	if err := r.RemoveEdge(t.Context(), s.Name, false); !errors.Is(err, ErrNotManaged) {
 		t.Fatalf("remove foreign: %v", err)
 	}
+	if err := r.ArchiveEdgeData(t.Context(), s.Name, io.Discard); !errors.Is(err, ErrNotManaged) {
+		t.Fatalf("archive foreign: %v", err)
+	}
+}
+
+// P3.5: the backup reads Caddy's data volume as a tar stream through the
+// archive API, with file modes kept, from a running or a stopped edge [DK-CP].
+func TestArchiveEdgeData(t *testing.T) {
+	r := newRuntime(t)
+	ctx := t.Context()
+	s := newEdge(t, r)
+	if err := r.ArchiveEdgeData(ctx, s.Name, io.Discard); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no edge yet: %v", err)
+	}
+	if _, err := r.EnsureEdge(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	dockerOut(t, "exec", s.Name, "sh", "-c",
+		"mkdir -p /data/caddy/certificates && echo private > /data/caddy/certificates/test.key && chmod 600 /data/caddy/certificates/test.key")
+	check := func(state string) {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := r.ArchiveEdgeData(ctx, s.Name, &buf); err != nil {
+			t.Fatalf("%s: %v", state, err)
+		}
+		tr := tar.NewReader(&buf)
+		for {
+			h, err := tr.Next()
+			if err != nil {
+				t.Fatalf("%s: test.key is not in the archive: %v", state, err)
+			}
+			if h.Name != "data/caddy/certificates/test.key" {
+				continue
+			}
+			body, _ := io.ReadAll(tr)
+			if string(body) != "private\n" || h.Mode&0o777 != 0o600 {
+				t.Fatalf("%s: test.key = %q, mode %o", state, body, h.Mode&0o777)
+			}
+			return
+		}
+	}
+	check("running")
+	dockerOut(t, "stop", "--timeout", "1", s.Name)
+	check("stopped")
 }
 
 func fetchURL(t *testing.T, url string) string {
