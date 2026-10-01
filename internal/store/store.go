@@ -45,6 +45,15 @@ func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 	})
 }
 
+// Empty reports whether the database has no tables in the public schema: a
+// restore refuses anything else (ADR-0006), since pg_restore would collide
+// with what is there.
+func (s *Store) Empty(ctx context.Context) (bool, error) {
+	var tables bool
+	err := s.q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public')`).Scan(&tables)
+	return !tables, mapError(err)
+}
+
 // Open connects to PostgreSQL and verifies the connection with a ping, so a
 // misconfigured process fails at startup instead of on its first request.
 //

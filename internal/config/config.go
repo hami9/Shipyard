@@ -63,6 +63,7 @@ const (
 	EnvBackupHook         = "SHIPYARD_BACKUP_HOOK"
 	EnvBackupKEKHook      = "SHIPYARD_BACKUP_KEK_HOOK"
 	EnvBackupPGDump       = "SHIPYARD_BACKUP_PG_DUMP"
+	EnvBackupPGRestore    = "SHIPYARD_BACKUP_PG_RESTORE"
 	EnvBackupKeepDaily    = "SHIPYARD_BACKUP_KEEP_DAILY"
 	EnvBackupKeepWeekly   = "SHIPYARD_BACKUP_KEEP_WEEKLY"
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
@@ -107,6 +108,7 @@ const (
 	DefaultBackupDir        = "/var/backups/shipyard"
 	DefaultBackupKEKDir     = "/var/backups/shipyard-kek"
 	DefaultBackupPGDump     = "pg_dump"
+	DefaultBackupPGRestore  = "pg_restore"
 	DefaultBackupKeepDaily  = 14
 	DefaultBackupKeepWeekly = 8
 
@@ -236,7 +238,9 @@ type Backup struct {
 	KEKHook string
 	// PGDump is the pg_dump to run: a name on PATH or an absolute path. Its
 	// major version must not be older than the server's [PG-DUMP].
-	PGDump string
+	// PGRestore is the pg_restore that `shipyard-worker restore` runs.
+	PGDump    string
+	PGRestore string
 	// KeepDaily and KeepWeekly bound target A: the newest backup of each of
 	// the last KeepDaily days and of each of the last KeepWeekly weeks.
 	KeepDaily  int
@@ -382,6 +386,7 @@ func (r *reader) backup(kekDir string) Backup {
 		Hook:       r.str(EnvBackupHook, ""),
 		KEKHook:    r.str(EnvBackupKEKHook, ""),
 		PGDump:     r.str(EnvBackupPGDump, DefaultBackupPGDump),
+		PGRestore:  r.str(EnvBackupPGRestore, DefaultBackupPGRestore),
 		KeepDaily:  r.intRange(EnvBackupKeepDaily, DefaultBackupKeepDaily, 1, 366),
 		KeepWeekly: r.intRange(EnvBackupKeepWeekly, DefaultBackupKeepWeekly, 0, 520),
 	}
@@ -404,8 +409,10 @@ func (r *reader) backup(kekDir string) Backup {
 			r.fail(EnvBackupKEKDir, fmt.Errorf("%q must be apart from %s=%q", b.KEKDir, EnvKEKDir, kekDir))
 		}
 	}
-	if b.PGDump == "" || (strings.ContainsRune(b.PGDump, '/') && !filepath.IsAbs(b.PGDump)) {
-		r.fail(EnvBackupPGDump, fmt.Errorf("%q must be a command name or an absolute path", b.PGDump))
+	for _, c := range [][2]string{{EnvBackupPGDump, b.PGDump}, {EnvBackupPGRestore, b.PGRestore}} {
+		if c[1] == "" || (strings.ContainsRune(c[1], '/') && !filepath.IsAbs(c[1])) {
+			r.fail(c[0], fmt.Errorf("%q must be a command name or an absolute path", c[1]))
+		}
 	}
 	return b
 }

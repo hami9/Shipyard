@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"archive/tar"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -316,6 +318,73 @@ func (r *Runtime) ArchiveEdgeData(ctx context.Context, name string, w io.Writer)
 		return fmt.Errorf("archive %s:/data: %w", name, err)
 	}
 	return nil
+}
+
+// RestoreEdgeData puts an archive made by ArchiveEdgeData back into the edge
+// container's /data volume and leaves the edge running, for a restore
+// (ADR-0006). The edge is created if it is missing, stopped while the files
+// are written, then started again, so Caddy reads the certificates fresh.
+// After a failure the edge stays stopped: the next restore, or the worker's
+// start, starts it.
+//
+// The archive is rewritten on the way in: entries lose their data/ prefix,
+// because Docker refuses to extract at / on a read-only root filesystem but
+// accepts the volume's path; and they become root's, because Caddy runs as
+// root without CAP_DAC_OVERRIDE and must own what it reads [DK-CP].
+func (r *Runtime) RestoreEdgeData(ctx context.Context, s EdgeSpec, archive io.Reader) error {
+	id, err := r.EnsureEdge(ctx, s)
+	if err != nil {
+		return err
+	}
+	stop := 10
+	if _, err := r.cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &stop}); err != nil {
+		return fmt.Errorf("stop edge %s: %w", s.Name, wrap(err))
+	}
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(rerootArchive(archive, pw)) }()
+	_, err = r.cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: "/data", Content: pr})
+	pr.CloseWithError(err) // unblocks the writer if Docker stopped reading
+	if err != nil {
+		return fmt.Errorf("restore %s:/data: %w", s.Name, wrap(err))
+	}
+	if _, err := r.EnsureEdge(ctx, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rerootArchive copies a tar stream rooted at data/ to w, rooted at the
+// directory itself and owned by root. It refuses any entry outside data/.
+func rerootArchive(archive io.Reader, w io.Writer) error {
+	tr, tw := tar.NewReader(archive), tar.NewWriter(w)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return tw.Close()
+		}
+		if err != nil {
+			return fmt.Errorf("read archive: %w", err)
+		}
+		name := path.Clean(h.Name)
+		if name == "data" {
+			continue // the volume's own directory
+		}
+		rel, ok := strings.CutPrefix(name, "data/")
+		if !ok || rel == ".." || strings.HasPrefix(rel, "../") {
+			return fmt.Errorf("%w: archive entry %q is outside data/", ErrInvalid, h.Name)
+		}
+		h.Name = rel
+		if h.Typeflag == tar.TypeDir {
+			h.Name += "/"
+		}
+		h.Uid, h.Gid, h.Uname, h.Gname = 0, 0, "", ""
+		if err := tw.WriteHeader(h); err != nil {
+			return err
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			return fmt.Errorf("read archive: %w", err)
+		}
+	}
 }
 
 // RemoveEdge removes the edge container and its network, and with volumes

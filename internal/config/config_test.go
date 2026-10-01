@@ -291,15 +291,15 @@ func TestLoadWorkerRetention(t *testing.T) {
 // live KEK directory (ADR-0005, ADR-0006).
 func TestLoadWorkerBackup(t *testing.T) {
 	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
-	want := Backup{Dir: "/var/backups/shipyard", KEKDir: "/var/backups/shipyard-kek", PGDump: "pg_dump", KeepDaily: 14, KeepWeekly: 8}
+	want := Backup{Dir: "/var/backups/shipyard", KEKDir: "/var/backups/shipyard-kek", PGDump: "pg_dump", PGRestore: "pg_restore", KeepDaily: 14, KeepWeekly: 8}
 	if err != nil || cfg.Backup != want {
 		t.Fatalf("defaults = %+v, %v", cfg.Backup, err)
 	}
 	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/b",
 		EnvBackupHook: "rclone copy $SHIPYARD_BACKUP_PATH a:", EnvBackupKEKHook: "true", EnvBackupKeepDaily: "3", EnvBackupKeepWeekly: "0",
-		EnvBackupPGDump: "/usr/lib/postgresql/18/bin/pg_dump"}))
+		EnvBackupPGDump: "/usr/lib/postgresql/18/bin/pg_dump", EnvBackupPGRestore: "/usr/lib/postgresql/18/bin/pg_restore"}))
 	want = Backup{Dir: "/mnt/a", KEKDir: "/mnt/b", Hook: "rclone copy $SHIPYARD_BACKUP_PATH a:", KEKHook: "true",
-		PGDump: "/usr/lib/postgresql/18/bin/pg_dump", KeepDaily: 3, KeepWeekly: 0}
+		PGDump: "/usr/lib/postgresql/18/bin/pg_dump", PGRestore: "/usr/lib/postgresql/18/bin/pg_restore", KeepDaily: 3, KeepWeekly: 0}
 	if err != nil || cfg.Backup != want {
 		t.Fatalf("set = %+v, %v", cfg.Backup, err)
 	}
@@ -317,6 +317,7 @@ func TestLoadWorkerBackup(t *testing.T) {
 		"live keys in data":   {map[string]string{EnvBackupDir: "/etc/shipyard"}, EnvBackupDir},
 		"backup is live keys": {map[string]string{EnvBackupKEKDir: "/etc/shipyard/kek"}, EnvBackupKEKDir},
 		"relative pg_dump":    {map[string]string{EnvBackupPGDump: "bin/pg_dump"}, EnvBackupPGDump},
+		"relative pg_restore": {map[string]string{EnvBackupPGRestore: "./pg_restore"}, EnvBackupPGRestore},
 		"no dailies":          {map[string]string{EnvBackupKeepDaily: "0"}, EnvBackupKeepDaily},
 		"weeklies":            {map[string]string{EnvBackupKeepWeekly: "-1"}, EnvBackupKeepWeekly},
 	} {

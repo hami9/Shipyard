@@ -47,6 +47,7 @@ The supported production setup is the two systemd services in [deploy/](deploy/R
 | [docs/WORKLOG.md](docs/WORKLOG.md) | Session-by-session work log and current status |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, testing, and troubleshooting |
 | [docs/RELEASING.md](docs/RELEASING.md) | Release process, artifacts, and version plan |
+| [docs/RESTORE.md](docs/RESTORE.md) | Restoring onto a new server from backups |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes per release |
 | [CLAUDE.md](CLAUDE.md) | Instructions for AI coding agents (system prompt) |
 

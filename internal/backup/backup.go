@@ -287,11 +287,11 @@ func (c *counter) Write(p []byte) (int, error) { c.n += int64(len(p)); return le
 // database is in use and does not block it [PG-DUMP], and checks that what
 // arrived is such an archive.
 func (j *Job) dump(ctx context.Context, w io.Writer) error {
-	args, env, err := dumpCommand(j.DatabaseURL)
+	dbname, env, err := pgConnection(j.DatabaseURL)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, j.PGDump, args...)
+	cmd := exec.CommandContext(ctx, j.PGDump, "--format=custom", "--no-password", "--dbname="+dbname)
 	cmd.Env = env
 	head := &prefix{max: len(dumpMagic)}
 	stderr := &tail{max: 2000}
@@ -306,14 +306,15 @@ func (j *Job) dump(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// dumpCommand builds pg_dump's arguments and environment. The password moves
-// from the URL into PGPASSWORD, so it is not visible in the process list.
-// Nothing else of this process's environment reaches pg_dump.
-func dumpCommand(dbURL string) (args, env []string, err error) {
+// pgConnection splits the database URL for pg_dump and pg_restore: the
+// connection string for --dbname, without the password, and the environment,
+// with it in PGPASSWORD, so it is not visible in the process list. Nothing
+// else of this process's environment reaches them.
+func pgConnection(dbURL string) (dbname string, env []string, err error) {
 	u, err := url.Parse(dbURL)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
 		// The parse error would quote the URL, password included.
-		return nil, nil, errors.New("the database URL must be a postgres:// URL")
+		return "", nil, errors.New("the database URL must be a postgres:// URL")
 	}
 	password, _ := u.User.Password()
 	if u.User != nil {
@@ -332,7 +333,7 @@ func dumpCommand(dbURL string) (args, env []string, err error) {
 	if password != "" {
 		env = append(env, "PGPASSWORD="+password)
 	}
-	return []string{"--format=custom", "--no-password", "--dbname=" + u.String()}, env, nil
+	return u.String(), env, nil
 }
 
 // runHook runs an operator's command with sh -c, to copy a target off-host.

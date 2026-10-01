@@ -46,6 +46,8 @@ A disk-usage alarm fires at 80% of the Docker data root filesystem.
 - The KEKs are copied on every run (nightly), which covers "on every change" within a day. Target B only gains keys.
 - `shipyard.env` is not backed up yet: encrypting the copy needs a tool and a key that P3.5 does not add. P3.6 documents recreating it.
 
+*Note 2026-10-01 (P3.6):* the restore is `shipyard-worker restore` plus [RESTORE.md](../RESTORE.md). The drill is automated on one machine (`TestRestoreDrill`). The drill on a fresh VPS, the production-ready gate below, is still to be run by the owner.
+
 Images are not backed up in the MVP. After a restore, active apps are rebuilt from their recorded SHAs, and rollback history before the restore becomes unavailable until an optional registry exists (post-MVP).
 
 **Production-ready gate:** a documented restore drill onto a fresh VPS must succeed. The drill restores the database, KEK, and Caddy data, then the reconciler brings every app back to its active SHA. It is repeated each release.

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -40,6 +41,9 @@ Commands:
   run       Run the deployment worker
   backup    Write one backup: the database and Caddy's data to
             SHIPYARD_BACKUP_DIR, the KEKs to SHIPYARD_BACKUP_KEK_DIR
+  restore --from DIR
+            Load one backup directory into an empty database and into
+            Caddy; see docs/RESTORE.md. Stop both services first
   version   Print version information
 
 Configuration is read from SHIPYARD_* environment variables (see deploy/shipyard.env.example).
@@ -54,6 +58,7 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
+	var from string // restore: the backup directory
 	switch args[0] {
 	case "version", "--version", "-version":
 		fmt.Fprintln(stdout, "shipyard-worker", buildinfo.Get())
@@ -62,6 +67,17 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "run", "backup":
+	case "restore":
+		// --from DIR or --from=DIR; nothing else.
+		switch rest := args[1:]; {
+		case len(rest) == 2 && rest[0] == "--from" && rest[1] != "":
+			from = rest[1]
+		case len(rest) == 1 && strings.HasPrefix(rest[0], "--from=") && rest[0] != "--from=":
+			from = strings.TrimPrefix(rest[0], "--from=")
+		default:
+			fmt.Fprintf(stderr, "restore needs --from DIR, one backup directory\n\n%s", usage)
+			return 2
+		}
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -79,11 +95,19 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if args[0] == "backup" {
+	switch args[0] {
+	case "backup":
 		if err := backupNow(ctx, cfg, log); err != nil {
 			log.Error("backup failed", slog.Any("err", err))
 			return 1
 		}
+		return 0
+	case "restore":
+		if err := restoreNow(ctx, cfg, from, log); err != nil {
+			log.Error("restore failed", slog.Any("err", err))
+			return 1
+		}
+		log.Info("restore finished: start shipyard-api and shipyard-worker; the worker rebuilds each app's active commit")
 		return 0
 	}
 	if err := work(ctx, cfg, log); err != nil {
@@ -107,6 +131,34 @@ func backupNow(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		}
 		defer rt.Close()
 		job.Caddy = edgeData{rt, cfg.Caddy.Name}
+	}
+	return job.Run(ctx)
+}
+
+// restoreNow loads one backup onto this host (ADR-0006, docs/RESTORE.md):
+// Caddy's data into the edge container, then the dump into the empty
+// database. The worker must not be running: it would act on a half-restored
+// database.
+func restoreNow(ctx context.Context, cfg config.Worker, from string, log *slog.Logger) error {
+	db, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	job := &backup.Restore{From: from, DatabaseURL: cfg.DatabaseURL, PGRestore: cfg.Backup.PGRestore,
+		KEKDir: cfg.KEKDir, DatabaseEmpty: store.New(db).Empty, Log: log}
+	if cfg.Caddy.Enabled {
+		rt, err := runtime.New()
+		if err != nil {
+			return err
+		}
+		defer rt.Close()
+		// Without the API's socket directory, which exists only once the API
+		// has run: the worker recreates the edge with it at its next start,
+		// keeping the volumes.
+		spec := edgeSpec(cfg)
+		spec.APISocketDir = ""
+		job.Caddy = edgeRestore{rt, spec}
 	}
 	return job.Run(ctx)
 }
@@ -229,14 +281,7 @@ func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log
 		log.Warn("caddy is disabled; apps get no routes", slog.String("env", config.EnvCaddy))
 		return nil
 	}
-	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: os.Getegid(),
-		BindIP: c.BindIP, HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort}
-	if cfg.APIHostname != "" {
-		spec.APISocketDir = filepath.Dir(cfg.APISocket())
-	}
-	if spec.Image == "" {
-		spec.Image = runtime.DefaultEdgeImage
-	}
+	spec := edgeSpec(cfg)
 	id, err := rt.EnsureEdge(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("caddy: %w", err)
@@ -245,6 +290,20 @@ func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log
 	log.Info("caddy ready", slog.String("container", c.Name), slog.String("container_id", id[:12]),
 		slog.String("admin_socket", spec.AdminSocket()))
 	return nil
+}
+
+// edgeSpec is the Caddy container this configuration asks for.
+func edgeSpec(cfg config.Worker) runtime.EdgeSpec {
+	c := cfg.Caddy
+	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: os.Getegid(),
+		BindIP: c.BindIP, HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort}
+	if cfg.APIHostname != "" {
+		spec.APISocketDir = filepath.Dir(cfg.APISocket())
+	}
+	if spec.Image == "" {
+		spec.Image = runtime.DefaultEdgeImage
+	}
+	return spec
 }
 
 // syncRoutes makes Caddy serve exactly what the routes table says

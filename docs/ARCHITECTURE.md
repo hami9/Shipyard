@@ -452,6 +452,12 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
     - **Secrets.** Files are readable by their owner only. The database password reaches pg_dump through `PGPASSWORD`, never its command line `[PG-DUMP]`.
     - **Not included:** images (ADR-0006) and `shipyard.env`. The restore runbook (P3.6) recreates the latter.
 - Restores are **tested**, not assumed.
+  - As implemented (P3.6, [RESTORE.md](RESTORE.md)): `shipyard-worker restore --from <backup directory>`, with both services stopped.
+    - **Checks first, and changes nothing if one fails:** every file against the manifest's size and SHA-256; every KEK the manifest names is in the KEK directory; the database has no tables.
+    - **Caddy's data, then the database.** The edge container is created if missing, stopped, given the archive (re-rooted at the volume and owned by root `[DK-CP]`), and started. The dump is loaded by `pg_restore --single-transaction --no-owner --no-privileges` `[PG-DUMP]`. The database is last and atomic, so a failed run can be repeated.
+    - **The KEKs are put back by the operator,** as root, from target B. The restore never writes keys.
+    - **Convergence** is the reconciler's ordinary work: each active deployment has neither container nor image, so its commit is rebuilt (Reconciler step 2, P3.6a), and Caddy serves the restored certificates.
+    - **The drill** (`TestRestoreDrill`) loses a host and asserts the same commit, the configuration the release ran with, the same certificate, and the same API token.
 
 **Observability**
 

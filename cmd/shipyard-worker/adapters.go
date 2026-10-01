@@ -124,6 +124,16 @@ func (e edgeData) ArchiveData(ctx context.Context, w io.Writer) error {
 	return e.r.ArchiveEdgeData(ctx, e.name, w)
 }
 
+// edgeRestore puts Caddy's data back, creating the edge if it is missing.
+type edgeRestore struct {
+	r    *runtime.Runtime
+	spec runtime.EdgeSpec
+}
+
+func (e edgeRestore) RestoreData(ctx context.Context, archive io.Reader) error {
+	return e.r.RestoreEdgeData(ctx, e.spec, archive)
+}
+
 func healthGate(ctx context.Context, url string, timeout time.Duration, alive func(context.Context) error) error {
 	return health.Wait(ctx, health.Config{URL: url, Timeout: timeout}, alive)
 }

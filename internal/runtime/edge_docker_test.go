@@ -241,6 +241,30 @@ func TestArchiveEdgeData(t *testing.T) {
 	check("running")
 	dockerOut(t, "stop", "--timeout", "1", s.Name)
 	check("stopped")
+
+	// P3.6b: the archive goes into a fresh edge on a "new host": the edge is
+	// created, the file arrives with its mode, owned by root, and Caddy runs
+	// again with its admin socket up. A second restore over it works too.
+	var buf bytes.Buffer
+	if err := r.ArchiveEdgeData(ctx, s.Name, &buf); err != nil {
+		t.Fatal(err)
+	}
+	fresh := newEdge(t, r)
+	for range 2 {
+		if err := r.RestoreEdgeData(ctx, fresh, bytes.NewReader(buf.Bytes())); err != nil {
+			t.Fatal(err)
+		}
+		got := dockerOut(t, "exec", fresh.Name, "sh", "-c", "stat -c '%a %u:%g' /data/caddy/certificates/test.key && cat /data/caddy/certificates/test.key")
+		if got != "600 0:0\nprivate" {
+			t.Fatalf("restored file = %q", got)
+		}
+		if code, _ := admin(t, fresh, "GET", "/config/", ""); code != http.StatusOK {
+			t.Fatalf("admin API after the restore: %d", code)
+		}
+	}
+	if err := r.RestoreEdgeData(ctx, fresh, strings.NewReader("not a tar")); err == nil {
+		t.Fatal("garbage was restored")
+	}
 }
 
 func fetchURL(t *testing.T, url string) string {

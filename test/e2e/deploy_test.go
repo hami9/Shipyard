@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -293,21 +294,7 @@ func TestPhase1ExitCriteria(t *testing.T) {
 func (h *harness) checkBackup() {
 	t := h.t
 	t.Helper()
-	dir := t.TempDir()
-	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
-	pgDump := filepath.Join(dir, "pg_dump")
-	script := "#!/bin/sh\nexec docker run --rm -i --network host -e PGPASSWORD postgres:18 pg_dump \"$@\"\n"
-	if err := os.WriteFile(pgDump, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	out := run(t, dir, append(slices.Clone(h.workerEnv), "SHIPYARD_BACKUP_DIR="+a, "SHIPYARD_BACKUP_KEK_DIR="+b,
-		"SHIPYARD_BACKUP_PG_DUMP="+pgDump, "SHIPYARD_BACKUP_HOOK=ls \"$SHIPYARD_BACKUP_PATH\" > "+filepath.Join(dir, "hook")),
-		h.bin+"/shipyard-worker", "backup")
-	backups, _ := os.ReadDir(a)
-	if len(backups) != 1 {
-		t.Fatalf("target A has %d backups:\n%s", len(backups), out)
-	}
-	one := filepath.Join(a, backups[0].Name())
+	one, b, hookOut := h.backup()
 	dump, err := os.ReadFile(filepath.Join(one, "database.dump"))
 	if err != nil || !bytes.HasPrefix(dump, []byte("PGDMP")) {
 		t.Fatalf("database.dump: %v, starts %q", err, dump[:min(len(dump), 8)])
@@ -332,9 +319,39 @@ func (h *harness) checkBackup() {
 	if got, err := os.ReadFile(filepath.Join(b, "e2e.key")); err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("target B: %v", err)
 	}
-	if hook, _ := os.ReadFile(filepath.Join(dir, "hook")); !bytes.Contains(hook, []byte("manifest.json")) {
+	if hook, _ := os.ReadFile(hookOut); !bytes.Contains(hook, []byte("manifest.json")) {
 		t.Fatalf("the hook saw %q", hook)
 	}
+}
+
+// pgTool writes a wrapper that runs a PostgreSQL 18 client tool from the
+// postgres:18 image, on the host's network so it reaches the test database.
+func pgTool(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	script := "#!/bin/sh\nexec docker run --rm -i --network host -e PGPASSWORD postgres:18 " + name + " \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// backup runs `shipyard-worker backup` into new directories. It returns the
+// one backup directory of target A, target B, and the file where the hook
+// listed that backup.
+func (h *harness) backup() (one, b, hookOut string) {
+	t := h.t
+	t.Helper()
+	dir := t.TempDir()
+	a, b, hookOut := filepath.Join(dir, "a"), filepath.Join(dir, "b"), filepath.Join(dir, "hook")
+	out := run(t, dir, append(slices.Clone(h.workerEnv), "SHIPYARD_BACKUP_DIR="+a, "SHIPYARD_BACKUP_KEK_DIR="+b,
+		"SHIPYARD_BACKUP_PG_DUMP="+pgTool(t, dir, "pg_dump"), "SHIPYARD_BACKUP_HOOK=ls \"$SHIPYARD_BACKUP_PATH\" > "+hookOut),
+		h.bin+"/shipyard-worker", "backup")
+	backups, _ := os.ReadDir(a)
+	if len(backups) != 1 {
+		t.Fatalf("target A has %d backups:\n%s", len(backups), out)
+	}
+	return filepath.Join(a, backups[0].Name()), b, hookOut
 }
 
 // apiHost is the name Caddy publishes the API on (P2.8).
@@ -357,6 +374,13 @@ type harness struct {
 	// backup`; kek is its KEK directory.
 	workerEnv []string
 	kek       string
+
+	// For the restore drill, which stops both services and starts them
+	// again on another database: their environments, how to stop them, and
+	// what else a lost host loses.
+	apiEnv              []string
+	apiSock, builder    string
+	stopAPI, stopWorker func()
 }
 
 type repo struct{ good, offBranch string }
@@ -422,7 +446,8 @@ func start(t *testing.T) *harness {
 	token := run(t, tmp, common, h.bin+"/shipyard-api", "token", "create", "--name", "e2e")
 	h.token = token
 
-	h.spawn("api", append(common, "SHIPYARD_DNS_PREFLIGHT=false"), "shipyard-api", "serve")
+	h.apiEnv, h.apiSock, h.builder = append(common, "SHIPYARD_DNS_PREFLIGHT=false"), apiSock, builder
+	h.stopAPI = h.spawn("api", h.apiEnv, "shipyard-api", "serve")
 	waitUnix(t, apiSock)
 	h.kek = kek
 	h.workerEnv = append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
@@ -431,7 +456,7 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
 		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2")
-	h.spawn("worker", h.workerEnv, "shipyard-worker", "run")
+	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run")
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h
@@ -473,16 +498,17 @@ func serveGit(t *testing.T, src, root string) string {
 	return srv.URL
 }
 
-// spawn starts a binary and stops it with SIGTERM when the test ends. Its
-// output is printed if the test fails.
-func (h *harness) spawn(name string, env []string, bin string, args ...string) {
+// spawn starts a binary and stops it with SIGTERM when the test ends, or
+// earlier through the returned function. Its output is printed if the test
+// fails.
+func (h *harness) spawn(name string, env []string, bin string, args ...string) (stop func()) {
 	var out bytes.Buffer
 	cmd := exec.Command(filepath.Join(h.bin, bin), args...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, &out
 	if err := cmd.Start(); err != nil {
 		h.t.Fatal(err)
 	}
-	h.t.Cleanup(func() {
+	stop = sync.OnceFunc(func() {
 		cmd.Process.Signal(syscall.SIGTERM)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
@@ -492,10 +518,14 @@ func (h *harness) spawn(name string, env []string, bin string, args ...string) {
 			cmd.Process.Kill()
 			<-done
 		}
+	})
+	h.t.Cleanup(func() {
+		stop()
 		if h.t.Failed() {
 			h.t.Logf("--- %s output:\n%s", name, out.String())
 		}
 	})
+	return stop
 }
 
 func (h *harness) cli(stdin string, args ...string) string {

@@ -297,7 +297,7 @@ func TestRotateAndHookFailure(t *testing.T) {
 	}
 }
 
-func TestDumpCommand(t *testing.T) {
+func TestPGConnection(t *testing.T) {
 	for name, tc := range map[string]struct {
 		url, dbname, password string
 	}{
@@ -306,9 +306,9 @@ func TestDumpCommand(t *testing.T) {
 		"none":     {"postgres://u@h/d", "postgres://u@h/d", ""},
 		"socket":   {"postgres:///shipyard?host=/var/run/postgresql", "postgres:///shipyard?host=/var/run/postgresql", ""},
 	} {
-		args, env, err := dumpCommand(tc.url)
-		if err != nil || !slices.Equal(args, []string{"--format=custom", "--no-password", "--dbname=" + tc.dbname}) {
-			t.Errorf("%s: args = %q, %v", name, args, err)
+		dbname, env, err := pgConnection(tc.url)
+		if err != nil || dbname != tc.dbname {
+			t.Errorf("%s: dbname = %q, %v", name, dbname, err)
 		}
 		if got := slices.Contains(env, "PGPASSWORD="+tc.password); got != (tc.password != "") {
 			t.Errorf("%s: env has the password = %v", name, got)
@@ -320,8 +320,8 @@ func TestDumpCommand(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"host=localhost password=" + testPassword, "mysql://u:" + testPassword + "@h/d", "postgres://u:" + testPassword + "@h:port/d"} {
-		if _, _, err := dumpCommand(bad); err == nil || strings.Contains(err.Error(), testPassword) {
-			t.Errorf("dumpCommand(%q) = %v, want an error without the password", bad, err)
+		if _, _, err := pgConnection(bad); err == nil || strings.Contains(err.Error(), testPassword) {
+			t.Errorf("pgConnection(%q) = %v, want an error without the password", bad, err)
 		}
 	}
 }

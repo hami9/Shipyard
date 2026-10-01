@@ -21,6 +21,14 @@ func TestRun(t *testing.T) {
 		{nil, 2, "", "Usage: shipyard-worker"},
 		{[]string{"bogus"}, 2, "", `unknown command "bogus"`},
 		{[]string{"run"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
+		{[]string{"backup"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
+		// restore takes exactly one backup directory.
+		{[]string{"restore"}, 2, "", "restore needs --from DIR"},
+		{[]string{"restore", "--from"}, 2, "", "restore needs --from DIR"},
+		{[]string{"restore", "--from="}, 2, "", "restore needs --from DIR"},
+		{[]string{"restore", "--from", "/a", "/b"}, 2, "", "restore needs --from DIR"},
+		{[]string{"restore", "--from", "/var/backups/shipyard/x"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
+		{[]string{"restore", "--from=/var/backups/shipyard/x"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {

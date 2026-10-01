@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.6a: the reconciler rebuilds an active deployment whose image is gone |
-| **Next task** | P3.6b: `shipyard-worker restore`, the restore runbook, and the automated drill |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.6: restore (P3.6a the reconciler rebuilds a lost image's commit; P3.6b `shipyard-worker restore`, `docs/RESTORE.md`, and the automated drill) |
+| **Next task** | P3.7: the crash-safety suite. Owner: the restore drill on a real VPS (ADR-0006's production-ready gate) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-10-01 |
@@ -53,6 +53,50 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-01: P3.6b restore and drill
+
+- **Phase / task:** P3.6b: `shipyard-worker restore`, the runbook, and the automated drill. P3.6 is done on the Shipyard side.
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`shipyard-worker restore --from DIR`** (`backup.Restore`):
+  - checks first, changing nothing on a failure: the manifest (version, only the two known file names, sizes, SHA-256), every KEK it names in `SHIPYARD_KEK_DIR`, and an empty database (`store.Empty`);
+  - then Caddy's data (`runtime.RestoreEdgeData`: ensure the edge, stop it, copy the re-rooted archive into `/data`, start it);
+  - then `pg_restore --single-transaction --no-owner --no-privileges`, the dump on standard input, the password in `PGPASSWORD`. `SHIPYARD_BACKUP_PG_RESTORE` names the tool.
+- **`docs/RESTORE.md`:** the runbook (7 steps), what comes back and what does not, and what to do when a step fails.
+- **`TestRestoreDrill`** (e2e): deploy, back up, lose the host, restore, start; the app returns by itself.
+- e2e harness: `spawn` returns a stop function; `backup()` and `pgTool()` are shared with the P3.5 check.
+
+**Decisions**
+- **Caddy first, the database last:** the database load is the only step that cannot be repeated over itself, and it is atomic. A run that fails anywhere can be repeated unchanged.
+- **The operator puts the KEKs back, not the restore:** only root writes the KEK directory, and the keys travel apart from the data (ADR-0005). The restore refuses to start without them.
+- **The archive is rewritten on the way in** (`rerootArchive`): Docker refuses to extract at `/` of a read-only container but accepts the volume path, and Caddy (root without `CAP_DAC_OVERRIDE`) must own the files `[DK-CP]`.
+- **The restore creates the edge without the API socket mount:** that directory exists only once the API has run. The worker recreates the edge with it at its start, keeping the volumes.
+- **Marked done with a caveat:** the drill runs on one machine (a "container host", as the roadmap item allows). The first run on a real VPS, which ADR-0006 requires before "production-ready", is the owner's. The host commands in the runbook are not yet run on a real server.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after a gofmt of `restore_test.go`), `make test`, `make test-integration`: all ok.
+  - `internal/backup`: `TestRestore` (Caddy, then pg_restore; the dump on standard input; the exact arguments; the password only in `PGPASSWORD`; Caddy disabled skips its data), `TestRestoreRefused` (11 cases, nothing touched: a damaged dump, truncated Caddy data, a missing file, no manifest, a path as a file name, no dump listed, a newer manifest, a path as a KEK ID, a missing KEK, a database with tables, an unreachable database), `TestRestoreFails` (pg_restore's output reported; a Caddy failure stops before the database).
+  - `internal/runtime`: `TestRerootArchive` (prefix removed, root-owned, modes and contents kept), `TestRerootArchiveRefuses` (5 names outside `data/`, and garbage).
+  - `cmd/shipyard-worker`: `TestRun` (`restore` without, with an empty, or with extra `--from` arguments exits 2).
+  - Integration: `TestEmpty` (a new database is empty; a migrated one is not).
+- Docker: `TestArchiveEdgeData` now also restores the archive into a fresh edge, twice: the file is there with mode 600, owned by 0:0, and the admin API answers; garbage is refused. `TestEdgeBootstrap`: ok.
+- **`make test-e2e`: PASS (591 s), both tests.** `TestRestoreDrill` (234 s; 215 s when rerun alone with the `shipyard-api migrate` step):
+  - the restore is refused without the KEK, and into the old database, and creates no Caddy container;
+  - after the restore, `migrate`, and starting both services, a new container runs the active commit;
+  - the history is "active, superseded" on that commit, read with the API token from the backup;
+  - `GREETING` is the value the release ran with, not the one set after the deploy;
+  - Caddy serves a certificate with the same SHA-256 as before the host was lost.
+- No leftover containers or builders.
+- Not run: the runbook's host commands (`install`, `createdb`, `systemd-run`) on a real server.
+
+**Problems / surprises**
+- `docker cp` into `/` of the Caddy container fails: "container rootfs is marked read-only". Into `/data` it works, and the files keep the archive's owner IDs. Found by a probe before writing the code.
+
+**Next**
+- P3.7: the crash-safety suite (`kill -9` the worker at every phase boundary through fault-injection hooks).
+- Owner: the restore drill on a real VPS; PRs for `retention-caps`, `backup`, `rebuild`, and `restore`.
 
 ### 2026-10-01: P3.6a rebuild
 
