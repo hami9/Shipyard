@@ -53,6 +53,8 @@ const (
 	EnvReconcileInterval  = "SHIPYARD_RECONCILE_INTERVAL"
 	EnvObservationWindow  = "SHIPYARD_OBSERVATION_WINDOW"
 	EnvWorkerSocket       = "SHIPYARD_WORKER_SOCKET"
+	EnvWorkerLease        = "SHIPYARD_WORKER_LEASE"
+	EnvTestCrashAt        = "SHIPYARD_TEST_CRASH_AT"
 	EnvRetainImages       = "SHIPYARD_RETAIN_IMAGES"
 	EnvRetainOperations   = "SHIPYARD_RETAIN_OPERATIONS"
 	EnvOperationLogMax    = "SHIPYARD_OPERATION_LOG_MAX"
@@ -76,6 +78,10 @@ const (
 	DefaultAPIListen       = "127.0.0.1:8080"
 	DefaultShutdownTimeout = 15 * time.Second
 	DefaultPollInterval    = 2 * time.Second
+	// DefaultLease is how long a claimed operation stays its worker's
+	// without a heartbeat; after a crash, the operation resumes once it has
+	// passed (ADR-0002).
+	DefaultLease = time.Minute
 	// DefaultReconcileInterval is ARCHITECTURE §5's reconciler period.
 	DefaultReconcileInterval = time.Minute
 	// DefaultObservationWindow is how long a superseded container keeps
@@ -118,6 +124,9 @@ const (
 var (
 	// kekIDRE mirrors secret_values.kek_id.
 	kekIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	// crashPointRE is the shape of a fault point name (app.FaultPoints); the
+	// worker checks that the point exists.
+	crashPointRE = regexp.MustCompile(`^[a-z]{1,32}$`)
 	// sizeRE is a byte count with an optional binary unit and b (reader.size).
 	sizeRE = regexp.MustCompile(`^([1-9][0-9]{0,15})([kmgt]?)b?$`)
 	// memoryRE is a buildx driver-opt memory value, e.g. 512m or 2g [DK-BX-CONTAINER].
@@ -193,6 +202,13 @@ type Worker struct {
 	Common
 	WorkerID     string
 	PollInterval time.Duration
+	// Lease is how long a claimed operation is held without a heartbeat
+	// (renewed every third of it). A crashed worker's operation resumes
+	// after at most this long plus a reconcile interval.
+	Lease time.Duration
+	// CrashAt is for the crash-safety suite only (P3.7): the worker kills
+	// itself when a deploy reaches this fault point. Empty in production.
+	CrashAt string
 	// ReconcileInterval is how often expired leases are requeued and Caddy
 	// is re-synced from the routes table (so added or removed domains apply).
 	ReconcileInterval time.Duration
@@ -338,6 +354,13 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	}
 	if cfg.ReconcileInterval < time.Second {
 		r.fail(EnvReconcileInterval, errors.New("must be at least 1s"))
+	}
+	cfg.Lease = r.duration(EnvWorkerLease, DefaultLease)
+	if cfg.Lease < 2*time.Second || cfg.Lease > time.Hour {
+		r.fail(EnvWorkerLease, errors.New("must be between 2s and 1h"))
+	}
+	if cfg.CrashAt = r.str(EnvTestCrashAt, ""); cfg.CrashAt != "" && !crashPointRE.MatchString(cfg.CrashAt) {
+		r.fail(EnvTestCrashAt, fmt.Errorf("%q is not a fault point name", cfg.CrashAt))
 	}
 	cfg.ObservationWindow = DefaultObservationWindow
 	if s := r.str(EnvObservationWindow, ""); s != "" {

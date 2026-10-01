@@ -101,9 +101,9 @@ func TestRestoreDrill(t *testing.T) {
 	run(t, dir, append(slices.Clone(h.apiEnv), moved...), filepath.Join(h.bin, "shipyard-api"), "migrate")
 
 	// Start the services on the new host. Nothing else is done by hand.
-	h.stopAPI = h.spawn("api (restored)", append(slices.Clone(h.apiEnv), moved...), "shipyard-api", "serve")
+	h.stopAPI = h.spawn("api (restored)", append(slices.Clone(h.apiEnv), moved...), "shipyard-api", "serve").stop
 	waitUnix(t, h.apiSock)
-	h.stopWorker = h.spawn("worker (restored)", append(slices.Clone(h.workerEnv), moved...), "shipyard-worker", "run")
+	h.stopWorker = h.spawn("worker (restored)", append(slices.Clone(h.workerEnv), moved...), "shipyard-worker", "run").stop
 
 	var now string
 	for deadline := time.Now().Add(5 * time.Minute); now == "" && time.Now().Before(deadline); time.Sleep(time.Second) {

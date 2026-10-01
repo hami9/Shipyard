@@ -246,7 +246,25 @@ stateDiagram-v2
 | Candidate exits or fails health | None | Mark failed, capture the last log lines, remove the candidate. |
 | Config load rejected | None (Caddy kept the old config) | Mark failed and remove the candidate. |
 | Route verification fails after load | Briefly on candidate | Re-render from the DB (old target), load it, then remove the candidate, mark failed. |
-| Worker crash in any phase | Unchanged, or equal to the DB | The lease expires and the reconciler resumes or compensates using the phase, labels, and the `routes` table. |
+| Worker crash in any phase | Unchanged, or equal to the DB. Between the Caddy switch and the commit: on the verified candidate | The lease expires and the reconciler resumes or compensates using the phase, labels, and the `routes` table. |
+
+**Crash safety, as proven (P3.7).** `TestCrashSafety` kills the worker (as `kill -9`) at each of 11 fault points of a deploy, checks what it left, and lets a fresh worker finish. A fault point is either the moment a phase is persisted, before its side effect, or the gap between a side effect and its record (`app.FaultPoints`).
+
+| Killed at | Left behind | Recovery |
+| --- | --- | --- |
+| `fetch` | No deployment yet | The retry fetches and creates it |
+| `build`, `built` | Deployment `building`; at `built` the image exists unrecorded | The build runs again for the same deployment |
+| `start` | `starting`, image recorded | The container is created |
+| `created` | A container whose ID is not recorded | `Create` finds it by its deterministic name and adopts it: no second container |
+| `started` | The container runs; still `starting` | Start is a no-op; the health gate runs |
+| `health`, `switch` | `health_checking` | The gate runs again, then the switch |
+| `switched`, `activate` | `switching`; **Caddy serves the candidate**, the routes table still names the previous release | The worker's start loads the table (previous release), then the deploy switches again and commits |
+| `committed` | Active and the operation succeeded, in one transaction; Caddy not yet synced | Nothing to resume; the reconciler syncs Caddy and drains the previous release |
+
+- In every case the app keeps answering, exactly one deployment is active, the operation succeeds on its second attempt (its first at `committed`) with the one deployment it began, and after the drain exactly one container is left.
+- The takeover waits for the lease (`SHIPYARD_WORKER_LEASE`, default 1 min) and the next reconcile.
+- The hook is `Deployer.Fault`, set only by `SHIPYARD_TEST_CRASH_AT`, a test-only setting.
+- Not covered yet: a crash during a rollback (it shares every point from `start` on), during the reconciler's own work, or of the API.
 
 ### Rollback
 

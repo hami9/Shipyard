@@ -175,7 +175,7 @@ flowchart LR
 - [x] **P3.6** Restore runbook plus an automated drill on a fresh VM or container host: restore the DB, KEK, and Caddy data, then the reconciler converges every app. Split in two:
   - [x] **P3.6a** The reconciler rebuilds an active deployment whose container and image are both gone: one deploy of its recorded commit, with the environment revision it ran with.
   - [x] **P3.6b** `shipyard-worker restore` (verify the manifest, `pg_restore`, put back Caddy's data), the runbook ([RESTORE.md](RESTORE.md)), and the automated drill (`TestRestoreDrill`, on one machine). The first drill on a real VPS is the owner's, with the Phase 3 exit criteria.
-- [ ] **P3.7** Crash-safety suite: `kill -9` the worker at every phase boundary through fault-injection hooks, then assert a consistent state.
+- [x] **P3.7** Crash-safety suite: `kill -9` the worker at every phase boundary through fault-injection hooks, then assert a consistent state. `TestCrashSafety`: 11 fault points of a deploy (`SHIPYARD_TEST_CRASH_AT`), all recovered. A crash during a rollback, in the reconciler, or of the API is not covered.
 - [ ] **P3.8** Delete app as an operation: containers, network, route, and images, with an audit event.
 
 **Exit criteria** (acceptance demo steps 4–6)

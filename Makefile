@@ -59,7 +59,7 @@ test-docker: ## Tests that need Docker Engine and buildx (owner's machine, not C
 	$(GO) test -race -tags docker -count=1 -p 1 ./...
 
 test-e2e: ## End-to-end deploy through the real binaries (Docker, buildx, git; run `make dev-up` first)
-	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -tags e2e -count=1 -timeout 20m -v ./test/e2e
+	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -tags e2e -count=1 -timeout 45m -v ./test/e2e
 
 dev-up: ## Start local PostgreSQL 18 (Docker, bound to 127.0.0.1:54320)
 	$(DEV_COMPOSE) up -d --wait

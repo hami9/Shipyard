@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.6: restore (P3.6a the reconciler rebuilds a lost image's commit; P3.6b `shipyard-worker restore`, `docs/RESTORE.md`, and the automated drill) |
-| **Next task** | P3.7: the crash-safety suite. Owner: the restore drill on a real VPS (ADR-0006's production-ready gate) |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.7: the crash-safety suite (`TestCrashSafety`: 11 fault points of a deploy, all recovered) |
+| **Next task** | P3.8: delete app as an operation. Owner: the restore drill on a real VPS (ADR-0006's production-ready gate) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-10-01 |
@@ -53,6 +53,40 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-01: P3.7 crash-safety suite
+
+- **Phase / task:** P3.7: kill the worker at every phase boundary, then assert a consistent state
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Fault points** (`app.FaultPoints`, 11): the six phases, each at the moment it is persisted (`fetch`, `build`, `start`, `health`, `switch`, `activate`), and five gaps between a side effect and its record (`built`, `created`, `started`, `switched`, `committed`). `Deployer.Fault` is called at each; it is nil in production.
+- **`SHIPYARD_TEST_CRASH_AT`:** the worker kills itself (`os.Process.Kill`, SIGKILL on Linux) on reaching the point. An unknown point is a startup error.
+- **`SHIPYARD_WORKER_LEASE`** (default 1m, 2s–1h): the lease was fixed at `queue.DefaultLease`. The suite uses 3s.
+- **`TestCrashSafety`** (e2e): for each point, a doomed worker, a deploy, the state while it is dead, then a fresh worker.
+- e2e harness: `spawn` returns a `proc` with `stop` and `exited`. `make test-e2e` has a 45m timeout (three tests).
+
+**Decisions**
+- **The kill is inside the worker,** at a named point, so each crash lands exactly on the boundary. An outside `kill -9` could not be timed that precisely.
+- **Gaps as well as phase boundaries:** the windows that matter most are between a side effect and its record (a container that exists but is not recorded).
+- **No fix was needed:** every point recovered on the first run. The suite is now the regression guard for invariant 3.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint`, `make test`, `make test-integration`: all ok.
+  - Unit: `TestFaultPoints` (a deploy with routes passes all 11 points once, in order; a rollback skips the fetch and build points; without routes nothing is switched), `TestCrashAt` (an unknown point is refused; the hook returns at every other point), `TestLoadWorkerLeaseAndCrashPoint` (defaults, set values, 8 bad values).
+- **`TestCrashSafety`: PASS, twice** (625 s alone; 479 s in the full run). At each of the 11 points:
+  - the doomed worker exits; the operation is `running` on attempt 1 in the expected phase (`succeeded` at `committed`), and its deployment has the expected status (none at `fetch`);
+  - exactly one deployment is active: the previous one, or the new one at `committed`;
+  - Caddy answers from the previous container, or from the candidate at `switched`, `activate`, and `committed`;
+  - after a fresh worker starts, the operation succeeds on attempt 2 (1 at `committed`) with the same deployment, the previous one is superseded, the history grew by exactly one, one container is left, and Caddy serves it.
+- **`make test-e2e`: PASS (943 s)**, all three tests: `TestCrashSafety`, `TestPhase1ExitCriteria` (295 s), `TestRestoreDrill` (169 s). No leftover containers or builders.
+
+**Problems / surprises**
+- Between the Caddy switch and the commit (`switched`, `activate`), a dead worker leaves Caddy on the verified candidate while the routes table names the previous release. ARCHITECTURE's failure table said "unchanged, or equal to the DB"; it now states this window. The next worker start loads the table.
+
+**Next**
+- P3.8: delete app as an operation (containers, network, route, images, audit event).
+- Not covered by the suite: a crash during a rollback, in the reconciler, or of the API.
 
 ### 2026-10-01: P3.6b restore and drill
 

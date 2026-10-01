@@ -447,7 +447,7 @@ func start(t *testing.T) *harness {
 	h.token = token
 
 	h.apiEnv, h.apiSock, h.builder = append(common, "SHIPYARD_DNS_PREFLIGHT=false"), apiSock, builder
-	h.stopAPI = h.spawn("api", h.apiEnv, "shipyard-api", "serve")
+	h.stopAPI = h.spawn("api", h.apiEnv, "shipyard-api", "serve").stop
 	waitUnix(t, apiSock)
 	h.kek = kek
 	h.workerEnv = append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
@@ -456,7 +456,7 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
 		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2")
-	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run")
+	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run").stop
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
 	return h
@@ -498,25 +498,30 @@ func serveGit(t *testing.T, src, root string) string {
 	return srv.URL
 }
 
+// proc is a spawned service.
+type proc struct {
+	stop   func()          // SIGTERM and wait; does nothing once it has exited
+	exited <-chan struct{} // closed when the process is gone, however it went
+}
+
 // spawn starts a binary and stops it with SIGTERM when the test ends, or
-// earlier through the returned function. Its output is printed if the test
-// fails.
-func (h *harness) spawn(name string, env []string, bin string, args ...string) (stop func()) {
+// earlier through proc.stop. Its output is printed if the test fails.
+func (h *harness) spawn(name string, env []string, bin string, args ...string) *proc {
 	var out bytes.Buffer
 	cmd := exec.Command(filepath.Join(h.bin, bin), args...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, &out
 	if err := cmd.Start(); err != nil {
 		h.t.Fatal(err)
 	}
-	stop = sync.OnceFunc(func() {
+	exited := make(chan struct{})
+	go func() { cmd.Wait(); close(exited) }()
+	stop := sync.OnceFunc(func() {
 		cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
 		select {
-		case <-done:
+		case <-exited:
 		case <-time.After(30 * time.Second):
 			cmd.Process.Kill()
-			<-done
+			<-exited
 		}
 	})
 	h.t.Cleanup(func() {
@@ -525,7 +530,7 @@ func (h *harness) spawn(name string, env []string, bin string, args ...string) (
 			h.t.Logf("--- %s output:\n%s", name, out.String())
 		}
 	})
-	return stop
+	return &proc{stop: stop, exited: exited}
 }
 
 func (h *harness) cli(stdin string, args ...string) string {

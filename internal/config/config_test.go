@@ -342,6 +342,27 @@ func TestParseSize(t *testing.T) {
 	}
 }
 
+// P3.7: the lease is configurable, and the crash point is a test-only name.
+func TestLoadWorkerLeaseAndCrashPoint(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.Lease != time.Minute || cfg.CrashAt != "" {
+		t.Fatalf("defaults = %s, %q, %v", cfg.Lease, cfg.CrashAt, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerLease: "3s", EnvTestCrashAt: "switched"}))
+	if err != nil || cfg.Lease != 3*time.Second || cfg.CrashAt != "switched" {
+		t.Fatalf("set = %s, %q, %v", cfg.Lease, cfg.CrashAt, err)
+	}
+	for key, bad := range map[string][]string{
+		EnvWorkerLease: {"1s", "0", "2h", "soon"},
+		EnvTestCrashAt: {"Build", "after build", "rm -rf /", strings.Repeat("a", 33)},
+	} {
+		for _, v := range bad {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, key: v}))
+			checkErr(t, err, key)
+		}
+	}
+}
+
 func TestLoadWorkerRetainImages(t *testing.T) {
 	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
 		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))

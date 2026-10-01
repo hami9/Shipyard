@@ -165,6 +165,32 @@ type Deployer struct {
 	// without routes.
 	Router Router
 	Log    *slog.Logger
+	// Fault, when set, is called at every FaultPoint a run passes. The
+	// crash-safety suite uses it to kill the worker there (P3.7); it is nil
+	// in production.
+	Fault func(point string)
+}
+
+// Fault points: where a crash leaves the most to recover. Each phase name
+// is the moment its phase is persisted and its side effect has not begun;
+// the others lie between a side effect and the record of it.
+const (
+	FaultBuilt     = "built"     // the image exists; its ID is not recorded
+	FaultCreated   = "created"   // the container exists; its ID is not recorded
+	FaultStarted   = "started"   // the container runs; the deployment is still "starting"
+	FaultSwitched  = "switched"  // Caddy serves the candidate; the routes table does not name it
+	FaultCommitted = "committed" // the deployment is active; Caddy is not yet synced from the table
+)
+
+// FaultPoints lists every point, in the order a deploy with routes passes
+// them.
+var FaultPoints = []string{PhaseFetch, PhaseBuild, FaultBuilt, PhaseStart, FaultCreated, FaultStarted,
+	PhaseHealth, PhaseSwitch, FaultSwitched, PhaseActivate, FaultCommitted}
+
+func (r *deployRun) fault(point string) {
+	if r.Fault != nil {
+		r.Fault(point)
+	}
 }
 
 // logTail is how many lines of a failed candidate's output are kept.
@@ -296,6 +322,7 @@ func (r *deployRun) switchTraffic(ctx context.Context, id string) error {
 		return nil
 	}
 	r.event(ctx, store.LevelInfo, "verified through caddy: %s", strings.Join(hosts, ", "))
+	r.fault(FaultSwitched)
 	return nil
 }
 
@@ -368,6 +395,7 @@ func (r *deployRun) fetchAndBuild(ctx context.Context, ref string) error {
 	if err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
+	r.fault(FaultBuilt)
 	if err := r.Store.RecordImage(ctx, r.dep.ID, r.owner, img.ID, img.Metadata); err != nil {
 		return fmt.Errorf("record image: %w", err)
 	}
@@ -393,6 +421,7 @@ func (r *deployRun) start(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create container: %w", err)
 	}
+	r.fault(FaultCreated)
 	if id != r.dep.ContainerID {
 		if err := r.Store.RecordContainer(ctx, r.dep.ID, r.owner, id); err != nil {
 			return "", fmt.Errorf("record container: %w", err)
@@ -402,6 +431,7 @@ func (r *deployRun) start(ctx context.Context) (string, error) {
 	if err := r.Runtime.Start(ctx, id); err != nil {
 		return "", fmt.Errorf("start container: %w", err)
 	}
+	r.fault(FaultStarted)
 	if err := r.Store.MarkHealthChecking(ctx, r.dep.ID, r.owner); err != nil {
 		return "", fmt.Errorf("record start: %w", err)
 	}
@@ -458,6 +488,7 @@ func (r *deployRun) activate(ctx context.Context) error {
 		return fmt.Errorf("activate: %w", err)
 	}
 	r.switched = false // committed: the routes table now names the candidate
+	r.fault(FaultCommitted)
 	// End the switch and load the committed table, which may include routes
 	// that followed the app in the commit (added during the switch).
 	if r.Router != nil {
@@ -528,6 +559,7 @@ func (r *deployRun) phase(ctx context.Context, phase string) error {
 	if err := r.Store.SetOperationPhase(ctx, r.op.ID, r.owner, phase); err != nil {
 		return fmt.Errorf("phase %s: %w", phase, err)
 	}
+	r.fault(phase)
 	return nil
 }
 

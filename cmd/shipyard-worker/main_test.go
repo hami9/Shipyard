@@ -2,11 +2,33 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/hami9/shipyard/internal/app"
 )
 
 func noEnv(string) (string, bool) { return "", false }
+
+// P3.7: the crash hook accepts only real fault points, and stays quiet at
+// every other point.
+func TestCrashAt(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if _, err := crashAt("nowhere", log); err == nil || !strings.Contains(err.Error(), "no such fault point") {
+		t.Fatalf("unknown point: %v", err)
+	}
+	fault, err := crashAt(app.FaultCommitted, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range app.FaultPoints {
+		if p != app.FaultCommitted {
+			fault(p) // must return
+		}
+	}
+}
 
 func TestRun(t *testing.T) {
 	tests := []struct {

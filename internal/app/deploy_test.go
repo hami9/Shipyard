@@ -413,6 +413,46 @@ func TestDeployHappyPath(t *testing.T) {
 	}
 }
 
+// P3.7: a deploy with routes passes every fault point once, in the listed
+// order, so the crash-safety suite has a kill site at each. A rollback
+// skips the fetch and build points; without routes nothing is switched.
+func TestFaultPoints(t *testing.T) {
+	record := func(h *harness) *[]string {
+		var got []string
+		h.d.Fault = func(p string) { got = append(got, p) }
+		return &got
+	}
+	h := newHarness()
+	h.withRouter("web.example.com")
+	got := record(h)
+	if err := h.run(t, `{}`); err != nil || h.st.opStatus != store.OpSucceeded {
+		t.Fatalf("deploy: %v, op %s %q", err, h.st.opStatus, h.st.opReason)
+	}
+	if !slices.Equal(*got, FaultPoints) {
+		t.Fatalf("points = %v\nwant     %v", *got, FaultPoints)
+	}
+
+	h = rollbackHarness()
+	h.withRouter("web.example.com")
+	got = record(h)
+	if err := h.rollback(t, `{"target":"dep-old"}`); err != nil {
+		t.Fatal(err)
+	}
+	if want := FaultPoints[3:]; !slices.Equal(*got, want) {
+		t.Fatalf("rollback points = %v\nwant              %v", *got, want)
+	}
+
+	h = newHarness()
+	got = record(h)
+	if err := h.run(t, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{PhaseFetch, PhaseBuild, FaultBuilt, PhaseStart, FaultCreated, FaultStarted, PhaseHealth, PhaseActivate, FaultCommitted}
+	if !slices.Equal(*got, want) {
+		t.Fatalf("without routes = %v\nwant             %v", *got, want)
+	}
+}
+
 func TestDeployPinnedRef(t *testing.T) {
 	h := newHarness()
 	ref := strings.Repeat("cd", 20)

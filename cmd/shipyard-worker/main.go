@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -219,7 +220,12 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	if router != nil { // a nil *routing.Router must not become a non-nil interface
 		deployer.Router = router
 	}
-	q := queue.New(s, log, cfg.WorkerID, 0, cfg.PollInterval)
+	if cfg.CrashAt != "" {
+		if deployer.Fault, err = crashAt(cfg.CrashAt, log); err != nil {
+			return err
+		}
+	}
+	q := queue.New(s, log, cfg.WorkerID, cfg.Lease, cfg.PollInterval)
 	rec := &reconcile.Reconciler{Queue: s, Store: s, Runtime: runtimeAdapter{rt}, Env: env, Log: log,
 		Janitor: &app.Janitor{Store: s, Runtime: runtimeAdapter{rt}, Window: cfg.ObservationWindow, Log: log},
 		Images:  &app.ImagePruner{Store: s, Runtime: runtimeAdapter{rt}, Keep: cfg.RetainImages, Log: log}}
@@ -251,6 +257,27 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	wg.Wait()
 	log.Info("worker stopped")
 	return nil
+}
+
+// crashAt is the crash-safety suite's hook (P3.7, SHIPYARD_TEST_CRASH_AT):
+// when a deploy reaches the fault point, this process is killed as by
+// `kill -9`: no deferred call, no shutdown, no flush. Never set it in
+// production.
+func crashAt(point string, log *slog.Logger) (func(string), error) {
+	if !slices.Contains(app.FaultPoints, point) {
+		return nil, fmt.Errorf("%s=%q: no such fault point (one of %s)", config.EnvTestCrashAt, point, strings.Join(app.FaultPoints, ", "))
+	}
+	log.Warn("fault injection is on: this worker kills itself during a deploy", slog.String("at", point))
+	return func(p string) {
+		if p != point {
+			return
+		}
+		log.Warn("fault injection: killing the worker", slog.String("at", p))
+		if proc, err := os.FindProcess(os.Getpid()); err != nil || proc.Kill() != nil {
+			os.Exit(137)
+		}
+		select {} // the signal is on its way: nothing may run past the point
+	}, nil
 }
 
 // serveLogs serves app logs to the API on a private Unix socket, mode 0660
