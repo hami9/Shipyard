@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,9 +21,24 @@ type fakes struct {
 	calls      []string
 	deps       []store.Deployment
 	states     map[string]app.ContainerState // missing: gone
+	noImage    map[string]bool               // image IDs gone from the host
+	rebuilds   map[string]store.Operation    // by deployment: an earlier rebuild
+	rebuildErr error
 	createErr  error
 	replaceErr error
 	syncErr    error
+}
+
+func (f *fakes) ImageExists(_ context.Context, id string) (bool, error) { return !f.noImage[id], nil }
+func (f *fakes) EnqueueRebuild(_ context.Context, id string, payload json.RawMessage) (store.Operation, bool, error) {
+	f.call("rebuild %s %s", id, payload)
+	if f.rebuildErr != nil {
+		return store.Operation{}, false, f.rebuildErr
+	}
+	if op, ok := f.rebuilds[id]; ok {
+		return op, false, nil
+	}
+	return store.Operation{ID: "op-" + id, Status: store.OpQueued}, true, nil
 }
 
 func (f *fakes) call(format string, a ...any) { f.calls = append(f.calls, fmt.Sprintf(format, a...)) }
@@ -141,6 +157,42 @@ func TestPassCarriesOn(t *testing.T) {
 			}
 			if !strings.Contains(logs.String(), "restoring active containers incomplete") || !strings.Contains(logs.String(), tc.log) {
 				t.Fatalf("logs:\n%s", logs)
+			}
+		})
+	}
+}
+
+// P3.6a: an active deployment whose container and image are both gone (a
+// restore onto a fresh host) is rebuilt by one deploy of its commit. A
+// rebuild in progress is left alone; a failed one is reported on every
+// pass; an app with another operation in progress is left to it.
+func TestPassRebuilds(t *testing.T) {
+	const rebuild = `rebuild d3 {"rebuild_of":"d3"}`
+	for name, tc := range map[string]struct {
+		mutate func(*fakes)
+		log    string // "": the pass is quiet about this deployment
+	}{
+		"requested":     {func(*fakes) {}, "active container and image are gone; rebuilding the commit"},
+		"queued":        {func(f *fakes) { f.rebuilds = map[string]store.Operation{"d3": {ID: "op-1", Status: store.OpQueued}} }, ""},
+		"running":       {func(f *fakes) { f.rebuilds = map[string]store.Operation{"d3": {ID: "op-1", Status: store.OpRunning}} }, ""},
+		"failed":        {func(f *fakes) { f.rebuilds = map[string]store.Operation{"d3": {ID: "op-1", Status: store.OpFailed}} }, "its rebuild (operation op-1) failed: deploy commit abc or roll back"},
+		"app busy":      {func(f *fakes) { f.rebuildErr = fmt.Errorf("%w: busy", store.ErrConflict) }, ""},
+		"database down": {func(f *fakes) { f.rebuildErr = errors.New("connection refused") }, "request rebuild: connection refused"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakes{noImage: map[string]bool{"sha256:3": true},
+				deps: []store.Deployment{{ID: "d3", AppID: "a3", ContainerID: "c-gone", ImageID: "sha256:3", SourceCommitSHA: "abc"}}}
+			tc.mutate(f)
+			r, logs := newReconciler(f)
+			r.Pass(t.Context())
+			if want := []string{"requeue", rebuild, "sync", "sweep", "prune"}; !slices.Equal(f.calls, want) {
+				t.Fatalf("calls = %q, want %q", f.calls, want)
+			}
+			if tc.log == "" && strings.Contains(logs.String(), "d3") {
+				t.Fatalf("logs:\n%s", logs)
+			}
+			if !strings.Contains(logs.String(), tc.log) {
+				t.Fatalf("logs lack %q:\n%s", tc.log, logs)
 			}
 		})
 	}

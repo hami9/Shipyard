@@ -79,6 +79,8 @@ func TestDeployEndpoint(t *testing.T) {
 		{"uppercase sha", "web", f.deployer, "k3", `{"ref":"` + strings.Repeat("AB", 20) + `"}`, 422},
 		{"key with space", "web", f.deployer, "a b", "", 422},
 		{"unknown field", "web", f.deployer, "k4", `{"branch":"main"}`, 400},
+		// Only the reconciler asks for a rebuild (P3.6a); a client cannot.
+		{"rebuild_of", "web", f.deployer, "k4b", `{"rebuild_of":"11111111-1111-4111-8111-111111111111"}`, 400},
 		{"unknown app", "nope", f.deployer, "k5", "", 404},
 		{"read token", "web", f.reader, "k6", "", 403},
 	}

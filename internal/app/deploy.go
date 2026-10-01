@@ -29,6 +29,10 @@ const (
 // DeployPayload is a deploy operation's payload, written by the API.
 type DeployPayload struct {
 	Ref string `json:"ref,omitempty"` // full SHA; empty: the tracked branch's head at fetch time
+	// RebuildOf is set by the reconciler, never by the API: build this active
+	// deployment's commit again, with its environment revision, because its
+	// image is gone from the host (after a restore, ADR-0006).
+	RebuildOf string `json:"rebuild_of,omitempty"`
 }
 
 // DeployStore is what the deploy use case needs from persistence.
@@ -196,6 +200,8 @@ type deployRun struct {
 	log   *slog.Logger
 	app   store.App
 	dep   store.Deployment
+	// rebuild is the active deployment this deploy builds again (RebuildOf).
+	rebuild *store.Deployment
 	// switched is true from the moment a candidate config may be loaded in
 	// Caddy until the routes table commits it.
 	switched bool
@@ -235,6 +241,11 @@ func (r *deployRun) execute(ctx context.Context) error {
 		}
 		r.log = r.log.With(slog.String("deployment_id", r.dep.ID))
 	case r.dep.ImageID == "":
+		if p.RebuildOf != "" && r.dep.ID == "" {
+			if p.Ref, err = r.prepareRebuild(ctx, p.RebuildOf); err != nil {
+				return err
+			}
+		}
 		if err := r.fetchAndBuild(ctx, p.Ref); err != nil {
 			return err
 		}
@@ -328,13 +339,18 @@ func (r *deployRun) fetchAndBuild(ctx context.Context, ref string) error {
 	}
 	if r.dep.ID == "" {
 		// The environment is pinned now; later env changes need a new deploy.
+		// A rebuild keeps the revision of the deployment it replaces.
 		n := store.NewDeployment{OperationID: r.op.ID, SourceCommitSHA: src.SHA}
-		rev, err := r.Store.LatestEnvRevision(ctx, r.app.ID)
-		switch {
-		case err == nil:
-			n.EnvRevisionID = &rev.ID
-		case !errors.Is(err, store.ErrNotFound):
-			return fmt.Errorf("load environment: %w", err)
+		if r.rebuild != nil {
+			n.EnvRevisionID = r.rebuild.EnvRevisionID
+		} else {
+			rev, err := r.Store.LatestEnvRevision(ctx, r.app.ID)
+			switch {
+			case err == nil:
+				n.EnvRevisionID = &rev.ID
+			case !errors.Is(err, store.ErrNotFound):
+				return fmt.Errorf("load environment: %w", err)
+			}
 		}
 		if r.dep, err = r.Store.CreateDeployment(ctx, r.owner, n); err != nil {
 			return fmt.Errorf("create deployment: %w", err)

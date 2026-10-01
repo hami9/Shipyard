@@ -280,7 +280,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
      - A stopped one is started.
      - A missing one is recreated from the deployment's image ID and environment revision, under the same deterministic name, so its routes resolve without a Caddy change. The new ID is recorded before the start, and only while the deployment is still active with the old container (`ReplaceContainer`).
      - No health gate runs: it is the release that passed one, from the same image and configuration.
-     - A pruned image cannot be recreated, and the reconciler logs it on every pass until a deploy or rollback.
+     - Since P3.6a: when the image is gone too (a restore onto a fresh host, ADR-0006, or a manual prune), the commit is **rebuilt**.
+       - The reconciler queues one deploy per deployment (`store.EnqueueRebuild`, idempotency key `rebuild:<deployment>`), with payload `rebuild_of`. Only the reconciler can: the API accepts no such field, and client keys are stored as `api:<key>`.
+       - It is an ordinary deploy of the recorded commit: the commit must still be on the tracked branch (invariant 7), and the candidate passes the health gate and the switch (invariant 5). It pins the **environment revision the deployment ran with**, not the latest, so the app comes back as it was.
+       - It cancels nothing, and an app with an operation queued or running gets no rebuild: that operation replaces the deployment. A rebuild whose deployment is no longer active when it runs fails without building.
+       - If the rebuild fails, the reconciler logs it on every pass until a deploy or rollback.
    - Not yet: removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
 3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.

@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.5: backup (`shipyard-worker backup` and its systemd timer) |
-| **Next task** | P3.6: the restore runbook and an automated restore drill |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.6a: the reconciler rebuilds an active deployment whose image is gone |
+| **Next task** | P3.6b: `shipyard-worker restore`, the restore runbook, and the automated drill |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
 | **Last updated** | 2026-10-01 |
@@ -53,6 +53,31 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-01: P3.6a rebuild
+
+- **Phase / task:** P3.6a: the reconciler rebuilds an active deployment whose image is gone (P3.6 split: P3.6b is the restore command, the runbook, and the drill)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Reconciler:** an active deployment whose container is gone is recreated from its image as before. If the image is gone too, it calls `store.EnqueueRebuild` once per deployment (`Runtime.ImageExists` first). A rebuild queued or running is left alone; a failed one is reported on every pass; a busy app is left to its operation.
+- **`store.EnqueueRebuild`:** a `deploy` operation with key `rebuild:<deployment>`, under the app lock. It cancels nothing. `ErrConflict` when the deployment is no longer active or the app has an operation queued or running.
+- **Deploy:** `DeployPayload.RebuildOf`. `prepareRebuild` requires the deployment to be this app's and still active, then the deploy fetches its commit and pins its environment revision instead of the latest.
+
+**Decisions**
+- **Why the reconciler rebuilds at all:** ADR-0006 says apps are rebuilt from their recorded SHAs after a restore, and P3.6 wants the reconciler to converge every app. This replaces P3.2's "log until a deploy or rollback" for a missing image.
+- **The deployment's revision, not the latest:** a restore brings back what was running. A later `env set` without a deploy is not applied by a restore.
+- **One attempt:** a rebuild that failed (repository unreachable, commit no longer on the branch) is not retried in a loop. The operator deploys or rolls back.
+- **Never backwards:** no rebuild for a busy app, and a rebuild that runs after its deployment was replaced fails without building.
+
+**Verification** (WSL2, PostgreSQL 18)
+- `make lint`, `make test`, `make test-integration`: all ok.
+  - Unit: `TestRebuild` (the target's commit and revision, not the latest; a target without an environment), `TestRebuildRefused` (superseded, another app's, unknown: no fetch, build, or container), `TestPassRebuilds` (requested, queued, running, failed, busy app, database error).
+  - Integration: `TestEnqueueRebuild` (created once; the same operation after it failed; superseded and unknown deployments refused; a busy app refused and its queued operation kept), `TestDeployEndpoint/rebuild_of` (the API refuses the field, 400).
+- Not run: Docker or e2e. Nothing Docker-facing changed; the restore drill of P3.6b proves the rebuild end to end.
+
+**Next**
+- P3.6b: `shipyard-worker restore`, `docs/RESTORE.md`, and the drill.
 
 ### 2026-10-01: P3.5 backup
 

@@ -352,3 +352,65 @@ func TestRequeueExpired(t *testing.T) {
 		t.Fatal("RequeueExpired touched a live or finished op")
 	}
 }
+
+// P3.6a: the reconciler's rebuild request. One per deployment, whatever
+// became of it; nothing is cancelled; an app with an operation in progress,
+// or a deployment that is no longer active, gets none.
+func TestEnqueueRebuild(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	active := func(app string) store.Deployment {
+		t.Helper()
+		d := f.healthy(f.claimed(app, "w1"), "w1")
+		if _, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "", nil); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	app := f.app()
+	d := active(app)
+	payload := json.RawMessage(`{"rebuild_of":"` + d.ID + `"}`)
+	op, created, err := f.s.EnqueueRebuild(ctx, d.ID, payload)
+	var got struct {
+		RebuildOf string `json:"rebuild_of"`
+	}
+	if err != nil || !created || op.AppID != app || op.Kind != "deploy" || op.Status != store.OpQueued ||
+		op.IdempotencyKey != store.RebuildKey(d.ID) || json.Unmarshal(op.Payload, &got) != nil || got.RebuildOf != d.ID {
+		t.Fatalf("rebuild = %+v, created %v, %v", op, created, err)
+	}
+	if again, created, err := f.s.EnqueueRebuild(ctx, d.ID, payload); err != nil || created || again.ID != op.ID {
+		t.Fatalf("second request = %s, created %v, %v", again.ID, created, err)
+	}
+	// Once it has failed, it is still the one rebuild of this deployment.
+	if claimed, err := f.s.ClaimOperation(ctx, "w1", time.Minute); err != nil || claimed.ID != op.ID {
+		t.Fatalf("claim: %+v, %v", claimed, err)
+	}
+	if _, err := f.s.FailOperation(ctx, op.ID, "w1", "fetch: repository unreachable", 0); err != nil {
+		t.Fatal(err)
+	}
+	if again, created, err := f.s.EnqueueRebuild(ctx, d.ID, payload); err != nil || created || again.ID != op.ID || again.Status != store.OpFailed {
+		t.Fatalf("after failure = %+v, created %v, %v", again, created, err)
+	}
+
+	// A superseded deployment, and one that does not exist.
+	moved := f.app()
+	first := active(moved)
+	active(moved)
+	if _, _, err := f.s.EnqueueRebuild(ctx, first.ID, payload); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("superseded deployment: %v", err)
+	}
+	if _, _, err := f.s.EnqueueRebuild(ctx, "00000000-0000-4000-8000-000000000000", payload); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown deployment: %v", err)
+	}
+
+	// An app with a queued operation: no rebuild, and that operation stays.
+	busy := f.app()
+	db := active(busy)
+	user := f.enqueue(busy, "user-"+uniq())
+	if _, _, err := f.s.EnqueueRebuild(ctx, db.ID, payload); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("busy app: %v", err)
+	}
+	if got := f.op(user.Operation.ID); got.Status != store.OpQueued {
+		t.Fatalf("the queued operation is now %s", got.Status)
+	}
+}

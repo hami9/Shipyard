@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -135,6 +136,54 @@ func (s *Store) EnqueueOperation(ctx context.Context, n NewOperation) (Enqueued,
 		return mapError(rows.Err())
 	})
 	return out, err
+}
+
+// RebuildKey is the idempotency key of the one rebuild of a deployment.
+func RebuildKey(deploymentID string) string { return "rebuild:" + deploymentID }
+
+// EnqueueRebuild queues a deploy that builds an active deployment's commit
+// again because its image is gone from the host (ADR-0006: after a restore,
+// apps are rebuilt from their recorded SHAs). The reconciler calls it.
+//
+//   - One rebuild per deployment: a repeated call returns the first
+//     operation, whatever its status, with created false.
+//   - Unlike EnqueueOperation it cancels nothing. It is ErrConflict when
+//     the deployment is no longer active, or when the app already has an
+//     operation queued or running: that one replaces the deployment.
+func (s *Store) EnqueueRebuild(ctx context.Context, deploymentID string, payload json.RawMessage) (op Operation, created bool, err error) {
+	key := RebuildKey(deploymentID)
+	err = s.InTx(ctx, func(tx *Store) error {
+		var appID string
+		if err := tx.q.QueryRow(ctx, `SELECT app_id FROM deployments WHERE id = $1`, deploymentID).Scan(&appID); err != nil {
+			return mapError(err)
+		}
+		if err := tx.LockApp(ctx, appID); err != nil {
+			return err
+		}
+		op, err = scanOperation(tx.q.QueryRow(ctx, `SELECT `+opColumns+` FROM operations WHERE idempotency_key = $1`, key))
+		if !errors.Is(err, ErrNotFound) {
+			return err // found, or a real error
+		}
+		var active, busy bool
+		if err := tx.q.QueryRow(ctx, `SELECT
+				EXISTS (SELECT 1 FROM deployments WHERE id = $1 AND status = 'active'),
+				EXISTS (SELECT 1 FROM operations WHERE app_id = $2 AND status IN ('queued', 'running'))`,
+			deploymentID, appID).Scan(&active, &busy); err != nil {
+			return mapError(err)
+		}
+		switch {
+		case !active:
+			return fmt.Errorf("%w: deployment %s is no longer active", ErrConflict, deploymentID)
+		case busy:
+			return fmt.Errorf("%w: the app has an operation in progress", ErrConflict)
+		}
+		op, err = scanOperation(tx.q.QueryRow(ctx, `
+			INSERT INTO operations (app_id, kind, idempotency_key, payload) VALUES ($1, 'deploy', $2, $3)
+			RETURNING `+opColumns, appID, key, payload))
+		created = err == nil
+		return err
+	})
+	return op, created, err
 }
 
 // claimRetries bounds how often ClaimOperation retries after losing a race
