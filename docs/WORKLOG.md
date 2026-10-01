@@ -75,7 +75,7 @@ Copy this block to the top of the entries section.
 - **The password goes in `PGPASSWORD`,** not on pg_dump's command line, which `ps` shows. libpq warns about `PGPASSWORD` where other users can read a process's environment; on Linux that needs ptrace access `[PG-DUMP]`.
 - **All of A or nothing:** a restore never meets a half backup. The KEK backup is independent and runs even when the data backup fails.
 - **Not in the backup:** `shipyard.env` (ADR-0006 wants its copy encrypted, which needs a tool and key this task does not add). Left for P3.6's runbook; flagged to the owner.
-- **Size:** about 1,270 lines with tests and docs (about 430 of code outside tests), well over the ~400 guide. The parts are not useful apart.
+- **Size:** about 1,270 lines with tests and docs (about 600 of code outside tests), well over the ~400 guide. The parts are not useful apart.
 
 **Verification** (WSL2, Engine 29.8.1, PostgreSQL 18, systemd 255 man pages)
 - `make lint` (after gofmt of `config.go` and the e2e test), `make test`, `make test-integration`: all ok.
