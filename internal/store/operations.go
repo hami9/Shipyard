@@ -25,7 +25,14 @@ var (
 	// ErrIdempotencyMismatch means an idempotency key was reused for a
 	// different app or kind.
 	ErrIdempotencyMismatch = errors.New("idempotency key already used for a different request")
+	// ErrAppDeleting means the app has a delete queued or running: it accepts
+	// no other operation.
+	ErrAppDeleting = errors.New("the app is being deleted")
 )
+
+// KindDelete is the operation that removes an app (P3.8). The store knows
+// it because a pending delete closes the app to every other operation.
+const KindDelete = "delete"
 
 // Operation is one unit of queued work, such as a deploy (ADR-0002).
 type Operation struct {
@@ -84,6 +91,8 @@ func micros(d time.Duration) int64 { return d.Microseconds() }
 //     [GH-BP]. The same key for another app or kind is ErrIdempotencyMismatch.
 //   - Latest wins: a new operation cancels the app's still-queued ones. A
 //     running operation is never interrupted.
+//   - A pending delete is final: while one is queued or running, another
+//     delete returns it (Created false) and anything else is ErrAppDeleting.
 //
 // The app row lock serializes admissions per app, so two concurrent requests
 // cannot both stay queued.
@@ -95,6 +104,17 @@ func (s *Store) EnqueueOperation(ctx context.Context, n NewOperation) (Enqueued,
 	var out Enqueued
 	err := s.InTx(ctx, func(tx *Store) error {
 		if err := tx.LockApp(ctx, n.AppID); err != nil {
+			return err
+		}
+		pending, err := scanOperation(tx.q.QueryRow(ctx, `SELECT `+opColumns+` FROM operations
+			WHERE app_id = $1 AND kind = 'delete' AND status IN ('queued', 'running')`, n.AppID))
+		switch {
+		case err == nil && n.Kind == KindDelete:
+			out = Enqueued{Operation: pending}
+			return nil
+		case err == nil:
+			return ErrAppDeleting
+		case !errors.Is(err, ErrNotFound):
 			return err
 		}
 		op, err := scanOperation(tx.q.QueryRow(ctx, `

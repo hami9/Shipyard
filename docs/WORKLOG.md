@@ -8,11 +8,11 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.7: the crash-safety suite (`TestCrashSafety`: 11 fault points of a deploy, all recovered) |
-| **Next task** | P3.8: delete app as an operation. Owner: the restore drill on a real VPS (ADR-0006's production-ready gate) |
+| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P3.8: delete app as an operation (`shipyard app delete`). Every Phase 3 task is done |
+| **Next task** | The Phase 3 exit criteria, then Phase 4 (GitHub App and webhooks). Owner: the restore drill on a real VPS (ADR-0006's production-ready gate) |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. Deleting an app leaves its containers running: the janitor cannot tell them from another database's without an installation label |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again |
 | **Last updated** | 2026-10-01 |
 
 ## Entry template
@@ -53,6 +53,35 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-01: P3.8 delete app
+
+- **Phase / task:** P3.8: delete app as an operation. The last task of Phase 3.
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Migration `0003`:** `operations.kind` also allows `delete`.
+- **`app.Deleter`** (worker, kind `delete`), phases `release` → `containers` → `network` → `images` → `remove`; see ARCHITECTURE §6, "Deleting an app".
+- **Store:** `StopServing` (routes deleted, the active deployment superseded, in-progress ones cancelled), `AppArtifacts`, `FinishAppDelete` (audit event and the app row in one transaction); each needs the delete operation's lease. `EnqueueOperation` returns a pending delete for another delete and `ErrAppDeleting` for anything else.
+- **API:** `DELETE /v1/apps/{app}` queues the operation (202, or 200 for a pending one). A delete operation's event stream ends as `succeeded` when the operation has vanished with its app. `ErrAppDeleting` is a 409.
+- **CLI:** `shipyard app delete APP --yes [--follow]`; `client.DeleteApp`, `client.IsNotFound`.
+- **Removed:** `store.DeleteIdleApp` and `ErrAppBusy`: the API no longer deletes rows itself.
+
+**Decisions**
+- **The rows go at the end, by the existing cascade.** The schema already cascades an app's rows and keeps audit events forever, so the delete operation removes itself with the app, and the audit event is the lasting record. A soft delete would have changed the data model; not needed for this task.
+- **`release` comes first:** with the routes gone and no deployment active in the database, the reconciler does not restore the containers the next step removes, and Caddy never points at a container that is gone.
+- **Only what this database recorded is removed,** as everywhere since P2.6. This closes the open risk "deleting an app leaves its containers running".
+- **A failed delete leaves the app out of service** and partly removed; repeating the delete finishes it. Going back into service after `release` would need a deploy.
+- **`--yes` is required** in the CLI: the command is not undoable.
+- **API behaviour change:** before, `DELETE` removed an idle app at once (204) and refused a serving one (409, "stop it first", with no way to stop it). That behaviour was never released (v0.1.0 is Phase 0).
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after two gofmt fixes), `make test`, `make test-integration`: all ok. New: `TestDelete`, `TestDeleteFails` (7 cases), `TestDeleteLeaseLostAndResume`, `TestAppDelete` (store), `TestAppDeleteEndpoint` (API), and the delete sections of `TestAppsCRUD` and `TestCLIEndToEnd`.
+- `make test-e2e`, full run: `TestCrashSafety` PASS (1142 s), `TestRestoreDrill` PASS (288 s), `TestPhase1ExitCriteria` FAIL in the P3.2 restore step, before the delete: the P3.4a flake again, now with the diagnostics. Docker answered `docker stop` with "is not running", while the container had been running at the stop (a stop of an already stopped container is a 304, no error), stopped about 1 s later, and was started again by the reconciler. No worker path stopped it (no log line). The test now accepts that answer only when the container finished after the stop was issued.
+- Rerun of `TestPhase1ExitCriteria`: PASS (311 s), ending with `shipyard app delete <slug> --yes --follow`: the host no longer served by Caddy, the app's containers, network, and labelled images gone, the app no longer listed, Caddy still running. (The operation's 404 and the `app.delete` audit event are checked in `TestAppDeleteEndpoint`.) No leftover containers.
+
+**Next**
+- Phase 3 exit criteria (ROADMAP): the owner's part is the restore drill on a real VPS. Then Phase 4 (GitHub App and webhooks).
 
 ### 2026-10-01: P3.7 crash-safety suite
 

@@ -64,7 +64,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "POST /v1/apps", ScopeAdmin, apps.create)
 	route(mux, "GET /v1/apps/{app}", ScopeRead, apps.get)
 	route(mux, "PATCH /v1/apps/{app}", ScopeAdmin, apps.update)
-	route(mux, "DELETE /v1/apps/{app}", ScopeAdmin, apps.delete)
+	route(mux, "DELETE /v1/apps/{app}", ScopeAdmin, ops.deleteApp)
 	route(mux, "GET /v1/apps/{app}/env", ScopeRead, env.list)
 	route(mux, "PUT /v1/apps/{app}/env/{key}", ScopeAdmin, env.set)
 	route(mux, "DELETE /v1/apps/{app}/env/{key}", ScopeAdmin, env.unset)

@@ -353,6 +353,100 @@ func TestRequeueExpired(t *testing.T) {
 	}
 }
 
+// P3.8: a pending delete closes the app to other operations, and its store
+// steps need its lease. StopServing removes the routes and ends every live
+// deployment; FinishAppDelete removes the app with everything under it, the
+// delete operation included, and leaves the audit event.
+func TestAppDelete(t *testing.T) {
+	f := newQueueFixture(t)
+	ctx := t.Context()
+	app, other := f.app(), f.app()
+	d := f.healthy(f.claimed(app, "w1"), "w1")
+	if _, err := f.s.ActivateDeployment(ctx, d.ID, "w1", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.sql(`INSERT INTO routes (app_id, hostname, deployment_id, upstream) VALUES ($1, 'b.example.com', $2, 'c:80'), ($1, 'a.example.com', $2, 'c:80')`, app, d.ID)
+	keep := f.healthy(f.claimed(other, "w1"), "w1")
+	// A deployment in progress whose operation went back to the queue (a
+	// crashed worker): the delete cancels that operation.
+	stuck := f.healthy(f.claimed(app, "w1"), "w1")
+	f.sql(`UPDATE operations SET status = 'queued', lease_owner = NULL, lease_expires_at = NULL WHERE id = $1`, stuck.OperationID)
+
+	del, err := f.s.EnqueueOperation(ctx, store.NewOperation{AppID: app, Kind: store.KindDelete, IdempotencyKey: "del-1"})
+	if err != nil || !del.Created || len(del.Superseded) != 1 || del.Superseded[0] != stuck.OperationID {
+		t.Fatalf("delete = %+v, %v", del, err)
+	}
+	// Pending: another delete is the same one; a deploy is refused; another
+	// app is not affected.
+	if again, err := f.s.EnqueueOperation(ctx, store.NewOperation{AppID: app, Kind: store.KindDelete, IdempotencyKey: "del-2"}); err != nil || again.Created || again.Operation.ID != del.Operation.ID {
+		t.Fatalf("second delete = %+v, %v", again, err)
+	}
+	if _, err := f.s.EnqueueOperation(ctx, store.NewOperation{AppID: app, Kind: "deploy", IdempotencyKey: "late"}); !errors.Is(err, store.ErrAppDeleting) {
+		t.Fatalf("deploy while deleting: %v", err)
+	}
+	f.enqueue(other, "fine-"+uniq())
+
+	// Without the lease (not claimed yet, or another worker's) nothing moves.
+	if _, err := f.s.StopServing(ctx, app, del.Operation.ID, "w1"); !errors.Is(err, store.ErrLeaseLost) {
+		t.Fatalf("StopServing before the claim: %v", err)
+	}
+	if op, err := f.s.ClaimOperation(ctx, "w1", time.Minute); err != nil || op.ID != del.Operation.ID {
+		t.Fatalf("claim: %+v, %v", op, err)
+	}
+	audit := store.AuditEvent{Actor: "system", Action: "app.delete", Target: "app:x", Result: store.AuditSuccess}
+	if err := f.s.FinishAppDelete(ctx, app, del.Operation.ID, "w2", audit); !errors.Is(err, store.ErrLeaseLost) {
+		t.Fatalf("FinishAppDelete by another worker: %v", err)
+	}
+	if err := f.s.FinishAppDelete(ctx, other, del.Operation.ID, "w1", audit); !errors.Is(err, store.ErrLeaseLost) {
+		t.Fatalf("FinishAppDelete of another app: %v", err)
+	}
+
+	art, err := f.s.AppArtifacts(ctx, app)
+	if err != nil || len(art.Deployments) != 2 || len(art.Images) != 1 || art.Images[0] != testImage {
+		t.Fatalf("artifacts = %+v, %v", art, err)
+	}
+	for range 2 { // idempotent
+		hosts, err := f.s.StopServing(ctx, app, del.Operation.ID, "w1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := f.s.DeploymentByID(ctx, d.ID); got.Status != store.DeploySuperseded || got.EndedAt == nil {
+			t.Fatalf("active deployment is now %s", got.Status)
+		}
+		if got, _ := f.s.DeploymentByID(ctx, stuck.ID); got.Status != store.DeployCancelled {
+			t.Fatalf("in-progress deployment is now %s", got.Status)
+		}
+		if len(hosts) == 2 && (hosts[0] != "a.example.com" || hosts[1] != "b.example.com") || len(hosts) == 1 {
+			t.Fatalf("hosts = %v", hosts)
+		}
+	}
+	if _, err := f.s.ActiveDeployment(ctx, app); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("still an active deployment: %v", err)
+	}
+
+	if err := f.s.FinishAppDelete(ctx, app, del.Operation.ID, "w1", audit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AppByID(ctx, app); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("app after the delete: %v", err)
+	}
+	if _, err := f.s.OperationByID(ctx, del.Operation.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete operation after the delete: %v", err)
+	}
+	var left int
+	if err := f.db.QueryRow(ctx, `SELECT (SELECT count(*) FROM deployments WHERE app_id = $1) + (SELECT count(*) FROM routes WHERE app_id = $1)
+		+ (SELECT count(*) FROM operations WHERE app_id = $1)`, app).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("rows left: %d, %v", left, err)
+	}
+	if got, _ := f.s.DeploymentByID(ctx, keep.ID); got.ID != keep.ID {
+		t.Fatal("the other app's deployment is gone")
+	}
+	events, _ := f.s.AuditEvents(ctx, 5)
+	if len(events) == 0 || events[0].Action != "app.delete" || events[0].Actor != "system" || events[0].Result != store.AuditSuccess {
+		t.Fatalf("audit = %+v", events)
+	}
+}
+
 // P3.6a: the reconciler's rebuild request. One per deployment, whatever
 // became of it; nothing is cancelled; an app with an operation in progress,
 // or a deployment that is no longer active, gets none.

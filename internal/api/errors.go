@@ -55,8 +55,8 @@ func writeError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err er
 		writeProblem(w, http.StatusNotFound, "not found")
 	case errors.Is(err, store.ErrIdempotencyMismatch):
 		writeProblem(w, http.StatusConflict, "this Idempotency-Key was already used for a different request")
-	case errors.Is(err, store.ErrAppBusy):
-		writeProblem(w, http.StatusConflict, store.ErrAppBusy.Error())
+	case errors.Is(err, store.ErrAppDeleting):
+		writeProblem(w, http.StatusConflict, "the app is being deleted and accepts no other operation")
 	case errors.Is(err, store.ErrConflict):
 		writeProblem(w, http.StatusConflict, orDefault(msg, "the request conflicts with existing data"))
 	case errors.Is(err, store.ErrInvalid):

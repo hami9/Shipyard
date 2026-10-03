@@ -308,6 +308,21 @@ func (c *Client) Deploy(ctx context.Context, app, ref, idempotencyKey string) (D
 	return r, err
 }
 
+// DeleteApp queues the app's delete operation. The worker takes the app
+// out of service and removes its containers, network, images, and rows; when
+// it has finished, the app and the operation both answer 404 (IsNotFound).
+func (c *Client) DeleteApp(ctx context.Context, app string) (DeployResult, error) {
+	var r DeployResult
+	_, err := c.do(ctx, "DELETE", p("v1", "apps", app), nil, nil, &r)
+	return r, err
+}
+
+// IsNotFound reports whether err is the API's 404.
+func IsNotFound(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+}
+
 // Release is one deployment in an app's history.
 type Release struct {
 	ID            string     `json:"id"`

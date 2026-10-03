@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -112,7 +113,17 @@ func (h *opHandlers) events(w http.ResponseWriter, r *http.Request) {
 			return // shutdown: the client reconnects to the next process
 		case <-time.After(h.poll):
 		}
-		if op, err = h.ops.OperationByID(ctx, id); err != nil {
+		next, err := h.ops.OperationByID(ctx, id)
+		if errors.Is(err, store.ErrNotFound) && op.Kind == app.KindDelete {
+			// A delete that finished removed its own operation with the app
+			// (P3.8): that is its success, and the stream says so.
+			op.Status = store.OpSucceeded
+			data, _ := json.Marshal(toOperationJSON(op))
+			s.printf("event: end\ndata: %s\n\n", data)
+			s.flush()
+			return
+		}
+		if op = next; err != nil {
 			if ctx.Err() == nil {
 				h.log.WarnContext(ctx, "event stream stopped", slog.String("operation_id", id), slog.Any("err", err))
 			}

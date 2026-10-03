@@ -303,7 +303,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
        - It is an ordinary deploy of the recorded commit: the commit must still be on the tracked branch (invariant 7), and the candidate passes the health gate and the switch (invariant 5). It pins the **environment revision the deployment ran with**, not the latest, so the app comes back as it was.
        - It cancels nothing, and an app with an operation queued or running gets no rebuild: that operation replaces the deployment. A rebuild whose deployment is no longer active when it runs fails without building.
        - If the rebuild fails, the reconciler logs it on every pass until a deploy or rollback.
-   - Not yet: removing a deleted app's containers. Deleting an app cascades to its deployments, so its containers look like another database's. Telling them apart needs an installation label on containers.
+   - Since P3.8 an app's containers are removed by its delete operation, before its rows go (§6). The janitor still leaves alone any container whose deployment is not in this database.
 3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
 5. Since P3.4a: remove the images retention no longer keeps (§4, Retention). It runs last, after the janitor, so the containers that used them are gone.
@@ -325,7 +325,8 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 | `shipyard env set APP KEY [--plain]` (value read from **stdin**) | `PUT /v1/apps/{id}/env/{key}` → new environment revision. Body `{"value": …, "secret": true}`; secret by default |
 | `shipyard env unset APP KEY` | `DELETE /v1/apps/{id}/env/{key}` → new environment revision |
 | `shipyard env list APP` | `GET /v1/apps/{id}/env` (keys and whether each is secret; never values) |
-| `shipyard app show\|update\|delete APP` | `GET` / `PATCH` / `DELETE /v1/apps/{id}`. `{id}` accepts the slug. Slug and repo are fixed. Delete is refused while an operation runs or a deployment is live |
+| `shipyard app show\|update APP` | `GET` / `PATCH /v1/apps/{id}`. `{id}` accepts the slug. Slug and repo are fixed |
+| `shipyard app delete APP --yes [--follow]` | `DELETE /v1/apps/{id}` (`admin` scope) queues a `delete` operation and answers like a deploy: 202, or 200 when a delete is already pending. See "Deleting an app" below |
 | `shipyard domain add APP example.com` | `POST /v1/apps/{id}/domains` (`admin` scope): normalize, suffix allow-list, DNS preflight, then a `routes` row. 201; 409 if another app has the hostname; 422 for a bad name or DNS; 503 if the preflight cannot run. An app may have several hostnames |
 | `shipyard domain remove APP example.com` | `DELETE /v1/apps/{id}/domains/{hostname}` → 204 |
 | `shipyard domain list APP` | `GET /v1/apps/{id}/domains` (hostname, the deployment it targets, when DNS was checked) |
@@ -346,6 +347,17 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
     - **Shutdown.** Streams close as soon as the API starts shutting down, so they do not hold it up, and clients resume on the next process.
     - **Client.** The client reconnects with `Last-Event-ID`, treats 45 s of silence as a dead connection, and gives up after 5 failed reconnects in a row.
 - **Log limits.** Historical logs are bounded tails. Known secret values are redacted, but redaction cannot catch every secret an app prints.
+- **Deleting an app** (P3.8, `app.Deleter`, migration `0003`). The API only queues a `delete` operation (invariant 1); the worker does the rest.
+  - **Admission.** The delete waits for a running operation and cancels queued ones. While it is queued or running, the app accepts no other operation (409), and another delete request returns the same operation.
+  - **Steps,** each phase persisted first, each idempotent, so a retry after a crash starts over safely:
+    1. `release`: the routes are deleted and every live deployment is ended in the database, then Caddy is synced. From here the reconciler restores nothing of the app, and Caddy never points at a container that is about to go.
+    2. `containers`: stopped with the app's `stop_timeout`, then removed.
+    3. `network`: the app's bridge network.
+    4. `images`: every image a deployment of the app recorded. One that something else still uses stays, with a warning.
+    5. `remove`: the app row and an audit event (`app.delete`, actor `system`), in one transaction.
+  - **What is touched.** Only containers and images that this database recorded for the app (P2.6).
+  - **The cascade** of step 5 removes the app's environment, secrets, deployments, and operations, the delete operation among them. A finished delete is therefore a 404 on the app and on its operation; its event stream ends with `end` and status `succeeded`. The audit events stay.
+  - **Failure.** A failed step fails the operation and records a failure audit event. The app then exists, out of service and partly removed; deleting it again finishes the job.
   - As implemented (P2.7b, ADR-0008):
     - **Path.** The worker serves `GET /logs` on its private socket (`SHIPYARD_WORKER_SOCKET`, mode 0660, shared group). The API authenticates and proxies it as SSE, so the API never reads Docker (invariant 1).
     - **Which container.** Only the active deployment's container, named by PostgreSQL.

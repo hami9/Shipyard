@@ -225,6 +225,10 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 			return err
 		}
 	}
+	deleter := &app.Deleter{Store: s, Runtime: runtimeAdapter{rt}, Log: log}
+	if router != nil {
+		deleter.Router = router
+	}
 	q := queue.New(s, log, cfg.WorkerID, cfg.Lease, cfg.PollInterval)
 	rec := &reconcile.Reconciler{Queue: s, Store: s, Runtime: runtimeAdapter{rt}, Env: env, Log: log,
 		Janitor: &app.Janitor{Store: s, Runtime: runtimeAdapter{rt}, Window: cfg.ObservationWindow, Log: log},
@@ -252,7 +256,7 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		if err != nil {
 			break // shutdown
 		}
-		process(ctx, q, s, deployer, op, log)
+		process(ctx, q, s, deployer, deleter, op, log)
 	}
 	wg.Wait()
 	log.Info("worker stopped")
@@ -365,7 +369,7 @@ func syncRoutes(ctx context.Context, cfg config.Worker, s *store.Store, log *slo
 }
 
 // process runs one claimed operation while holding its lease.
-func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deployer, op store.Operation, log *slog.Logger) {
+func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deployer, del *app.Deleter, op store.Operation, log *slog.Logger) {
 	log = log.With(slog.String("operation_id", op.ID), slog.String("app_id", op.AppID), slog.String("kind", op.Kind))
 	log.Info("operation claimed", slog.Int("attempt", op.Attempt))
 	held, release := q.Hold(ctx, op)
@@ -374,6 +378,8 @@ func process(ctx context.Context, q *queue.Queue, s *store.Store, d *app.Deploye
 	switch op.Kind {
 	case app.KindDeploy, app.KindRollback:
 		err = d.Run(held, op, q.Owner())
+	case app.KindDelete:
+		err = del.Run(held, op, q.Owner())
 	default:
 		_, err = s.FailOperation(held, op.ID, q.Owner(), fmt.Sprintf("operation kind %q is not supported", op.Kind), 0)
 	}

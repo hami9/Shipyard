@@ -86,6 +86,10 @@ func (a runtimeAdapter) ImageExists(ctx context.Context, id string) (bool, error
 	return a.r.ImageExists(ctx, id)
 }
 
+func (a runtimeAdapter) RemoveNetwork(ctx context.Context, app string) error {
+	return a.r.RemoveNetwork(ctx, app)
+}
+
 func (a runtimeAdapter) ListImages(ctx context.Context) ([]string, error) { return a.r.ListImages(ctx) }
 
 func (a runtimeAdapter) RemoveImage(ctx context.Context, id string) error {

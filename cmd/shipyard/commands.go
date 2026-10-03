@@ -116,6 +116,50 @@ func cmdAppShow(ctx context.Context, e env, c *client.Client, args []string) err
 	})
 }
 
+// cmdAppDelete queues the delete of an app. It is irreversible, so it wants
+// --yes. With --follow it streams the operation's events; the operation
+// disappears with the app, so "the app is gone" is the success it reports.
+func cmdAppDelete(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("app delete", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "")
+	follow := fs.Bool("follow", false, "")
+	pos, err := parse(fs, args, 1)
+	if err != nil {
+		return err
+	}
+	slug := pos[0]
+	if !*yes {
+		return fmt.Errorf("deleting %s takes it offline and removes its containers, network, images, domains, configuration, and history; this cannot be undone. Repeat with --yes", slug)
+	}
+	res, err := c.DeleteApp(ctx, slug)
+	if err != nil {
+		return err
+	}
+	verb := "Queued the"
+	if !res.Created {
+		verb = "Already in progress: the"
+	}
+	fmt.Fprintf(e.stdout, "%s delete of %s.\noperation: %s (%s)\n", verb, slug, res.Operation.ID, res.Operation.Status)
+	for _, id := range res.Superseded {
+		fmt.Fprintf(e.stdout, "cancelled older queued operation %s\n", id)
+	}
+	if !*follow {
+		return nil
+	}
+	op, followErr := c.FollowEvents(ctx, res.Operation.ID, 0, printEvent(e))
+	if _, err := c.GetApp(ctx, slug); client.IsNotFound(err) {
+		fmt.Fprintf(e.stdout, "Deleted %s.\n", slug)
+		return nil
+	}
+	switch {
+	case followErr != nil:
+		return followErr
+	case op.LastError != "":
+		return fmt.Errorf("operation %s %s: %s", op.ID, op.Status, op.LastError)
+	}
+	return fmt.Errorf("operation %s %s, and %s still exists", op.ID, op.Status, slug)
+}
+
 func printEnv(e env, vars client.Env) error {
 	rows := make([][]string, len(vars.Vars))
 	for i, v := range vars.Vars {
@@ -292,13 +336,18 @@ func cmdEvents(ctx context.Context, e env, c *client.Client, args []string) erro
 	return followEvents(ctx, e, c, pos[0])
 }
 
+// printEvent prints one event line, with continuation lines indented.
+func printEvent(e env) func(client.Event) {
+	return func(ev client.Event) {
+		msg := strings.ReplaceAll(strings.TrimRight(ev.Message, "\n"), "\n", "\n"+strings.Repeat(" ", len("15:04:05 level ")))
+		fmt.Fprintf(e.stdout, "%s %-5s %s\n", ev.TS.Local().Format(time.TimeOnly), ev.Level, msg)
+	}
+}
+
 // followEvents prints an operation's events until it ends, and fails unless
 // it succeeded, so `deploy --follow` can gate a CI job.
 func followEvents(ctx context.Context, e env, c *client.Client, id string) error {
-	op, err := c.FollowEvents(ctx, id, 0, func(ev client.Event) {
-		msg := strings.ReplaceAll(strings.TrimRight(ev.Message, "\n"), "\n", "\n"+strings.Repeat(" ", len("15:04:05 level ")))
-		fmt.Fprintf(e.stdout, "%s %-5s %s\n", ev.TS.Local().Format(time.TimeOnly), ev.Level, msg)
-	})
+	op, err := c.FollowEvents(ctx, id, 0, printEvent(e))
 	if err != nil {
 		return err
 	}

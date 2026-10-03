@@ -23,7 +23,6 @@ type AppStore interface {
 	AppByID(ctx context.Context, id string) (store.App, error)
 	AppBySlug(ctx context.Context, slug string) (store.App, error)
 	ListApps(ctx context.Context) ([]store.App, error)
-	DeleteIdleApp(ctx context.Context, id string) error
 }
 
 const maxBodyBytes = 1 << 20
@@ -231,16 +230,4 @@ func (h *appHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, "application/json", toAppJSON(a))
-}
-
-func (h *appHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	a, err := h.lookup(r)
-	if err == nil {
-		err = h.apps.DeleteIdleApp(r.Context(), a.ID)
-	}
-	if err != nil {
-		writeError(w, r, h.log, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }

@@ -207,7 +207,8 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if got := h.viaCaddy(host, "/env?key=GREETING"); got != "hello from e2e" {
 		t.Fatalf("recreated container: GREETING through caddy = %q", got)
 	}
-	if out, err := exec.Command("docker", "stop", "--timeout", "1", third).CombinedOutput(); err != nil {
+	stopAt := time.Now()
+	if out, err := exec.Command("docker", "stop", "--timeout", "1", third).CombinedOutput(); err != nil && !stoppedSince(third, stopAt, out) {
 		state, _ := exec.Command("docker", "inspect", "--format", "{{json .State}} restarts={{.RestartCount}}", third).CombinedOutput()
 		logs, _ := exec.Command("docker", "logs", "--tail", "20", third).CombinedOutput()
 		t.Fatalf("docker stop %s: %v\n%s\nstate: %s\nlogs:\n%s", third[:12], err, out, state, logs)
@@ -284,6 +285,35 @@ func TestPhase1ExitCriteria(t *testing.T) {
 		t.Fatalf("leftover containers of %s:\n%s", slug, n)
 	}
 	h.checkBackup()
+
+	// P3.8: deleting the app is an operation of the worker. It takes the app
+	// out of Caddy, then removes its container, network, and images, and at
+	// last the app itself; the CLI follows it until the app is gone.
+	if out, err := h.cliErr("app", "delete", slug); err == nil || !strings.Contains(out, "--yes") {
+		t.Fatalf("app delete without --yes: %v\n%s", err, out)
+	}
+	out = h.cli("", "app", "delete", slug, "--yes", "--follow")
+	for _, want := range []string{"Queued the delete of " + slug, "out of service: " + host, "containers removed", "Deleted " + slug + "."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("app delete --follow lacks %q:\n%s", want, out)
+		}
+	}
+	h.gone(host)
+	if left := h.docker("ps", "-aq", "--filter", "label=io.shipyard.app="+slug); left != "" {
+		t.Fatalf("containers left after the delete:\n%s", left)
+	}
+	if left := h.docker("image", "ls", "-a", "-q", "--filter", "label=io.shipyard.app="+slug); left != "" {
+		t.Fatalf("images left after the delete:\n%s", left)
+	}
+	if exec.Command("docker", "network", "inspect", "shipyard-app-"+slug).Run() == nil {
+		t.Fatal("the app's network is still there")
+	}
+	if ps := h.cli("", "ps"); strings.Contains(ps, slug) {
+		t.Fatalf("the app is still listed:\n%s", ps)
+	}
+	if got := h.docker("inspect", "--format", "{{.State.Running}}", h.caddy); got != "true" {
+		t.Fatalf("caddy is not running after the delete: %s", got)
+	}
 }
 
 // checkBackup runs `shipyard-worker backup` beside the running worker
@@ -795,6 +825,23 @@ func (h *harness) onlyRunning() string {
 func (h *harness) docker(args ...string) string {
 	h.t.Helper()
 	return run(h.t, "", nil, "docker", args...)
+}
+
+// stoppedSince reports whether a failed docker stop did stop the container:
+// Engine 29 can answer "is not running" for a stop that raced the
+// container's own exit (a stop of an already stopped container is a 304
+// and no error), seen twice in the P3.2 restore step. It counts only if the
+// container finished after the stop was issued.
+func stoppedSince(id string, since time.Time, out []byte) bool {
+	if !strings.Contains(string(out), "is not running") {
+		return false
+	}
+	fin, err := exec.Command("docker", "inspect", "--format", "{{.State.FinishedAt}}", id).Output()
+	if err != nil {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(fin)))
+	return err == nil && !at.Before(since)
 }
 
 func run(t *testing.T, dir string, env []string, name string, args ...string) string {

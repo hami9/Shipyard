@@ -27,6 +27,9 @@ Apps:
              [--dockerfile PATH] [--context PATH] [--health-path PATH]
   app list                 List apps (same as ps)
   app show APP             Show an app's settings
+  app delete APP --yes [--follow]
+                           Take the app offline and remove its containers, network,
+                           images, domains, configuration, and history. Not undoable
   ps                       List apps
 
 Environment (values are read from stdin and never printed):
@@ -139,6 +142,8 @@ func dispatch(ctx context.Context, e env, c *client.Client, args []string) error
 		return cmdAppCreate(ctx, e, c, rest)
 	case "app show":
 		return cmdAppShow(ctx, e, c, rest)
+	case "app delete":
+		return cmdAppDelete(ctx, e, c, rest)
 	case "env set":
 		return cmdEnvSet(ctx, e, c, rest)
 	case "env unset":

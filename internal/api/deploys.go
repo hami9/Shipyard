@@ -94,6 +94,26 @@ func (h *opHandlers) deploy(w http.ResponseWriter, r *http.Request) {
 	h.admit(w, r, a, app.KindDeploy, key, payload)
 }
 
+// deleteApp queues the app's delete operation (P3.8) and answers like
+// deploy: 202 for a new operation, 200 when a delete is already queued or
+// running. The worker takes the app out of service and removes its
+// containers, network, and images; its last step removes the app's rows,
+// the operation among them, so a finished delete is a 404 on both. The API
+// itself deletes nothing (invariant 1).
+func (h *opHandlers) deleteApp(w http.ResponseWriter, r *http.Request) {
+	key, fe := idempotencyKey(r, nil)
+	if len(fe) > 0 {
+		writeError(w, r, h.log, fe)
+		return
+	}
+	a, err := h.lookup(r)
+	if err != nil {
+		writeError(w, r, h.log, err)
+		return
+	}
+	h.admit(w, r, a, app.KindDelete, key, []byte(`{}`))
+}
+
 // idempotencyKey reads the client's Idempotency-Key, or makes one up.
 func idempotencyKey(r *http.Request, fe app.FieldErrors) (string, app.FieldErrors) {
 	key := r.Header.Get(headerIdempotencyKey)

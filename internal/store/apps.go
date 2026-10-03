@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -184,34 +185,101 @@ func (s *Store) ListApps(ctx context.Context) ([]App, error) {
 	return apps, mapError(err)
 }
 
-// ErrAppBusy means an app still has live work: a running operation or a
-// deployment that is starting or serving.
-var ErrAppBusy = errors.New("the app has a running operation or a live deployment; stop it first")
+// The three store steps of the delete operation (P3.8, app.Deleter). Each
+// requires the operation's lease, so a worker that lost it changes nothing.
 
-// DeleteIdleApp deletes an app only when nothing of it is running or
-// serving, so a delete cannot pull rows out from under a worker or orphan a
-// serving container. It returns ErrNotFound or ErrAppBusy otherwise.
-func (s *Store) DeleteIdleApp(ctx context.Context, id string) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockApp(ctx, id); err != nil {
+// holdsDelete locks the delete operation's row and checks that owner still
+// runs it for this app.
+func (s *Store) holdsDelete(ctx context.Context, appID, opID, owner string) error {
+	var one int
+	err := s.q.QueryRow(ctx, `SELECT 1 FROM operations
+		WHERE id = $1 AND app_id = $2 AND kind = 'delete' AND status = 'running' AND lease_owner = $3
+		FOR UPDATE`, opID, appID, owner).Scan(&one)
+	if errors.Is(mapError(err), ErrNotFound) {
+		return ErrLeaseLost
+	}
+	return mapError(err)
+}
+
+// StopServing takes the app out of service in the database: its routes are
+// deleted, its active deployment is superseded, and any deployment still in
+// progress (left by a cancelled operation) is cancelled. After it, Caddy's
+// next sync drops the app, and the reconciler restores nothing of it. It
+// returns the hostnames removed. Repeating it changes nothing.
+func (s *Store) StopServing(ctx context.Context, appID, opID, owner string) ([]string, error) {
+	var hosts []string
+	err := s.InTx(ctx, func(tx *Store) error {
+		if err := tx.holdsDelete(ctx, appID, opID, owner); err != nil {
 			return err
 		}
-		var busy bool
-		if err := tx.q.QueryRow(ctx, `SELECT
-			EXISTS (SELECT 1 FROM operations WHERE app_id = $1 AND status = 'running') OR
-			EXISTS (SELECT 1 FROM deployments WHERE app_id = $1
-			        AND status IN ('building', 'starting', 'health_checking', 'switching', 'active'))`, id).Scan(&busy); err != nil {
+		rows, err := tx.q.Query(ctx, `DELETE FROM routes WHERE app_id = $1 RETURNING hostname`, appID)
+		if err != nil {
 			return mapError(err)
 		}
-		if busy {
-			return ErrAppBusy
+		if hosts, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return mapError(err)
 		}
-		return tx.DeleteApp(ctx, id)
+		if _, err := tx.q.Exec(ctx, `UPDATE deployments SET status = 'superseded', ended_at = now()
+			WHERE app_id = $1 AND status = 'active'`, appID); err != nil {
+			return mapError(err)
+		}
+		_, err = tx.q.Exec(ctx, `UPDATE deployments SET status = 'cancelled', ended_at = now()
+			WHERE app_id = $1 AND status IN ('queued', 'building', 'starting', 'health_checking', 'switching')`, appID)
+		return mapError(err)
+	})
+	slices.Sort(hosts)
+	return hosts, err
+}
+
+// Artifacts are what an app's deployments left on the host, as recorded.
+type Artifacts struct {
+	Deployments []string // every deployment ID: the app's containers carry one
+	Images      []string // distinct image IDs
+}
+
+// AppArtifacts lists the deployments and images recorded for an app. The
+// delete operation removes only containers and images found here: anything
+// else on the host is not this installation's (P2.6).
+func (s *Store) AppArtifacts(ctx context.Context, appID string) (Artifacts, error) {
+	var a Artifacts
+	rows, err := s.q.Query(ctx, `SELECT id, coalesce(image_id, '') FROM deployments WHERE app_id = $1 ORDER BY created_at, id`, appID)
+	if err != nil {
+		return a, mapError(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, image string
+		if err := rows.Scan(&id, &image); err != nil {
+			return a, mapError(err)
+		}
+		a.Deployments = append(a.Deployments, id)
+		if image != "" && !slices.Contains(a.Images, image) {
+			a.Images = append(a.Images, image)
+		}
+	}
+	return a, mapError(rows.Err())
+}
+
+// FinishAppDelete removes the app row and records the audit event, in one
+// transaction. The cascade takes the app's environment, secrets,
+// deployments, routes, and operations, the delete operation among them: an
+// operation that no longer exists is how a finished delete looks. The audit
+// event stays (ADR-0007).
+func (s *Store) FinishAppDelete(ctx context.Context, appID, opID, owner string, audit AuditEvent) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.holdsDelete(ctx, appID, opID, owner); err != nil {
+			return err
+		}
+		if _, err := tx.RecordAudit(ctx, audit); err != nil {
+			return err
+		}
+		return tx.DeleteApp(ctx, appID)
 	})
 }
 
 // DeleteApp removes an app and, by cascade, its history. It returns
-// ErrNotFound when the app does not exist. The API uses DeleteIdleApp.
+// ErrNotFound when the app does not exist. The API never calls it: it queues
+// a delete operation, and FinishAppDelete is that operation's last step.
 func (s *Store) DeleteApp(ctx context.Context, id string) error {
 	tag, err := s.q.Exec(ctx, `DELETE FROM apps WHERE id = $1`, id)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -154,14 +155,16 @@ func TestAppsCRUD(t *testing.T) {
 		t.Fatalf("patch immutable fields: %d %s", r.status, r.raw)
 	}
 
-	if r := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); r.status != http.StatusNoContent {
+	// Delete queues an operation (P3.8, TestAppDeleteEndpoint): the app is
+	// still there until the worker has removed it.
+	if r := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); r.status != http.StatusAccepted || opField(r, "kind") != "delete" {
 		t.Fatalf("delete: %d %s", r.status, r.raw)
 	}
-	if r := f.call("GET", "/v1/apps/web", f.reader, "", ""); r.status != http.StatusNotFound {
-		t.Fatalf("GET after delete: %d", r.status)
+	if r := f.call("GET", "/v1/apps/web", f.reader, "", ""); r.status != http.StatusOK {
+		t.Fatalf("GET while the delete is queued: %d", r.status)
 	}
-	if r := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); r.status != http.StatusNotFound {
-		t.Fatalf("second delete: %d", r.status)
+	if r := f.call("DELETE", "/v1/apps/nope", f.admin, "", ""); r.status != http.StatusNotFound {
+		t.Fatalf("delete of an unknown app: %d", r.status)
 	}
 }
 
@@ -211,35 +214,89 @@ func TestAppsRejects(t *testing.T) {
 	}
 }
 
-func TestAppDeleteRefusedWhileBusy(t *testing.T) {
+// P3.8: DELETE queues the app's delete operation behind a running one,
+// cancelling queued ones. Until the worker has finished, the app exists
+// and refuses new deploys; a repeated delete is the same operation. When the
+// worker's last step removes the app, the operation goes with it: its event
+// stream ends as succeeded, both answer 404, and the audit events stay.
+func TestAppDeleteEndpoint(t *testing.T) {
 	f := newAPIFixture(t)
 	ctx := t.Context()
 	r := f.json("POST", "/v1/apps", `{"slug":"web","repo":"hami9/demo","branch":"main","port":3000}`)
 	id := r.body["id"].(string)
-	if _, err := f.s.EnqueueOperation(ctx, store.NewOperation{AppID: id, Kind: "deploy", IdempotencyKey: "k"}); err != nil {
-		t.Fatal(err)
-	}
-	op, err := f.s.ClaimOperation(ctx, "w1", time.Minute)
+	f.deploy("web", f.deployer, "runs", "")
+	running, err := f.s.ClaimOperation(ctx, "w1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); r.status != http.StatusConflict {
-		t.Fatalf("delete with a running operation: %d %s", r.status, r.raw)
+	waiting := opField(f.deploy("web", f.deployer, "waits", ""), "id").(string)
+
+	for name, token := range map[string]string{"read": f.reader, "deploy": f.deployer} {
+		if r := f.call("DELETE", "/v1/apps/web", token, "", ""); r.status != http.StatusForbidden {
+			t.Fatalf("delete with a %s token: %d", name, r.status)
+		}
 	}
-	if err := f.s.CompleteOperation(ctx, op.ID, "w1"); err != nil {
-		t.Fatal(err)
+	del := f.call("DELETE", "/v1/apps/web", f.admin, "", "")
+	delID, _ := opField(del, "id").(string)
+	if del.status != http.StatusAccepted || opField(del, "kind") != "delete" || opField(del, "status") != store.OpQueued ||
+		del.header.Get("Location") != "/v1/operations/"+delID || !strings.Contains(del.raw, waiting) {
+		t.Fatalf("delete: %d %s", del.status, del.raw)
 	}
-	if r := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); r.status != http.StatusNoContent {
-		t.Fatalf("delete when idle: %d %s", r.status, r.raw)
+	if got, _ := f.s.OperationByID(ctx, running.ID); got.Status != store.OpRunning {
+		t.Fatalf("the running deploy is now %s", got.Status)
+	}
+	if got, _ := f.s.OperationByID(ctx, waiting); got.Status != store.OpCancelled {
+		t.Fatalf("the queued deploy is %s, want cancelled", got.Status)
+	}
+	if again := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); again.status != http.StatusOK || opField(again, "id") != delID {
+		t.Fatalf("second delete: %d %s", again.status, again.raw)
+	}
+	if r := f.deploy("web", f.deployer, "late", ""); r.status != http.StatusConflict || !strings.Contains(r.raw, "being deleted") {
+		t.Fatalf("deploy while deleting: %d %s", r.status, r.raw)
+	}
+	if r := f.call("GET", "/v1/apps/web", f.reader, "", ""); r.status != http.StatusOK {
+		t.Fatalf("GET while deleting: %d", r.status)
 	}
 
-	events, _ := f.s.AuditEvents(ctx, 10)
-	var actions []string
-	for _, e := range events {
-		actions = append(actions, e.Action+" "+e.Result)
+	// The worker's part: the deploy ends, the delete is claimed and runs.
+	s, _ := f.stream(delID, f.reader, "")
+	s.next() // retry
+	if err := f.s.CompleteOperation(ctx, running.ID, "w1"); err != nil {
+		t.Fatal(err)
 	}
-	want := "DELETE /v1/apps/{app} success,DELETE /v1/apps/{app} failure,POST /v1/apps success"
-	if strings.Join(actions, ",") != want {
-		t.Fatalf("audit = %v", actions)
+	if op, err := f.s.ClaimOperation(ctx, "w1", time.Minute); err != nil || op.ID != delID {
+		t.Fatalf("claim: %+v, %v", op, err)
+	}
+	if _, err := f.s.AppendOperationEvent(ctx, delID, store.LevelInfo, "1 containers removed"); err != nil {
+		t.Fatal(err)
+	}
+	s.wantEvent("1", "1 containers removed")
+	if _, err := f.s.StopServing(ctx, id, delID, "w1"); err != nil {
+		t.Fatal(err)
+	}
+	audit := store.AuditEvent{Actor: "system", Action: "app.delete", Target: "app:web", Result: store.AuditSuccess}
+	if err := f.s.FinishAppDelete(ctx, id, delID, "w1", audit); err != nil {
+		t.Fatal(err)
+	}
+	s.wantEnd(store.OpSucceeded)
+	for _, path := range []string{"/v1/apps/web", "/v1/operations/" + delID, "/v1/operations/" + running.ID} {
+		if r := f.call("GET", path, f.reader, "", ""); r.status != http.StatusNotFound {
+			t.Fatalf("GET %s after the delete: %d", path, r.status)
+		}
+	}
+	if r := f.call("DELETE", "/v1/apps/web", f.admin, "", ""); r.status != http.StatusNotFound {
+		t.Fatalf("delete of a deleted app: %d", r.status)
+	}
+
+	events, _ := f.s.AuditEvents(ctx, 20)
+	var got []string
+	for _, e := range events {
+		got = append(got, e.Actor[:strings.IndexAny(e.Actor+":", ":")]+" "+e.Action+" "+e.Result)
+	}
+	for _, want := range []string{"system app.delete success", "token DELETE /v1/apps/{app} success", "token DELETE /v1/apps/{app} denied",
+		"token POST /v1/apps/{app}/deployments failure"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("audit lacks %q: %v", want, got)
+		}
 	}
 }

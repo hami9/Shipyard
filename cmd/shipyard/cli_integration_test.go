@@ -175,6 +175,26 @@ func TestCLIEndToEnd(t *testing.T) {
 		t.Fatalf("events: exit %d\nstdout:\n%s\nstderr: %s", code, out, errb)
 	}
 
+	// P3.8: app delete wants --yes, then queues the delete; a second request
+	// finds the same operation, and the app takes no deploy meanwhile.
+	if code, out, errb := f.run("", "app", "delete", "api"); code != 1 || out != "" || !strings.Contains(errb, "cannot be undone. Repeat with --yes") {
+		t.Fatalf("app delete without --yes: %d\n%s%s", code, out, errb)
+	}
+	queued := f.ok("", "app", "delete", "api", "--yes")
+	dm := regexp.MustCompile(`^Queued the delete of api\.\noperation: ([0-9a-f-]{36}) \(queued\)\n$`).FindStringSubmatch(queued)
+	if dm == nil {
+		t.Fatalf("app delete:\n%s", queued)
+	}
+	if again := f.ok("", "app", "delete", "api", "--yes"); !strings.Contains(again, "Already in progress: the delete of api.") || !strings.Contains(again, dm[1]) {
+		t.Fatalf("second app delete:\n%s", again)
+	}
+	if code, _, errb := f.run("", "deploy", "api"); code != 1 || !strings.Contains(errb, "409") || !strings.Contains(errb, "being deleted") {
+		t.Fatalf("deploy while deleting: %d %s", code, errb)
+	}
+	if code, _, errb := f.run("", "app", "delete", "nope", "--yes"); code != 1 || !strings.Contains(errb, "404") {
+		t.Fatalf("delete of an unknown app: %d %s", code, errb)
+	}
+
 	// Negative: neither the token nor the secret value was ever printed.
 	for name, leak := range map[string]string{"token": f.token, "secret": "cli-canary-9e1"} {
 		if strings.Contains(f.seen.String(), leak) {
