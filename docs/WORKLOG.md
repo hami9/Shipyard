@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.4a: KEK rotation (`shipyard-worker kek status`, `kek rewrap`, migration 0005), ADR-0012 |
-| **Next task** | P5.4b: HPKE KEKs so the API seals with a public key and cannot decrypt (ADR-0012). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.4: KEK rotation (P5.4a) and HPKE KEKs so the API cannot decrypt (P5.4b), ADR-0012 |
+| **Next task** | P5.5: Prometheus metrics on an internal listener. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,47 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P5.4b HPKE KEKs
+
+- **Phase / task:** P5.4b: asymmetric sealing so the API cannot decrypt (ADR-0012)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`internal/secrets`:** a KEK is now an interface with two kinds.
+  - Symmetric `<id>.key` (as before).
+  - HPKE `<id>.hpke` plus `<id>.pub`: `crypto/hpke`, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM, info `shipyard-dek-v1|kek|value`.
+  - **`LoadKeyring`** (worker): every kind; a `.hpke` must be mode `0600`-like (no group or other bits); a `.pub` must match its private key; an ID defined twice is an error.
+  - **`LoadSealKeyring`** (API): the active KEK only, `.key` or else `.pub`, never a private key.
+  - **New functions:** `CanOpen`, `GenerateHPKE`.
+- **API:** `shipyard-api serve` uses `LoadSealKeyring`.
+- **Worker:** refuses to start if it cannot open the active KEK. `kek rewrap` precheck and `kek status` tell "public key only" apart from "not loaded".
+- **`shipyard-worker kek generate ID`:**
+  - writes the pair into `SHIPYARD_KEK_DIR` without needing the database;
+  - creates both files exclusively, leaves no half pair, and refuses an ID that has any key file;
+  - prints the next steps.
+- **Backups:** target B copies `.hpke` and `.pub` files, and the manifest lists each KEK ID once. A restore accepts a `.key` or a `.hpke` per ID.
+- **Docs:** ARCHITECTURE (component table, secrets), env example, ROADMAP (P5.4 ticked, P5.7 item), CHANGELOG.
+
+**Decisions**
+- **DHKEM(X25519), not X-Wing:** final in RFC 9180, versus a draft; ADR-0012.
+- **The private-key mode check is stricter than for `.key`:** the API shares the `shipyard` group, so group read must be refused.
+- **`kek generate` writes into the KEK directory directly.** The operator runs it as root and chowns the `.hpke` to the worker; the printed steps say so.
+
+**Verification**
+- `make lint` and `go test -race ./...`: exit 0.
+- Integration for `cmd/shipyard-worker`, `cmd/shipyard-api`, `internal/secrets`, `internal/backup`: ok.
+- **New tests:**
+  - `TestHPKEKeyring`: the API keyring seals and cannot open; the worker opens; another row, a relabel, or a tampered wrapping each give `ErrDecrypt`; symmetric→HPKE rewrap, after which `.key` and other keys can go.
+  - `TestLoadHPKERejects` (6 cases) and `TestLoadSealKeyring` (never reads `.hpke`, loads only the active KEK).
+  - `TestKEKGenerate`, `TestKEKRotationToHPKE` (the API sets with the public key; `Resolve` fails for the API and succeeds for the worker).
+  - Backup and restore cases for `.hpke` and `.pub`.
+- `go test -tags e2e -run TestPhase1ExitCriteria`: PASS, 558.3 s; no leftovers.
+- **Not run:** `TestRestoreDrill` and `TestCrashSafety`; the session's usage limit was reached.
+
+**Next**
+- Owner: run `make test-e2e`; `TestRestoreDrill` covers the backup of KEK files.
+- P5.5: Prometheus metrics on an internal listener.
 
 ### 2026-10-04: P5.4a KEK rotation
 

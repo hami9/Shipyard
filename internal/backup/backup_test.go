@@ -234,12 +234,23 @@ func TestBackupKeys(t *testing.T) {
 	}
 	os.Remove(filepath.Join(f.root, "kek", "k1.key")) // retired
 	f.write("kek/k3.key", strings.Repeat("c", 32))
+	// ADR-0012: an HPKE KEK's private and public files are backed up too,
+	// and its ID is listed once.
+	f.write("kek/k4.hpke", strings.Repeat("d", 32))
+	f.write("kek/k4.pub", strings.Repeat("e", 32))
 	f.job.Now = func() time.Time { return time.Date(2026, 10, 2, 2, 30, 0, 0, time.UTC) }
 	if err := f.job.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.names("b"); !slices.Equal(got, []string{"k1.key", "k2.key", "k3.key"}) {
+	if got := f.names("b"); !slices.Equal(got, []string{"k1.key", "k2.key", "k3.key", "k4.hpke", "k4.pub"}) {
 		t.Fatalf("target B = %v", got)
+	}
+	var m Manifest
+	if err := json.Unmarshal([]byte(f.read("a/20261002T023000Z/"+ManifestName)), &m); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(m.KEKIDs, []string{"k2", "k3", "k4"}) {
+		t.Fatalf("manifest KEK IDs = %v", m.KEKIDs)
 	}
 
 	f.write("kek/k2.key", strings.Repeat("x", 32))
@@ -264,7 +275,7 @@ func TestBackupKeys(t *testing.T) {
 	for _, k := range []string{"k1.key", "k2.key"} {
 		os.Remove(filepath.Join(empty.root, "kek", k))
 	}
-	if err := empty.job.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "no .key files") {
+	if err := empty.job.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "no .key or .hpke files") {
 		t.Fatalf("no keys: %v", err)
 	}
 }

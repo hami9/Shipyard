@@ -91,11 +91,13 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 
 func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	log.Info("starting", slog.String("version", buildinfo.Get().String()))
-	// The API seals new environment values, so it needs the active KEK.
+	// The API seals new environment values, so it needs the active KEK, and
+	// only that: its symmetric key, or with an HPKE KEK just the public key,
+	// so the API cannot open stored values (ADR-0012).
 	if cfg.KEKActive == "" {
 		return fmt.Errorf("%s is required to serve: it names the KEK in %s that seals new values", config.EnvKEKActive, cfg.KEKDir)
 	}
-	keys, err := secrets.LoadKeyring(cfg.KEKDir, cfg.KEKActive)
+	keys, err := secrets.LoadSealKeyring(cfg.KEKDir, cfg.KEKActive)
 	if err != nil {
 		return fmt.Errorf("load KEKs: %w", err)
 	}

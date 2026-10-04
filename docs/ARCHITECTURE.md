@@ -91,7 +91,7 @@ Shipyard runs on one host. The pieces interact as follows:
 | Process | Runs as | May reach | Must never reach |
 | --- | --- | --- | --- |
 | Caddy | Container attached to every app network. It alone publishes 80/tcp, 443/tcp, and 443/udp. | App containers, the API listener | Docker socket |
-| `shipyard-api` | systemd service, dedicated unprivileged user, **not** in the `docker` group | PostgreSQL, key file (to seal secrets) | Docker socket, Caddy admin socket |
+| `shipyard-api` | systemd service, dedicated unprivileged user, **not** in the `docker` group | PostgreSQL, the active KEK to seal secrets: with an HPKE KEK only its public key (ADR-0012) | Docker socket, Caddy admin socket |
 | `shipyard-worker` | systemd service in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]` | Docker socket, Caddy admin socket, PostgreSQL, GitHub, key file | — |
 | PostgreSQL | Host service on localhost or a Unix socket, or a container with **no** published port | — | Public network |
 | BuildKit | Rootless BuildKit (uid 1000) in a container managed by `buildx` (`docker-container` driver), with CPU and memory limits (ADR-0010) | Internet, for dependency downloads | Shipyard credentials, Docker socket |
@@ -518,7 +518,13 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   2. Run `shipyard-worker kek rewrap`. It opens each data key with its old KEK and wraps it with the active one, leaving every ciphertext as it was.
   3. `shipyard-worker kek status` shows what each KEK still wraps. Retire an old file once it wraps nothing; backup target B keeps its copy.
   - Migration `0005` lets `secret_values` change only by such a re-wrap (a new `wrapped_dek` with a new `kek_id`). Any other UPDATE is still rejected.
-- **Asymmetric sealing** (P5.4b, ADR-0012): an HPKE KEK (`<id>.hpke` for the worker only, `<id>.pub` for the API) lets the API seal without being able to open `[GO-HPKE][RFC9180]`.
+- **Asymmetric sealing** (ADR-0012) `[GO-HPKE][RFC9180]`:
+  - An HPKE KEK is `<id>.hpke` (the private key, mode 0600, the worker's user only) plus `<id>.pub`, made by `shipyard-worker kek generate <id>`.
+  - **Suite:** DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM. The info `shipyard-dek-v1|<kek_id>|<value_id>` binds each wrapped DEK to its KEK and row.
+  - **The API** loads only the active KEK (`LoadSealKeyring`): its `.key`, or else its `.pub`. It never reads a private key, so with an HPKE KEK active it seals but cannot open.
+  - **The worker** loads every KEK and refuses to start without the active one's private key.
+  - **Moving an existing install:** generate a pair, make it active, restart, `kek rewrap`, then delete the `.key` files.
+  - **Backups:** target B copies `.hpke` and `.pub` files, and a restore accepts either a `.key` or a `.hpke` for each KEK.
 
 **Host firewall** `[DK-FW]`
 

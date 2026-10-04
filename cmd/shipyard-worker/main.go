@@ -52,6 +52,10 @@ Commands:
             Move every value's data key to SHIPYARD_KEK_ACTIVE (ADR-0012):
             run it after adding a KEK file, making it active, and
             restarting both services
+  kek generate ID
+            Write a new HPKE KEK to SHIPYARD_KEK_DIR: ID.hpke (private,
+            the worker's only) and ID.pub (the API seals with it and
+            cannot decrypt)
   version   Print version information
 
 Configuration is read from SHIPYARD_* environment variables (see deploy/shipyard.env.example).
@@ -76,8 +80,20 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 		return 0
 	case "run", "backup":
 	case "kek":
+		if len(args) == 3 && args[1] == "generate" {
+			// Needs no database: only the KEK directory.
+			dir, ok := lookup(config.EnvKEKDir)
+			if !ok || dir == "" {
+				dir = config.DefaultKEKDir
+			}
+			if err := kekGenerate(dir, args[2], stdout); err != nil {
+				fmt.Fprintln(stderr, "kek generate:", err)
+				return 1
+			}
+			return 0
+		}
 		if len(args) != 2 || (args[1] != "status" && args[1] != "rewrap") {
-			fmt.Fprintf(stderr, "kek needs status or rewrap\n\n%s", usage)
+			fmt.Fprintf(stderr, "kek needs status, rewrap, or generate ID\n\n%s", usage)
 			return 2
 		}
 	case "restore":
@@ -219,6 +235,10 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	keys, err := secrets.LoadKeyring(cfg.KEKDir, cfg.KEKActive)
 	if err != nil {
 		return fmt.Errorf("load KEKs: %w", err)
+	}
+	if !keys.CanOpen(cfg.KEKActive) {
+		return fmt.Errorf("the worker opens values sealed with %s, so it needs %s%s, not only %s%s (ADR-0012)",
+			cfg.KEKActive, cfg.KEKActive, secrets.PrivateSuffix, cfg.KEKActive, secrets.PublicSuffix)
 	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {

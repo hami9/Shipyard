@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -228,6 +230,152 @@ func TestLoadKeyring(t *testing.T) {
 	write("k2.key", append(GenerateKey(), '\n'), 0o600)
 	if _, err := LoadKeyring(dir, "k1"); err == nil {
 		t.Fatal("33-byte KEK file accepted")
+	}
+}
+
+// keyDir is a KEK directory with files written at exact modes.
+type keyDir struct {
+	t   *testing.T
+	dir string
+}
+
+func newKeyDir(t *testing.T) keyDir {
+	if runtime.GOOS == "windows" {
+		t.Skip("file mode checks are POSIX-only")
+	}
+	return keyDir{t, t.TempDir()}
+}
+
+func (d keyDir) write(name string, b []byte, mode os.FileMode) {
+	d.t.Helper()
+	p := filepath.Join(d.dir, name)
+	if err := os.WriteFile(p, b, mode); err != nil {
+		d.t.Fatal(err)
+	}
+	if err := os.Chmod(p, mode); err != nil {
+		d.t.Fatal(err)
+	}
+}
+
+// ADR-0012: with an HPKE KEK, the API's keyring holds only the public key.
+// It seals what the worker's keyring opens, and cannot open anything.
+func TestHPKEKeyring(t *testing.T) {
+	d := newKeyDir(t)
+	priv, pub, err := GenerateHPKE()
+	if err != nil || len(priv) != 32 || len(pub) != 32 {
+		t.Fatalf("GenerateHPKE = %d, %d bytes, %v", len(priv), len(pub), err)
+	}
+	d.write("a1.hpke", priv, 0o600)
+	d.write("a1.pub", pub, 0o644)
+	d.write("k1.key", GenerateKey(), 0o640)
+
+	worker, err := LoadKeyring(d.dir, "a1")
+	if err != nil || !worker.CanOpen("a1") || !worker.CanOpen("k1") || !slices.Equal(worker.IDs(), []string{"a1", "k1"}) {
+		t.Fatalf("worker keyring: %v, %v", worker, err)
+	}
+	api, err := LoadSealKeyring(d.dir, "a1")
+	if err != nil || api.CanOpen("a1") || !api.Has("a1") || api.Has("k1") {
+		t.Fatalf("API keyring: %v", err)
+	}
+	id := NewValueID()
+	s, err := api.Seal(appA, "DATABASE_URL", id, []byte("postgres://secret"))
+	if err != nil || s.KEKID != "a1" {
+		t.Fatalf("API seal = %+v, %v", s, err)
+	}
+	if _, err := api.Open(appA, "DATABASE_URL", s); !errors.Is(err, ErrDecrypt) || !strings.Contains(err.Error(), "only the public key") {
+		t.Fatalf("the API opened a value: %v", err)
+	}
+	if got, err := worker.Open(appA, "DATABASE_URL", s); err != nil || string(got) != "postgres://secret" {
+		t.Fatalf("worker open = %q, %v", got, err)
+	}
+
+	// The binding: another row, another KEK ID, or a flipped bit fails.
+	other, _, _ := GenerateHPKE()
+	d.write("a2.hpke", other, 0o600)
+	both, _ := LoadKeyring(d.dir, "a1")
+	for name, bad := range map[string]Sealed{
+		"other value ID": {ValueID: NewValueID(), Ciphertext: s.Ciphertext, WrappedDEK: s.WrappedDEK, KEKID: "a1"},
+		"relabelled":     {ValueID: id, Ciphertext: s.Ciphertext, WrappedDEK: s.WrappedDEK, KEKID: "a2"},
+		"tampered":       {ValueID: id, Ciphertext: s.Ciphertext, WrappedDEK: flip(s.WrappedDEK), KEKID: "a1"},
+	} {
+		if _, err := both.Open(appA, "DATABASE_URL", bad); !errors.Is(err, ErrDecrypt) {
+			t.Errorf("%s: err = %v, want ErrDecrypt", name, err)
+		}
+	}
+
+	// A symmetric value moves to the HPKE KEK and then needs only its key.
+	symOnly, _ := LoadKeyring(d.dir, "k1")
+	old, _ := symOnly.Seal(appA, "K", id, []byte("v"))
+	wrapped, err := worker.Rewrap(id, old.WrappedDEK, "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(d.dir, "k1.key"))
+	os.Remove(filepath.Join(d.dir, "a2.hpke"))
+	after, _ := LoadKeyring(d.dir, "a1")
+	if got, err := after.Open(appA, "K", Sealed{ValueID: id, Ciphertext: old.Ciphertext, WrappedDEK: wrapped, KEKID: "a1"}); err != nil || string(got) != "v" {
+		t.Fatalf("open after rewrap to HPKE: %q, %v", got, err)
+	}
+	// The API's keyring cannot rewrap: that needs opening.
+	if _, err := api.Rewrap(id, wrapped, "a1"); !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("API rewrap: %v", err)
+	}
+}
+
+func flip(b []byte) []byte { c := bytes.Clone(b); c[len(c)-1] ^= 1; return c }
+
+func TestLoadHPKERejects(t *testing.T) {
+	priv, pub, _ := GenerateHPKE()
+	_, otherPub, _ := GenerateHPKE()
+	for name, tc := range map[string]struct {
+		files  map[string][]byte
+		modes  map[string]os.FileMode
+		active string
+		want   string
+	}{
+		"group-readable private key": {map[string][]byte{"a1.hpke": priv}, map[string]os.FileMode{"a1.hpke": 0o640}, "a1", "accessible to others than its owner"},
+		"mismatched public key":      {map[string][]byte{"a1.hpke": priv, "a1.pub": otherPub}, nil, "a1", "does not match its private key"},
+		"defined twice":              {map[string][]byte{"a1.hpke": priv, "a1.key": GenerateKey()}, nil, "a1", "defined twice"},
+		"garbage private key":        {map[string][]byte{"a1.hpke": []byte("short")}, nil, "a1", "not an X25519 HPKE private key"},
+		"garbage public key":         {map[string][]byte{"k1.key": GenerateKey(), "a1.pub": []byte("short")}, nil, "k1", "not an X25519 HPKE public key"},
+		"active missing":             {map[string][]byte{"a1.pub": pub}, nil, "a2", `active KEK "a2" is not loaded`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newKeyDir(t)
+			for f, b := range tc.files {
+				mode := os.FileMode(0o600)
+				if m, ok := tc.modes[f]; ok {
+					mode = m
+				}
+				d.write(f, b, mode)
+			}
+			if _, err := LoadKeyring(d.dir, tc.active); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// The API's loader reads the active KEK alone and never a private key: a
+// broken .hpke file or another KEK does not matter to it.
+func TestLoadSealKeyring(t *testing.T) {
+	d := newKeyDir(t)
+	_, pub, _ := GenerateHPKE()
+	d.write("a1.pub", pub, 0o644)
+	d.write("a1.hpke", []byte("not even a key"), 0o644)
+	d.write("k0.key", GenerateKey(), 0o644) // world-readable, but not active
+	k, err := LoadSealKeyring(d.dir, "a1")
+	if err != nil || !slices.Equal(k.IDs(), []string{"a1"}) {
+		t.Fatalf("LoadSealKeyring(a1) = %v, %v", k, err)
+	}
+	d.write("k1.key", GenerateKey(), 0o640)
+	if k, err := LoadSealKeyring(d.dir, "k1"); err != nil || !k.CanOpen("k1") || k.Has("a1") {
+		t.Fatalf("LoadSealKeyring(k1): %v", err)
+	}
+	for active, want := range map[string]string{"k0": "accessible to other users", "zz": "neither .key nor .pub", "../a1": "invalid KEK id"} {
+		if _, err := LoadSealKeyring(d.dir, active); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("LoadSealKeyring(%s) = %v, want %q", active, err, want)
+		}
 	}
 }
 

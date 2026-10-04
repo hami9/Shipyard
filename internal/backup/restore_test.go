@@ -86,6 +86,14 @@ func TestRestore(t *testing.T) {
 		t.Fatal("the password is not in PGPASSWORD, or it was logged")
 	}
 
+	// ADR-0012: an HPKE private key opens values as well as a .key file does.
+	f, r, _ = restoreFixture(t, "")
+	os.Remove(filepath.Join(f.root, "kek", "k2.key"))
+	f.write("kek/k2.hpke", strings.Repeat("p", 32))
+	if err := r.Run(t.Context()); err != nil {
+		t.Fatalf("restore with k2.hpke instead of k2.key: %v", err)
+	}
+
 	// With Caddy disabled its data is skipped, with a warning.
 	f, r, _ = restoreFixture(t, "")
 	r.Caddy = nil

@@ -217,14 +217,15 @@ flowchart LR
 - [x] **P5.3** API rate limiting, auth-failure throttling, and token revoke and rotate commands ([ADR-0011](adr/0011-api-limits-and-token-management.md)). Split into:
   - [x] **P5.3a** Per-client request limits and auth-failure throttling (429 with `Retry-After`).
   - [x] **P5.3b** `shipyard-api token rotate`, plus `GET /v1/tokens`, `DELETE /v1/tokens/{prefix}`, `POST /v1/tokens/self/rotate`, and `shipyard token list|revoke|rotate`.
-- [ ] **P5.4** KEK rotation command with a test, and an evaluation of asymmetric sealing so the API cannot decrypt ([ADR-0012](adr/0012-kek-rotation-and-asymmetric-sealing.md); the owner chose to implement the sealing too). Split into:
+- [x] **P5.4** KEK rotation command with a test, and an evaluation of asymmetric sealing so the API cannot decrypt ([ADR-0012](adr/0012-kek-rotation-and-asymmetric-sealing.md); the owner chose to implement the sealing too). Split into:
   - [x] **P5.4a** `shipyard-worker kek status|rewrap`, and migration `0005` (re-wrap-only updates of `secret_values`).
-  - [ ] **P5.4b** HPKE KEKs (`<id>.hpke`/`<id>.pub`, DHKEM X25519): the API seals with the public key only; `shipyard-worker kek generate`; backups copy the new files.
+  - [x] **P5.4b** HPKE KEKs (`<id>.hpke`/`<id>.pub`, DHKEM X25519): the API seals with the public key only; `shipyard-worker kek generate`; backups copy the new files.
 - [ ] **P5.5** Prometheus metrics on an internal listener: deploy duration, failure rate, queue depth, and health.
 - [ ] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold).
 - [ ] **P5.7** `deploy/install.sh` and an operator guide covering install, upgrade (including the major-upgrade limit of Docker live-restore), backup, restore, and troubleshooting.
   - Also (ADR-0009): host firewall rules for the build network's subnet (label `io.shipyard.role=build`): no `169.254.169.254`, no host services.
   - Also (ADR-0010): on Ubuntu 24.04+, install `deploy/sysctl/60-shipyard-buildkit.conf`, and check that a rootless build works before the first deploy.
+  - Also (ADR-0012): create the first KEK as an HPKE pair (`shipyard-worker kek generate`), with `<id>.hpke` owned by the worker's user, mode 0600.
 - [ ] **P5.8** Security review against the invariants in CLAUDE.md §3, plus `govulncheck` and a dependency audit.
 - [ ] **P5.9** Run the full acceptance demo on a fresh VPS, record it, and tag `v1.0.0`.
 

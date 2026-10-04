@@ -37,7 +37,11 @@ const nameLayout = "20060102T150405Z"
 
 const (
 	partialPrefix = ".partial-"
+	// KEK files (ADR-0012): a symmetric key, or an HPKE private and public
+	// key. The first two open values; a restore needs one of them per KEK.
 	keySuffix     = ".key"
+	privateSuffix = ".hpke"
+	publicSuffix  = ".pub"
 	// maxKeySize guards against copying something that is not a KEK (32 bytes).
 	maxKeySize = 4096
 )
@@ -118,11 +122,13 @@ func (j *Job) backupKeys(ctx context.Context) ([]string, error) {
 	var errs []error
 	copied := 0
 	for _, e := range entries {
-		id, ok := strings.CutSuffix(e.Name(), keySuffix)
-		if !ok || id == "" || e.IsDir() {
+		id, suffix := kekFile(e.Name())
+		if id == "" || e.IsDir() {
 			continue
 		}
-		ids = append(ids, id)
+		if suffix != publicSuffix && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
 		key, err := readKey(filepath.Join(j.KEKSource, e.Name()))
 		if err != nil {
 			errs = append(errs, err)
@@ -144,13 +150,23 @@ func (j *Job) backupKeys(ctx context.Context) ([]string, error) {
 		}
 	}
 	if len(ids) == 0 {
-		errs = append(errs, fmt.Errorf("no %s files in %s", keySuffix, j.KEKSource))
+		errs = append(errs, fmt.Errorf("no %s or %s files in %s", keySuffix, privateSuffix, j.KEKSource))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return ids, err
 	}
 	j.Log.Info("KEKs backed up", slog.String("dir", j.KEKDir), slog.Int("keys", len(ids)), slog.Int("copied", copied))
 	return ids, j.runHook(ctx, j.KEKHook, j.KEKDir)
+}
+
+// kekFile splits a KEK file name into its ID and suffix; "" if it is none.
+func kekFile(name string) (id, suffix string) {
+	for _, s := range []string{keySuffix, privateSuffix, publicSuffix} {
+		if id, ok := strings.CutSuffix(name, s); ok && id != "" {
+			return id, s
+		}
+	}
+	return "", ""
 }
 
 func readKey(path string) ([]byte, error) {

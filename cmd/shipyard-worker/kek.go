@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
 )
@@ -29,6 +33,66 @@ type kekStore interface {
 	WrapsNotUnder(ctx context.Context, kekID, after string, limit int) ([]store.SecretWrap, error)
 	Rewrap(ctx context.Context, from store.SecretWrap, wrapped []byte, kekID string) (bool, error)
 	RecordAudit(ctx context.Context, e store.AuditEvent) (store.AuditEvent, error)
+}
+
+// kekGenerate writes a new HPKE KEK into dir: <id>.hpke (the private key,
+// mode 0600: only the worker may read it) and <id>.pub (the public key the
+// API seals with). It refuses an ID that already has any key file, and
+// leaves no half-written pair behind.
+func kekGenerate(dir, id string, out io.Writer) error {
+	if !kekIDRE.MatchString(id) {
+		return fmt.Errorf("invalid KEK id %q: 1-64 letters, digits, '_' or '-'", id)
+	}
+	for _, suffix := range []string{secrets.SymmetricSuffix, secrets.PrivateSuffix, secrets.PublicSuffix} {
+		if _, err := os.Lstat(filepath.Join(dir, id+suffix)); err == nil {
+			return fmt.Errorf("%s already exists: a KEK ID is never reused", filepath.Join(dir, id+suffix))
+		}
+	}
+	private, public, err := secrets.GenerateHPKE()
+	if err != nil {
+		return err
+	}
+	defer clear(private)
+	privPath, pubPath := filepath.Join(dir, id+secrets.PrivateSuffix), filepath.Join(dir, id+secrets.PublicSuffix)
+	if err := writeNew(privPath, private, 0o600); err != nil {
+		return err
+	}
+	if err := writeNew(pubPath, public, 0o644); err != nil {
+		os.Remove(privPath)
+		return err
+	}
+	fmt.Fprintf(out, `Wrote %s (private, mode 0600) and %s (public).
+Next:
+  1. Give the private key to the worker's user only, e.g.
+     chown shipyard-worker: %s
+  2. Set %s=%s in shipyard.env and restart shipyard-api and shipyard-worker.
+  3. Run: shipyard-worker kek rewrap
+  4. When kek status shows the old KEKs unused, delete their %s files, so
+     the API holds nothing that decrypts. Backups keep their copies.
+`, privPath, pubPath, privPath, config.EnvKEKActive, id, secrets.SymmetricSuffix)
+	return nil
+}
+
+// kekIDRE mirrors the CHECK on secret_values.kek_id.
+var kekIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// writeNew creates path with mode perm and writes data, failing if it
+// exists; a partial file is removed.
+func writeNew(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return nil
 }
 
 // kekStatus prints the loaded KEKs and how many values each one wraps.
@@ -53,6 +117,8 @@ func kekStatus(ctx context.Context, s kekStore, keys *secrets.Keyring, out io.Wr
 		}
 		if !keys.Has(id) {
 			state = append(state, "NOT LOADED: values under it cannot be opened")
+		} else if !keys.CanOpen(id) {
+			state = append(state, "PUBLIC KEY ONLY: values under it cannot be opened here")
 		} else if id != keys.Active() && usage[id] == 0 {
 			state = append(state, "unused: may be retired")
 		} else if id != keys.Active() {
@@ -75,13 +141,13 @@ func kekRewrap(ctx context.Context, s kekStore, keys *secrets.Keyring, log *slog
 	}
 	var missing []string
 	for id, n := range usage {
-		if n > 0 && !keys.Has(id) {
+		if n > 0 && id != keys.Active() && !keys.CanOpen(id) {
 			missing = append(missing, id)
 		}
 	}
 	if len(missing) > 0 {
 		slices.Sort(missing)
-		return 0, fmt.Errorf("KEKs %s wrap values but are not in the KEK directory: restore them first", strings.Join(missing, ", "))
+		return 0, fmt.Errorf("KEKs %s wrap values but are not in the KEK directory (or only their public key is): restore them first", strings.Join(missing, ", "))
 	}
 	active, moved, after := keys.Active(), 0, ""
 	for {

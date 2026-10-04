@@ -18,6 +18,11 @@ All notable changes to Shipyard are recorded here.
   - `shipyard-worker kek rewrap` moves them all to `SHIPYARD_KEK_ACTIVE`. It never re-encrypts a value or changes a revision, and can be run again safely.
   - Migration `0005` allows exactly that one change to stored secrets.
   - To rotate: add a key file, make it active, restart both services, run `kek rewrap`, then retire the old file once `kek status` shows it unused.
+- **Asymmetric KEKs** (ADR-0012):
+  - `shipyard-worker kek generate ID` writes an HPKE key pair: `ID.hpke`, the worker's private key (mode 0600), and `ID.pub`.
+  - With it active, the API loads only the public key: it can seal new secret values but can no longer decrypt any stored one.
+  - Move an existing install with `kek rewrap`, then delete the old `.key` files.
+  - The API now reads only the active KEK file. Backups copy `.hpke` and `.pub` files too.
 - **Token rotation and remote revocation** (ADR-0011):
   - **On the server:** `shipyard-api token rotate PREFIX [--grace D]` replaces a token with one of the same user, name, scopes, and lifetime. The old token is revoked, or keeps working for up to 7 days.
   - **Remotely:** `shipyard token rotate [--grace D]` does the same for the CLI's own token and saves the new one; with `SHIPYARD_TOKEN` set, it prints it instead. `shipyard token list` and `shipyard token revoke PREFIX` need the admin scope.

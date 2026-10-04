@@ -4,7 +4,11 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -129,6 +133,72 @@ func TestKEKRotation(t *testing.T) {
 	}
 	if _, err := kekRewrap(ctx, s, all, log); err == nil || !strings.Contains(err.Error(), "cannot be decrypted") {
 		t.Fatalf("rewrap of a corrupt value = %v", err)
+	}
+}
+
+// ADR-0012: moving from a symmetric KEK to an HPKE one. Afterwards the API's
+// keyring (the public key only) still sets values, which the worker opens,
+// and the API cannot open any stored value.
+func TestKEKRotationToHPKE(t *testing.T) {
+	ctx := t.Context()
+	pool, err := store.Open(ctx, storetest.NewDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	ms, _ := store.LoadMigrations(migrations.FS)
+	if _, err := store.Migrate(ctx, pool, ms); err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(pool)
+	u, _ := s.CreateUser(ctx, "admin")
+	branch, port := "main", 3000
+	app, _ := s.CreateApp(ctx, store.NewApp{OwnerID: u.ID, Slug: "web", RepoFullName: "hami9/demo",
+		AppSettings: store.AppSettings{Branch: &branch, InternalPort: &port}})
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "k1.key"), secrets.GenerateKey(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	k1, err := secrets.LoadKeyring(dir, "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secrets.NewEnv(k1, s).Set(ctx, app.ID, "DB", []byte("postgres://a"), true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := kekGenerate(dir, "a1", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := secrets.LoadKeyring(dir, "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := kekRewrap(ctx, s, worker, slog.New(slog.DiscardHandler)); err != nil || moved != 1 {
+		t.Fatalf("rewrap to a1 = %d, %v", moved, err)
+	}
+	os.Remove(filepath.Join(dir, "k1.key")) // retired: the API now holds no decrypting key
+
+	api, err := secrets.LoadSealKeyring(dir, "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiEnv := secrets.NewEnv(api, s)
+	rev, err := apiEnv.Set(ctx, app.ID, "TOKEN", []byte("t-1"), true)
+	if err != nil {
+		t.Fatalf("the API sets a value with the public key: %v", err)
+	}
+	if _, err := apiEnv.Resolve(ctx, rev.ID); !errors.Is(err, secrets.ErrDecrypt) {
+		t.Fatalf("the API resolved a revision: %v", err)
+	}
+	worker, _ = secrets.LoadKeyring(dir, "a1")
+	env, err := secrets.NewEnv(worker, s).Resolve(ctx, rev.ID)
+	if err != nil || env["DB"] != "postgres://a" || env["TOKEN"] != "t-1" {
+		t.Fatalf("worker resolve = %v, %v", env, err)
+	}
+	if usage, _ := s.KEKUsage(ctx); usage["a1"] != 2 || len(usage) != 1 {
+		t.Fatalf("usage = %v", usage)
 	}
 }
 

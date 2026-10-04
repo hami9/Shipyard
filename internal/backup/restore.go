@@ -59,7 +59,10 @@ func (r *Restore) Run(ctx context.Context) error {
 		if !kekIDRE.MatchString(id) {
 			return fmt.Errorf("backup %s: invalid KEK ID %q in the manifest", r.From, id)
 		}
-		if _, err := os.Stat(filepath.Join(r.KEKDir, id+keySuffix)); err != nil {
+		// A symmetric key or an HPKE private key opens the values (ADR-0012).
+		_, errSym := os.Stat(filepath.Join(r.KEKDir, id+keySuffix))
+		_, errPriv := os.Stat(filepath.Join(r.KEKDir, id+privateSuffix))
+		if errSym != nil && errPriv != nil {
 			missing = append(missing, id)
 		}
 	}
