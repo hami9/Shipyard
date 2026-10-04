@@ -25,10 +25,12 @@ Connection:
 Apps:
   app create SLUG --repo OWNER/NAME --branch BRANCH --port PORT
              [--dockerfile PATH] [--context PATH] [--health-path PATH] [--auto-deploy]
+             [--github-installation ID]
   app list                 List apps (same as ps)
   app show APP             Show an app's settings
-  app update APP [--branch BRANCH] [--auto-deploy=true|false]
-                           With auto-deploy, a GitHub push to the branch deploys it
+  app update APP [--branch BRANCH] [--auto-deploy=true|false] [--github-installation ID]
+                           With auto-deploy, a GitHub push to the branch deploys it;
+                           with an installation, the worker fetches through the GitHub App
   app delete APP --yes [--follow]
                            Take the app offline and remove its containers, network,
                            images, domains, configuration, and history. Not undoable

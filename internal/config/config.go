@@ -73,6 +73,10 @@ const (
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
 	// EnvWebhookSecretFile names the file holding the GitHub webhook secret.
 	EnvWebhookSecretFile = "SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE"
+	// The worker's GitHub App (P4.4).
+	EnvGitHubAppID      = "SHIPYARD_GITHUB_APP_ID"
+	EnvGitHubAppKeyFile = "SHIPYARD_GITHUB_APP_KEY_FILE"
+	EnvGitHubAPIURL     = "SHIPYARD_GITHUB_API_URL"
 )
 
 // Defaults.
@@ -92,6 +96,7 @@ const (
 	DefaultKEKDir            = "/etc/shipyard/kek"
 	DefaultWorkDir           = "/var/lib/shipyard/work"
 	DefaultSourceBaseURL     = "https://github.com"
+	DefaultGitHubAPIURL      = "https://api.github.com"
 	DefaultBuilderName       = "shipyard"
 	DefaultBuilderMemory     = "2g"
 	DefaultBuilderCPUs       = 2.0
@@ -129,6 +134,8 @@ var (
 	// crashPointRE is the shape of a fault point name (app.FaultPoints); the
 	// worker checks that the point exists.
 	crashPointRE = regexp.MustCompile(`^[a-z]{1,32}$`)
+	// appIDRE is a GitHub App client ID (Iv23li...) or numeric app ID.
+	appIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	// sizeRE is a byte count with an optional binary unit and b (reader.size).
 	sizeRE = regexp.MustCompile(`^([1-9][0-9]{0,15})([kmgt]?)b?$`)
 	// memoryRE is a buildx driver-opt memory value, e.g. 512m or 2g [DK-BX-CONTAINER].
@@ -244,6 +251,16 @@ type Worker struct {
 	BuilderCPUs   float64
 	Caddy         Caddy
 	Backup        Backup
+	GitHub        GitHub
+}
+
+// GitHub is the GitHub App the worker fetches private repositories with
+// (internal/github). An empty AppID means none: apps with an installation
+// id then fail to fetch.
+type GitHub struct {
+	AppID   string // the App's client ID or app ID
+	KeyFile string // its private key (PEM), outside the database
+	APIURL  string // https://api.github.com; plain http only on loopback, for tests
 }
 
 // Backup configures `shipyard-worker backup` (ADR-0006).
@@ -391,6 +408,7 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	cfg.BuildCacheMax = r.size(EnvBuildCacheMax, DefaultBuildCacheMax, 1<<20)
 	cfg.OperationLogMax = r.size(EnvOperationLogMax, DefaultOperationLogMax, 1<<10)
 	cfg.Backup = r.backup(cfg.KEKDir)
+	cfg.GitHub = r.github()
 	if !filepath.IsAbs(cfg.WorkDir) {
 		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))
 	}
@@ -448,6 +466,27 @@ func (r *reader) backup(kekDir string) Backup {
 		}
 	}
 	return b
+}
+
+func (r *reader) github() GitHub {
+	g := GitHub{AppID: r.str(EnvGitHubAppID, ""), KeyFile: r.str(EnvGitHubAppKeyFile, ""), APIURL: r.str(EnvGitHubAPIURL, DefaultGitHubAPIURL)}
+	switch {
+	case g.AppID == "" && g.KeyFile != "":
+		r.fail(EnvGitHubAppID, fmt.Errorf("required with %s", EnvGitHubAppKeyFile))
+	case g.AppID != "" && g.KeyFile == "":
+		r.fail(EnvGitHubAppKeyFile, fmt.Errorf("required with %s", EnvGitHubAppID))
+	}
+	if g.AppID != "" && !appIDRE.MatchString(g.AppID) {
+		r.fail(EnvGitHubAppID, fmt.Errorf("%q is not a GitHub App client ID or app ID", g.AppID))
+	}
+	if g.KeyFile != "" && (!filepath.IsAbs(g.KeyFile) || filepath.Clean(g.KeyFile) != g.KeyFile) {
+		r.fail(EnvGitHubAppKeyFile, fmt.Errorf("%q must be a clean absolute path", g.KeyFile))
+	}
+	if u, err := url.Parse(g.APIURL); err != nil || u.User != nil || u.Host == "" || u.RawQuery != "" ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !isLoopback(u.Hostname()))) {
+		r.fail(EnvGitHubAPIURL, errors.New("must be an https URL without credentials (plain http only on loopback, for tests)"))
+	}
+	return g
 }
 
 // within reports whether path is dir or lies inside it (clean paths).

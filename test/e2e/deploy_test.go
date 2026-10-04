@@ -338,6 +338,7 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if n := strings.Count(h.cli("", "releases", slug), "\n"); n != releases {
 		t.Fatalf("the redelivery changed the history: %d rows, was %d", n, releases)
 	}
+	h.checkPrivateRepo()
 
 	// P3.8: deleting the app is an operation of the worker. It takes the app
 	// out of Caddy, then removes its container, network, and images, and at
@@ -458,8 +459,10 @@ type harness struct {
 	workerEnv []string
 	kek       string
 
-	// hookSecret signs GitHub webhook deliveries (P4.1).
+	// hookSecret signs GitHub webhook deliveries (P4.1); github is the fake
+	// GitHub API the worker's App talks to (P4.4).
 	hookSecret []byte
+	github     *fakeGitHub
 
 	// For the restore drill, which stops both services and starts them
 	// again on another database: their environments, how to stop them, and
@@ -505,7 +508,9 @@ func start(t *testing.T) *harness {
 	os.MkdirAll(src, 0o755)
 	run(t, root, []string{"CGO_ENABLED=0", "GOOS=linux"}, "go", "build", "-o", filepath.Join(src, "probe"), "./internal/runtime/testdata/probe")
 	h.repo = newRepo(t, src)
-	gitURL := serveGit(t, src, filepath.Join(tmp, "repos"))
+	gh, ghURL, ghKey := startGitHub(t, tmp)
+	h.github = gh
+	gitURL := serveGit(t, src, filepath.Join(tmp, "repos"), gh.authorized)
 
 	kek := filepath.Join(tmp, "kek")
 	os.Mkdir(kek, 0o700)
@@ -548,7 +553,8 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
 		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
-		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2")
+		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2",
+		"SHIPYARD_GITHUB_APP_ID="+gh.appID, "SHIPYARD_GITHUB_APP_KEY_FILE="+ghKey, "SHIPYARD_GITHUB_API_URL="+ghURL)
 	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run").stop
 	h.env = append(cleanEnv(), "SHIPYARD_URL=unix://"+apiSock, "SHIPYARD_TOKEN="+token,
 		"SHIPYARD_CONFIG="+filepath.Join(tmp, "cli.json"))
@@ -578,15 +584,25 @@ func newRepo(t *testing.T, src string) repo {
 	return r
 }
 
-// serveGit publishes src as e2e/demo over git's smart HTTP protocol.
-func serveGit(t *testing.T, src, root string) string {
-	bare := filepath.Join(root, "e2e", "demo.git")
-	os.MkdirAll(filepath.Dir(bare), 0o755)
-	run(t, root, nil, "git", "clone", "-q", "--bare", src, bare)
-	run(t, bare, nil, "git", "config", "uploadpack.allowFilter", "true")
+// serveGit publishes src over git's smart HTTP protocol twice: as e2e/demo
+// for anyone, and as e2e/private only to requests private accepts (P4.4).
+func serveGit(t *testing.T, src, root string, private func(*http.Request) bool) string {
+	for _, name := range []string{"demo", "private"} {
+		bare := filepath.Join(root, "e2e", name+".git")
+		os.MkdirAll(filepath.Dir(bare), 0o755)
+		run(t, root, nil, "git", "clone", "-q", "--bare", src, bare)
+		run(t, bare, nil, "git", "config", "uploadpack.allowFilter", "true")
+	}
 	backend := &cgi.Handler{Path: filepath.Join(run(t, root, nil, "git", "--exec-path"), "git-http-backend"),
 		Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}}
-	srv := httptest.NewServer(backend)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/e2e/private") && !private(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="e2e"`)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		backend.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
 }

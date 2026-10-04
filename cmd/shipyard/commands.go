@@ -87,6 +87,7 @@ func cmdAppCreate(ctx context.Context, e env, c *client.Client, args []string) e
 	fs.StringVar(&n.BuildContext, "context", "", "")
 	fs.StringVar(&n.HealthPath, "health-path", "", "")
 	fs.BoolVar(&n.AutoDeploy, "auto-deploy", false, "")
+	fs.Int64Var(&n.GitHubInstallation, "github-installation", 0, "")
 	pos, err := parse(fs, args, 1)
 	if err != nil {
 		return err
@@ -100,12 +101,14 @@ func cmdAppCreate(ctx context.Context, e env, c *client.Client, args []string) e
 	return nil
 }
 
-// cmdAppUpdate changes the settings that decide what a push deploys: the
-// tracked branch and auto-deploy. Only the flags given are sent.
+// cmdAppUpdate changes the settings that decide what a push deploys (the
+// tracked branch and auto-deploy) and how the repository is fetched (the
+// GitHub App installation). Only the flags given are sent.
 func cmdAppUpdate(ctx context.Context, e env, c *client.Client, args []string) error {
 	fs := flag.NewFlagSet("app update", flag.ContinueOnError)
 	branch := fs.String("branch", "", "")
 	auto := fs.Bool("auto-deploy", false, "")
+	installation := fs.Int64("github-installation", 0, "")
 	pos, err := parse(fs, args, 1)
 	if err != nil {
 		return err
@@ -117,9 +120,11 @@ func cmdAppUpdate(ctx context.Context, e env, c *client.Client, args []string) e
 			u.Branch = branch
 		case "auto-deploy":
 			u.AutoDeploy = auto
+		case "github-installation":
+			u.GitHubInstallation = installation
 		}
 	})
-	if u.Branch == nil && u.AutoDeploy == nil {
+	if u.Branch == nil && u.AutoDeploy == nil && u.GitHubInstallation == nil {
 		return errUsage
 	}
 	a, err := c.UpdateApp(ctx, pos[0], u)
@@ -150,8 +155,15 @@ func cmdAppShow(ctx context.Context, e env, c *client.Client, args []string) err
 		{"id", a.ID}, {"repo", a.Repo}, {"branch", a.Branch}, {"dockerfile", a.DockerfilePath},
 		{"context", a.BuildContext}, {"port", fmt.Sprint(a.Port)}, {"health", a.HealthPath + " (timeout " + a.HealthTimeout + ")"},
 		{"cpu", fmt.Sprint(a.CPULimit)}, {"memory", fmt.Sprintf("%d MiB", a.MemoryLimit>>20)},
-		{"stop timeout", a.StopTimeout}, {"auto deploy", fmt.Sprint(a.AutoDeploy)},
+		{"stop timeout", a.StopTimeout}, {"auto deploy", fmt.Sprint(a.AutoDeploy)}, {"github app", installationNote(a.GitHubInstallation)},
 	})
+}
+
+func installationNote(id *int64) string {
+	if id == nil {
+		return "none (public repository)"
+	}
+	return fmt.Sprintf("installation %d", *id)
 }
 
 // cmdAppDelete queues the delete of an app. It is irreversible, so it wants

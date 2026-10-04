@@ -181,6 +181,8 @@ type App struct {
 	StopTimeout    string    `json:"stop_timeout"`
 	AutoDeploy     bool      `json:"auto_deploy"`
 	CreatedAt      time.Time `json:"created_at"`
+
+	GitHubInstallation *int64 `json:"github_installation_id"`
 }
 
 // NewApp is the create request; zero optional fields are omitted so the
@@ -194,6 +196,8 @@ type NewApp struct {
 	BuildContext   string `json:"build_context,omitempty"`
 	HealthPath     string `json:"health_path,omitempty"`
 	AutoDeploy     bool   `json:"auto_deploy,omitempty"`
+	// GitHubInstallation is the GitHub App installation private fetches use.
+	GitHubInstallation int64 `json:"github_installation_id,omitempty"`
 }
 
 func (c *Client) CreateApp(ctx context.Context, n NewApp) (App, error) {
@@ -204,8 +208,9 @@ func (c *Client) CreateApp(ctx context.Context, n NewApp) (App, error) {
 
 // AppUpdate changes an app's settings; nil fields stay as they are.
 type AppUpdate struct {
-	Branch     *string `json:"branch,omitempty"`
-	AutoDeploy *bool   `json:"auto_deploy,omitempty"`
+	Branch             *string `json:"branch,omitempty"`
+	AutoDeploy         *bool   `json:"auto_deploy,omitempty"`
+	GitHubInstallation *int64  `json:"github_installation_id,omitempty"`
 }
 
 func (c *Client) UpdateApp(ctx context.Context, app string, u AppUpdate) (App, error) {

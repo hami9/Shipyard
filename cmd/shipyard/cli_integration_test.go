@@ -125,6 +125,14 @@ func TestCLIEndToEnd(t *testing.T) {
 		t.Fatalf("app create --auto-deploy: %q", out)
 	}
 	f.ok("", "app", "update", "api", "--branch", "main")
+	// P4.4: the GitHub App installation the worker fetches a private repository through.
+	if out := f.ok("", "app", "show", "api"); !regexp.MustCompile(`github app\s+none \(public repository\)`).MatchString(out) {
+		t.Fatalf("app show before an installation:\n%s", out)
+	}
+	f.ok("", "app", "update", "api", "--github-installation", "4242")
+	if out := f.ok("", "app", "show", "api"); !regexp.MustCompile(`github app\s+installation 4242`).MatchString(out) {
+		t.Fatalf("app show after --github-installation:\n%s", out)
+	}
 
 	f.ok(secret+"\n", "env", "set", "web", "DATABASE_URL")
 	f.ok("info\n", "env", "set", "web", "LOG_LEVEL", "--plain")

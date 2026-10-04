@@ -378,6 +378,37 @@ func TestLoadWorkerLeaseAndCrashPoint(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerGitHubApp(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.GitHub != (GitHub{APIURL: DefaultGitHubAPIURL}) {
+		t.Fatalf("default = %+v, %v", cfg.GitHub, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvGitHubAppID: "Iv23liExample.1",
+		EnvGitHubAppKeyFile: "/etc/shipyard/github-app.pem", EnvGitHubAPIURL: "http://127.0.0.1:9000"}))
+	if err != nil || cfg.GitHub != (GitHub{AppID: "Iv23liExample.1", KeyFile: "/etc/shipyard/github-app.pem", APIURL: "http://127.0.0.1:9000"}) {
+		t.Fatalf("set = %+v, %v", cfg.GitHub, err)
+	}
+	for name, tc := range map[string]struct {
+		kv   map[string]string
+		want string
+	}{
+		"id without key":   {map[string]string{EnvGitHubAppID: "123"}, EnvGitHubAppKeyFile},
+		"key without id":   {map[string]string{EnvGitHubAppKeyFile: "/k.pem"}, EnvGitHubAppID},
+		"bad id":           {map[string]string{EnvGitHubAppID: "a b", EnvGitHubAppKeyFile: "/k.pem"}, EnvGitHubAppID},
+		"relative key":     {map[string]string{EnvGitHubAppID: "1", EnvGitHubAppKeyFile: "k.pem"}, EnvGitHubAppKeyFile},
+		"plain http":       {map[string]string{EnvGitHubAPIURL: "http://api.github.com"}, EnvGitHubAPIURL},
+		"credentials":      {map[string]string{EnvGitHubAPIURL: "https://u:p@api.github.com"}, EnvGitHubAPIURL},
+		"not a url":        {map[string]string{EnvGitHubAPIURL: "api.github.com"}, EnvGitHubAPIURL},
+		"query in the url": {map[string]string{EnvGitHubAPIURL: "https://api.github.com/?x=1"}, EnvGitHubAPIURL},
+	} {
+		tc.kv[EnvDatabaseURL] = testDB
+		_, err := LoadWorker(env(tc.kv))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want one naming %s", name, err, tc.want)
+		}
+	}
+}
+
 func TestLoadWorkerRetainImages(t *testing.T) {
 	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
 		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))

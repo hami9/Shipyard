@@ -26,6 +26,7 @@ import (
 	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
+	"github.com/hami9/shipyard/internal/github"
 	"github.com/hami9/shipyard/internal/logging"
 	"github.com/hami9/shipyard/internal/queue"
 	"github.com/hami9/shipyard/internal/reconcile"
@@ -208,9 +209,18 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 	defer logSrv.Close()
 
+	src := sourceAdapter{f: &source.Fetcher{Root: cfg.WorkDir, BaseURL: cfg.SourceBaseURL}}
+	if cfg.GitHub.AppID != "" {
+		// The App's key stays in its file, out of the database (P4.4).
+		key, err := github.LoadKey(cfg.GitHub.KeyFile)
+		if err != nil {
+			return fmt.Errorf("load the GitHub App key: %w", err)
+		}
+		src.gh = &github.App{ID: cfg.GitHub.AppID, Key: key, APIURL: cfg.GitHub.APIURL, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	}
 	deployer := &app.Deployer{
 		Store:   s,
-		Source:  sourceAdapter{&source.Fetcher{Root: cfg.WorkDir, BaseURL: cfg.SourceBaseURL}},
+		Source:  src,
 		Builder: buildAdapter{builder},
 		Runtime: runtimeAdapter{rt},
 		Env:     env,

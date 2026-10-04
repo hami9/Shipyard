@@ -10,6 +10,8 @@ import (
 	"github.com/hami9/shipyard/internal/app"
 	"github.com/hami9/shipyard/internal/applogs"
 	"github.com/hami9/shipyard/internal/build"
+	"github.com/hami9/shipyard/internal/config"
+	"github.com/hami9/shipyard/internal/github"
 	"github.com/hami9/shipyard/internal/health"
 	"github.com/hami9/shipyard/internal/runtime"
 	"github.com/hami9/shipyard/internal/source"
@@ -20,10 +22,35 @@ import (
 // internal/source imports internal/app, and the API binary must not link the
 // Docker client.
 
-type sourceAdapter struct{ f *source.Fetcher }
+// tokenMinter issues the token a fetch from a private repository uses
+// (internal/github).
+type tokenMinter interface {
+	InstallationToken(ctx context.Context, installationID int64, repo string) (github.Token, error)
+}
 
+type sourceAdapter struct {
+	f *source.Fetcher
+	// gh is the worker's GitHub App; nil when none is configured.
+	gh tokenMinter
+}
+
+// Fetch authenticates with a fresh installation token when the app names a
+// GitHub App installation: one token per fetch, scoped to the repository
+// and contents: read, passed to git in a header and then dropped (P4.4).
 func (a sourceAdapter) Fetch(ctx context.Context, r app.FetchRequest) (app.Fetched, error) {
-	co, err := a.f.Fetch(ctx, source.Request{OperationID: r.OperationID, Repo: r.Repo, Branch: r.Branch, Ref: r.Ref})
+	req := source.Request{OperationID: r.OperationID, Repo: r.Repo, Branch: r.Branch, Ref: r.Ref}
+	if r.InstallationID > 0 {
+		if a.gh == nil {
+			return app.Fetched{}, fmt.Errorf("the app uses GitHub App installation %d, but this worker has no GitHub App (%s, %s)",
+				r.InstallationID, config.EnvGitHubAppID, config.EnvGitHubAppKeyFile)
+		}
+		tok, err := a.gh.InstallationToken(ctx, r.InstallationID, r.Repo)
+		if err != nil {
+			return app.Fetched{}, err
+		}
+		req.Token = tok.Value
+	}
+	co, err := a.f.Fetch(ctx, req)
 	if err != nil {
 		return app.Fetched{}, err
 	}

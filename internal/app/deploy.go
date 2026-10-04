@@ -75,6 +75,9 @@ type FetchRequest struct {
 	OperationID, Repo, Branch string
 	Ref                       string // full SHA; empty: the branch head
 	Dockerfile, Context       string
+	// InstallationID is the app's GitHub App installation: the fetch then
+	// authenticates with a token of it (P4.4). 0: a public repository.
+	InstallationID int64
 }
 
 // Fetched is a verified checkout: the SHA is on the tracked branch
@@ -358,9 +361,14 @@ func (r *deployRun) fetchAndBuild(ctx context.Context, ref string) error {
 			r.log.Warn("workspace cleanup failed", slog.Any("err", err))
 		}
 	}()
-	r.event(ctx, store.LevelInfo, "fetching %s (branch %s)", r.app.RepoFullName, r.app.Branch)
-	src, err := r.Source.Fetch(ctx, FetchRequest{OperationID: r.op.ID, Repo: r.app.RepoFullName, Branch: r.app.Branch,
-		Ref: ref, Dockerfile: r.app.DockerfilePath, Context: r.app.BuildContext})
+	req := FetchRequest{OperationID: r.op.ID, Repo: r.app.RepoFullName, Branch: r.app.Branch,
+		Ref: ref, Dockerfile: r.app.DockerfilePath, Context: r.app.BuildContext}
+	via := ""
+	if id := r.app.GitHubInstallationID; id != nil {
+		req.InstallationID, via = *id, fmt.Sprintf(" through GitHub App installation %d", *id)
+	}
+	r.event(ctx, store.LevelInfo, "fetching %s (branch %s)%s", r.app.RepoFullName, r.app.Branch, via)
+	src, err := r.Source.Fetch(ctx, req)
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}

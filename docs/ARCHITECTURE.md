@@ -401,6 +401,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   - **Ignored, with a reason:** no app deploys the repository, none tracks the branch, auto-deploy is off for all that do, or all of them are being deleted. The delivery is recorded as `ignored` either way.
   - **Recorded:** `outcome` (`queued` or `ignored`), `operation_id` when exactly one deploy was queued (with several, their keys find them), and an audit event (`webhook`, `github.push`, `delivery:<id>`). The reply lists the operations.
 - Use a GitHub App for private repositories. JWTs are RS256, `exp` ≤ 10 min, and `iat` −60 s `[GH-APP-JWT]`. Installation tokens are per operation and per repository `[GH-APP-TOKEN]`.
+- As implemented (P4.4, `internal/github`, worker only):
+  - **Configuration.** `SHIPYARD_GITHUB_APP_ID` (client ID or app ID), `SHIPYARD_GITHUB_APP_KEY_FILE` (the PEM, RSA ≥ 2048 bits, not readable by other users; never in the database), and `SHIPYARD_GITHUB_API_URL` (default `https://api.github.com`).
+  - **Per app.** An app with `github_installation_id` (`app create|update --github-installation ID`) is fetched through the App. Without it the fetch is anonymous, as before. An app with an installation on a worker without an App fails its fetch and names the missing settings.
+  - **Per fetch.** The worker signs a JWT (iat −60 s, exp +9 min), requests a token for that installation narrowed to the app's repository name and `contents: read`, and hands it to git as the `x-access-token` Basic header (`internal/source`). The token is not stored, logged, or put in a URL, and is dropped after the fetch. A refusal from GitHub fails the deploy with GitHub's status and message.
+  - **Not yet.** Matching webhook pushes by repository id, and filling `github_installation_id` from the `installation` field of a delivery.
 
 **Builds** `[DK-BX-CONTAINER][DK-BX-BUILD][DK-BUILD-SECRETS]`
 

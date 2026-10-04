@@ -193,7 +193,7 @@ flowchart LR
   - Respond 2XX in < 10 s. Accept only `push`, and ignore `deleted` pushes and other refs.
 - [x] **P4.2** Delivery deduplication (`webhook_deliveries` primary key), with idempotent enqueue under the key `gh:<delivery-id>` and coalescing. The key is `gh:<delivery-id>:<slug>`: one push can deploy several apps. Done together with P4.3, which it needs (`store.RecordPush`).
 - [x] **P4.3** Repository-to-app mapping and branch policy (`auto_deploy`, tracked branch). Unknown repositories are logged and ignored. Matched by `owner/name`, case-insensitively (the owner's choice, 2026-10-04); GitHub's repository id waits for P4.4. CLI: `app update APP --branch B --auto-deploy`.
-- [ ] **P4.4** GitHub App:
+- [x] **P4.4** GitHub App (`internal/github`, worker only; tested against a fake GitHub API and git server in `test/e2e`; a real App on a private repository is the owner's check with the exit criteria):
   - RS256 JWT (`exp` ≤ 10 min, `iat` −60 s).
   - A per-operation installation token scoped to one repository with `contents: read`.
   - The private key is stored outside the DB. Private repository fetch works.

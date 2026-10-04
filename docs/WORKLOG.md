@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P4.2 and P4.3: a verified push deploys the apps tracking its repository and branch, once per delivery |
-| **Next task** | P4.4: the GitHub App (JWT, per-operation installation token, private repositories). Owner: the Phase 3 restore drill on a real VPS (ADR-0006's production-ready gate) |
+| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P4.4: private repositories fetched through a GitHub App, one narrowed installation token per fetch |
+| **Next task** | P4.5: missed-delivery catch-up in the reconciler. Owner: a real GitHub App on a private repository (Phase 4 exit criterion), and the Phase 3 restore drill on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,36 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P4.4 GitHub App
+
+- **Phase / task:** P4.4: GitHub App: RS256 JWT, a per-operation installation token for one repository with `contents: read`, the key outside the database, private fetch
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`internal/github`:** `App.JWT`, `App.InstallationToken`, `LoadKey`. Standard library only (`crypto/rsa`, `encoding/pem`); no JWT dependency.
+- **Worker:** `sourceAdapter` asks for a token before each fetch of an app with `github_installation_id` and passes it to `internal/source`, which already sent it as the `x-access-token` Basic header. The deploy's fetch event names the installation.
+- **Config:** `SHIPYARD_GITHUB_APP_ID`, `SHIPYARD_GITHUB_APP_KEY_FILE` (both or neither), `SHIPYARD_GITHUB_API_URL`.
+- **CLI:** `--github-installation ID` on `app create` and `app update`; `app show` prints it.
+- Details: ARCHITECTURE §7 GitHub, "As implemented (P4.4)".
+
+**Decisions**
+- **The worker mints the token,** once per fetch, because only it talks to GitHub and git (invariant 1). No caching: a token lives for the one fetch, though GitHub's would last an hour.
+- **The key is a file,** checked like the KEK files; RSA only (RS256), at least 2048 bits, PKCS#1 or PKCS#8.
+- **Not done here** (P4.4 scope is fetching): matching pushes by repository id (the owner chose names for now) and learning the installation id from deliveries. Both are noted in ARCHITECTURE.
+- **Mistake, caught before commit:** I wrote `cmd/shipyard-worker/adapters_test.go` with the file tool, not seeing it already existed, and replaced `TestContainerNamesAgree`. I restored it from git and added the new test beside it.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint`, `make test`, `make test-integration`: all ok. New: `TestJWT` (claims and RS256 signature checked with the public key), `TestInstallationToken` (path, headers, the narrowed body; the token never prints), `TestInstallationTokenFails` (7), `TestLoadKey` (PKCS#1, PKCS#8; refuses world-readable, 1024-bit, EC, non-key PEM, garbage, missing, a directory), `TestSourceAdapterInstallation`, `TestLoadWorkerGitHubApp`, and `--github-installation` in `TestCLIEndToEnd`.
+- `TestPhase1ExitCriteria` (e2e): PASS (374 s), now with `checkPrivateRepo`. The test runs a fake GitHub API (checks the JWT's signature, issuer, and lifetime; issues a token only for installation 77, narrowed to `private` with `contents: read`), and a git server that serves `e2e/private` only to that token as the `x-access-token` password. Results:
+  - an app on `e2e/private` without an installation fails at fetch;
+  - with installation 78 it fails with "GitHub refused an installation token";
+  - with 77 it deploys and succeeds, its events name the installation and contain no token;
+  - the app is then deleted.
+- Not run: a real GitHub App on a real private repository (the Phase 4 exit criterion). It needs the owner's App and key.
+
+**Next**
+- P4.5: catch up on missed pushes in the reconciler (branch head vs. last deployed SHA), which needs the App to read branch heads of private repositories.
 
 ### 2026-10-04: P4.2, P4.3 deploy on push
 
