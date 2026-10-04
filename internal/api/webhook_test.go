@@ -42,7 +42,7 @@ type hookEnv struct {
 }
 
 func newHookEnv(secret string, sink bool) *hookEnv {
-	e := &hookEnv{pushes: &fakePushes{out: PushOutcome{Outcome: OutcomeQueued, OperationID: "op-1"}},
+	e := &hookEnv{pushes: &fakePushes{out: PushOutcome{Outcome: OutcomeQueued, Operations: []string{"op-1", "op-2"}}},
 		tokens: newFakeTokens(), audit: &fakeAudit{}, logs: &bytes.Buffer{}}
 	d := Deps{DB: fakePinger{}, Tokens: e.tokens, Audit: e.audit, WebhookSecret: []byte(secret)}
 	if sink {
@@ -85,7 +85,7 @@ const pushBody = `{"ref":"refs/heads/main","before":"111111111111111111111111111
 func TestWebhookPush(t *testing.T) {
 	e := newHookEnv(hookSecret, true)
 	rec, reply := e.send(delivery("push", pushBody, "", nil))
-	if rec.Code != http.StatusAccepted || reply.Outcome != OutcomeQueued || reply.OperationID != "op-1" ||
+	if rec.Code != http.StatusAccepted || reply.Outcome != OutcomeQueued || strings.Join(reply.Operations, ",") != "op-1,op-2" ||
 		reply.Delivery != "72d3162e-cc78-11e3-81ab-4c9367dc0958" {
 		t.Fatalf("%d %+v", rec.Code, reply)
 	}
@@ -124,7 +124,7 @@ func TestWebhookIgnored(t *testing.T) {
 			true, http.StatusAccepted, OutcomeIgnored, "the ref is not a branch"},
 		"deleted": {"push", `{"ref":"refs/heads/x","after":"0000000000000000000000000000000000000000","deleted":true,"repository":{"id":1}}`,
 			true, http.StatusAccepted, OutcomeIgnored, "the push deleted the ref"},
-		"no sink": {"push", pushBody, false, http.StatusAccepted, OutcomeIgnored, "this server does not deploy from webhooks yet"},
+		"no sink": {"push", pushBody, false, http.StatusAccepted, OutcomeIgnored, "this server does not record pushes"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newHookEnv(hookSecret, tc.sink)

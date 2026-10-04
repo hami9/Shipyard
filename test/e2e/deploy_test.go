@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -109,17 +110,18 @@ func TestPhase1ExitCriteria(t *testing.T) {
 		t.Fatalf("domain add %s: %v\n%s", apiHost, err, out)
 	}
 	// P4.1: GitHub's deliveries reach the API through Caddy with the raw body
-	// intact, so the signature verifies; a bad one is a 401. Pushes do not
-	// deploy yet (P4.2).
+	// intact, so the signature verifies; a bad one is a 401. A push for a
+	// repository no app deploys is recorded and ignored.
 	ping := `{"zen":"Design for failure.","hook_id":1}`
-	if resp, body := h.hook("ping", ping, webhook.Sign(h.hookSecret, []byte(ping))); resp.StatusCode != http.StatusOK || !strings.Contains(body, `"pong"`) {
+	if resp, body := h.hook("ping", "e2e-ping", ping, webhook.Sign(h.hookSecret, []byte(ping))); resp.StatusCode != http.StatusOK || !strings.Contains(body, `"pong"`) {
 		t.Fatalf("signed ping through caddy: %s %s", resp.Status, body)
 	}
 	push := `{"ref":"refs/heads/main","after":"` + strings.Repeat("a", 40) + `","repository":{"id":1,"full_name":"e2e/app"}}`
-	if resp, body := h.hook("push", push, webhook.Sign(h.hookSecret, []byte(push))); resp.StatusCode != http.StatusAccepted || !strings.Contains(body, `"ignored"`) {
+	if resp, body := h.hook("push", "e2e-other", push, webhook.Sign(h.hookSecret, []byte(push))); resp.StatusCode != http.StatusAccepted ||
+		!strings.Contains(body, "no app deploys this repository") {
 		t.Fatalf("signed push through caddy: %s %s", resp.Status, body)
 	}
-	if resp, body := h.hook("push", push, webhook.Sign([]byte("not-the-e2e-webhook-secret"), []byte(push))); resp.StatusCode != http.StatusUnauthorized {
+	if resp, body := h.hook("push", "e2e-forged", push, webhook.Sign([]byte("not-the-e2e-webhook-secret"), []byte(push))); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("badly signed push through caddy: %s %s", resp.Status, body)
 	}
 
@@ -301,6 +303,41 @@ func TestPhase1ExitCriteria(t *testing.T) {
 		t.Fatalf("leftover containers of %s:\n%s", slug, n)
 	}
 	h.checkBackup()
+
+	// P4.2, P4.3 (Phase 4 exit criteria): a signed push to the tracked branch
+	// deploys its commit once auto-deploy is on (the repository's name
+	// matches in any case); GitHub's redelivery of the same delivery creates
+	// no second deployment.
+	deliver := func(id string) (*http.Response, string) {
+		body := `{"ref":"refs/heads/main","after":"` + h.repo.good + `","repository":{"id":7,"full_name":"E2E/Demo"}}`
+		return h.hook("push", id, body, webhook.Sign(h.hookSecret, []byte(body)))
+	}
+	if resp, body := deliver("e2e-push-off"); resp.StatusCode != http.StatusAccepted || !strings.Contains(body, "auto-deploy is off") {
+		t.Fatalf("push with auto-deploy off: %s %s", resp.Status, body)
+	}
+	h.cli("", "app", "update", slug, "--auto-deploy")
+	resp, body = deliver("e2e-push-1")
+	var reply struct {
+		Outcome    string   `json:"outcome"`
+		Operations []string `json:"operations"`
+	}
+	if json.Unmarshal([]byte(body), &reply); resp.StatusCode != http.StatusAccepted || reply.Outcome != "queued" || len(reply.Operations) != 1 {
+		t.Fatalf("push with auto-deploy on: %s %s", resp.Status, body)
+	}
+	h.ops = append(h.ops, reply.Operations[0])
+	h.wantOp(reply.Operations[0], "succeeded", "")
+	pushed := h.waitRunning(func(id string) bool { return id != rolled })
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != pushed[:12] {
+		t.Fatalf("after the pushed deploy caddy serves %q, want %s", got, pushed[:12])
+	}
+	releases := strings.Count(h.cli("", "releases", slug), "\n")
+	if resp, body := deliver("e2e-push-1"); resp.StatusCode != http.StatusAccepted || !strings.Contains(body, "received before") ||
+		!strings.Contains(body, reply.Operations[0]) {
+		t.Fatalf("redelivery: %s %s", resp.Status, body)
+	}
+	if n := strings.Count(h.cli("", "releases", slug), "\n"); n != releases {
+		t.Fatalf("the redelivery changed the history: %d rows, was %d", n, releases)
+	}
 
 	// P3.8: deleting the app is an operation of the worker. It takes the app
 	// out of Caddy, then removes its container, network, and images, and at
@@ -922,10 +959,10 @@ func (h *harness) apiViaCaddy(path string) (*http.Response, string) {
 }
 
 // hook delivers a GitHub webhook event through Caddy, signed with sig.
-func (h *harness) hook(event, body, sig string) (*http.Response, string) {
+func (h *harness) hook(event, delivery, body, sig string) (*http.Response, string) {
 	h.t.Helper()
 	return h.callViaCaddy("POST", "/hooks/github", body, map[string]string{"Content-Type": "application/json",
-		webhook.HeaderEvent: event, webhook.HeaderDelivery: "e2e-" + event, webhook.HeaderSignature: sig})
+		webhook.HeaderEvent: event, webhook.HeaderDelivery: delivery, webhook.HeaderSignature: sig})
 }
 
 func (h *harness) callViaCaddy(method, path, body string, header map[string]string) (*http.Response, string) {

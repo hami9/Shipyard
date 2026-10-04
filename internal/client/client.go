@@ -193,11 +193,24 @@ type NewApp struct {
 	DockerfilePath string `json:"dockerfile_path,omitempty"`
 	BuildContext   string `json:"build_context,omitempty"`
 	HealthPath     string `json:"health_path,omitempty"`
+	AutoDeploy     bool   `json:"auto_deploy,omitempty"`
 }
 
 func (c *Client) CreateApp(ctx context.Context, n NewApp) (App, error) {
 	var a App
 	_, err := c.do(ctx, "POST", "/v1/apps", n, nil, &a)
+	return a, err
+}
+
+// AppUpdate changes an app's settings; nil fields stay as they are.
+type AppUpdate struct {
+	Branch     *string `json:"branch,omitempty"`
+	AutoDeploy *bool   `json:"auto_deploy,omitempty"`
+}
+
+func (c *Client) UpdateApp(ctx context.Context, app string, u AppUpdate) (App, error) {
+	var a App
+	_, err := c.do(ctx, "PATCH", p("v1", "apps", app), u, nil, &a)
 	return a, err
 }
 

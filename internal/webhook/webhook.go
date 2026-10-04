@@ -50,6 +50,8 @@ var (
 	// shaRE is a full SHA-1 or SHA-256 object name, as GitHub sends it
 	// (mirrors webhook_deliveries.after_sha).
 	shaRE = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+	// repoRE mirrors the apps.repo_full_name CHECK.
+	repoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
 )
 
 // Sign returns the X-Hub-Signature-256 value GitHub sends for body: sha256=
@@ -94,7 +96,7 @@ func ValidDelivery(id string) bool { return deliveryRE.MatchString(id) }
 // of a branch of a repository.
 type Push struct {
 	RepositoryID int64  // GitHub's numeric id; it survives a rename
-	Repository   string // owner/name, for logs only
+	Repository   string // owner/name: what apps are matched by
 	Ref          string // refs/heads/<Branch>
 	Branch       string
 	After        string // the branch head after the push
@@ -139,6 +141,10 @@ func ParsePush(body []byte) (Push, string, error) {
 	}
 	if !shaRE.MatchString(p.After) || strings.Trim(p.After, "0") == "" {
 		return Push{}, "", errors.New("after is not a commit SHA")
+	}
+	// Pushes are matched to apps by name (ROADMAP P4.3).
+	if !repoRE.MatchString(p.Repository.FullName) {
+		return Push{}, "", errors.New("the payload has no repository full_name")
 	}
 	return Push{RepositoryID: p.Repository.ID, Repository: p.Repository.FullName, Ref: p.Ref, Branch: branch, After: p.After}, "", nil
 }

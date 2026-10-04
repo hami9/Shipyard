@@ -108,9 +108,23 @@ func TestCLIEndToEnd(t *testing.T) {
 	if out := f.ok("", "ps"); !regexp.MustCompile(`(?m)^api\s+hami9/api\s+main\s+8080$`).MatchString(out) || !strings.Contains(out, "web") {
 		t.Fatalf("ps:\n%s", out)
 	}
-	if out := f.ok("", "app", "show", "api"); !strings.Contains(out, "/healthz (timeout 1m0s)") {
+	if out := f.ok("", "app", "show", "api"); !strings.Contains(out, "/healthz (timeout 1m0s)") || !regexp.MustCompile(`auto deploy\s+false`).MatchString(out) {
 		t.Fatalf("app show:\n%s", out)
 	}
+	// P4.3: what a push deploys is the branch and the auto-deploy switch.
+	if out := f.ok("", "app", "update", "api", "--auto-deploy", "--branch", "release"); out != "Updated app api (branch release, deploys on push).\n" {
+		t.Fatalf("app update: %q", out)
+	}
+	if out := f.ok("", "app", "update", "api", "--auto-deploy=false"); out != "Updated app api (branch release).\n" {
+		t.Fatalf("app update --auto-deploy=false: %q", out)
+	}
+	if code, _, _ := f.run("", "app", "update", "api"); code != 2 {
+		t.Fatalf("app update without a setting: exit %d, want 2 (usage)", code)
+	}
+	if out := f.ok("", "app", "create", "hook", "--repo", "hami9/hook", "--branch", "main", "--port", "80", "--auto-deploy"); !strings.Contains(out, "deploys on push") {
+		t.Fatalf("app create --auto-deploy: %q", out)
+	}
+	f.ok("", "app", "update", "api", "--branch", "main")
 
 	f.ok(secret+"\n", "env", "set", "web", "DATABASE_URL")
 	f.ok("info\n", "env", "set", "web", "LOG_LEVEL", "--plain")

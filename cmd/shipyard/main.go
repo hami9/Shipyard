@@ -24,9 +24,11 @@ Connection:
 
 Apps:
   app create SLUG --repo OWNER/NAME --branch BRANCH --port PORT
-             [--dockerfile PATH] [--context PATH] [--health-path PATH]
+             [--dockerfile PATH] [--context PATH] [--health-path PATH] [--auto-deploy]
   app list                 List apps (same as ps)
   app show APP             Show an app's settings
+  app update APP [--branch BRANCH] [--auto-deploy=true|false]
+                           With auto-deploy, a GitHub push to the branch deploys it
   app delete APP --yes [--follow]
                            Take the app offline and remove its containers, network,
                            images, domains, configuration, and history. Not undoable
@@ -142,6 +144,8 @@ func dispatch(ctx context.Context, e env, c *client.Client, args []string) error
 		return cmdAppCreate(ctx, e, c, rest)
 	case "app show":
 		return cmdAppShow(ctx, e, c, rest)
+	case "app update":
+		return cmdAppUpdate(ctx, e, c, rest)
 	case "app delete":
 		return cmdAppDelete(ctx, e, c, rest)
 	case "env set":

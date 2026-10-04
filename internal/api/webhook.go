@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/store"
 	"github.com/hami9/shipyard/internal/webhook"
 )
 
@@ -30,16 +32,39 @@ const (
 
 // PushOutcome is what the sink did with a verified push.
 type PushOutcome struct {
-	Outcome     string // OutcomeQueued or OutcomeIgnored
-	Reason      string // why it was ignored
-	OperationID string // the deploy it queued or joined
+	Outcome    string   // OutcomeQueued or OutcomeIgnored
+	Reason     string   // why nothing was queued, or that the delivery is a repeat
+	Operations []string // the deploys it queued, one per app
 }
 
-// PushSink records a verified push and enqueues its deploy. It is nil until
-// deliveries are recorded (ROADMAP P4.2); the receiver then verifies and
-// answers, and ignores every push.
+// PushSink records a verified push and enqueues its deploys. Without one
+// the receiver verifies and answers, and ignores every push (tests).
 type PushSink interface {
 	Push(ctx context.Context, delivery string, p webhook.Push) (PushOutcome, error)
+}
+
+// PushStore records pushes; *store.Store implements it.
+type PushStore interface {
+	RecordPush(ctx context.Context, d store.PushDelivery) (store.PushRecord, error)
+}
+
+// StorePushes is the PushSink the API serves with: the delivery, its
+// deploys, and an audit event are written in one transaction, once per
+// delivery id (store.RecordPush).
+type StorePushes struct{ Store PushStore }
+
+func (s StorePushes) Push(ctx context.Context, delivery string, p webhook.Push) (PushOutcome, error) {
+	rec, err := s.Store.RecordPush(ctx, store.PushDelivery{ID: delivery, RepositoryID: p.RepositoryID,
+		Repository: p.Repository, Ref: p.Ref, Branch: p.Branch, After: p.After,
+		RequestID: logging.Get(ctx, logging.RequestID)})
+	if err != nil {
+		return PushOutcome{}, err
+	}
+	out := PushOutcome{Outcome: rec.Outcome, Reason: rec.Reason, Operations: rec.Operations}
+	if rec.Duplicate {
+		out.Reason = "this delivery was received before; nothing new was done"
+	}
+	return out, nil
 }
 
 type webhookHandlers struct {
@@ -49,10 +74,10 @@ type webhookHandlers struct {
 }
 
 type webhookReply struct {
-	Delivery    string `json:"delivery"`
-	Outcome     string `json:"outcome"`
-	Reason      string `json:"reason,omitempty"`
-	OperationID string `json:"operation_id,omitempty"`
+	Delivery   string   `json:"delivery"`
+	Outcome    string   `json:"outcome"`
+	Reason     string   `json:"reason,omitempty"`
+	Operations []string `json:"operations,omitempty"`
 }
 
 // github receives GitHub's deliveries: the only public endpoint without a
@@ -115,7 +140,7 @@ func (h *webhookHandlers) github(w http.ResponseWriter, r *http.Request) {
 		return
 	case h.sink == nil:
 		h.answer(w, r, http.StatusAccepted, "push", webhookReply{Delivery: delivery, Outcome: OutcomeIgnored,
-			Reason: "this server does not deploy from webhooks yet"}, push.RepositoryID)
+			Reason: "this server does not record pushes"}, push.RepositoryID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), webhookSinkTimeout)
@@ -130,7 +155,7 @@ func (h *webhookHandlers) github(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.answer(w, r, http.StatusAccepted, "push", webhookReply{Delivery: delivery, Outcome: out.Outcome, Reason: out.Reason,
-		OperationID: out.OperationID}, push.RepositoryID)
+		Operations: out.Operations}, push.RepositoryID)
 }
 
 // reject answers a delivery that is refused. It logs the reason and, only
@@ -153,8 +178,8 @@ func (h *webhookHandlers) answer(w http.ResponseWriter, r *http.Request, status 
 	if repo > 0 {
 		attrs = append(attrs, slog.Int64("repository_id", repo))
 	}
-	if reply.OperationID != "" {
-		attrs = append(attrs, slog.String("operation_id", reply.OperationID))
+	if len(reply.Operations) > 0 {
+		attrs = append(attrs, slog.Any("operations", reply.Operations))
 	}
 	h.log.InfoContext(r.Context(), "webhook delivery", attrs...)
 	writeJSON(w, status, "application/json", reply)

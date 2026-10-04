@@ -126,7 +126,7 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 			APIHostname: cfg.APIHostname},
 		// App logs come from the worker's socket, never from Docker (ADR-0008).
 		Logs:          api.LogClient{Client: applogs.NewClient(cfg.WorkerSocket)},
-		WebhookSecret: hookSecret})
+		WebhookSecret: hookSecret, Pushes: api.StorePushes{Store: s}})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 

@@ -8,11 +8,11 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P4.1: the GitHub webhook receiver (`POST /hooks/github`, signature verified before parsing) |
-| **Next task** | P4.2: record deliveries in `webhook_deliveries` and enqueue deploys under `gh:<delivery-id>`. Owner: the Phase 3 restore drill on a real VPS (ADR-0006's production-ready gate) |
+| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P4.2 and P4.3: a verified push deploys the apps tracking its repository and branch, once per delivery |
+| **Next task** | P4.4: the GitHub App (JWT, per-operation installation token, private repositories). Owner: the Phase 3 restore drill on a real VPS (ADR-0006's production-ready gate) |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again |
+| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
 
 ## Entry template
@@ -53,6 +53,31 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P4.2, P4.3 deploy on push
+
+- **Phase / task:** P4.2: delivery deduplication and idempotent enqueue; P4.3: repository-to-app mapping and branch policy. Done together: the enqueue needs the mapping.
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`store.RecordPush`:** one transaction records the delivery (`ON CONFLICT` on the delivery id), matches apps, enqueues a deploy per matching app, sets `outcome` and `operation_id`, and writes an audit event. Details in ARCHITECTURE §7, "As implemented (P4.2, P4.3)".
+- **API:** `api.StorePushes` is the receiver's sink; the reply lists `operations`. A repeat delivery answers "received before" with the first operations.
+- **`webhook.ParsePush`** now requires `repository.full_name` on branch pushes (it is what apps are matched by).
+- **CLI:** `app update APP [--branch B] [--auto-deploy=true|false]` (`client.UpdateApp`), and `app create --auto-deploy`. ARCHITECTURE listed `app update`; the CLI never had it.
+
+**Decisions**
+- **Match by `owner/name`, case-insensitively** (the owner's choice, 2026-10-04, option 1 of 2). Correction to what I told the owner: an app's repo is fixed at create, so after a rename the app must be recreated, not updated, until P4.4 stores GitHub's repository id.
+- **One deploy per matching app,** key `gh:<delivery>:<slug>`: nothing stops two apps from tracking the same repository and branch (a monorepo with two Dockerfiles). `operation_id` holds the deploy when there is exactly one.
+- **Only pushes that reach the store are recorded.** Pings, other events, tags, and deleted refs are answered and logged, not stored.
+- **No retention for `webhook_deliveries` yet.** GitHub redelivers for 3 days `[GH-REDELIVER]`, so rows must outlive that; a cap in the retention job is a follow-up.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint`, `make test`: ok. `make test-integration`: ok except `TestLeaseHandover` (the known flake) and `TestEnqueueRebuild` (an empty claim at line 491, code this task did not touch); a rerun of `store` and `queue` passed both. New: `TestRecordPush`, `TestRecordPushPolicy`, `TestRecordPushConcurrent` (8 at once: one record, one deploy), `TestRecordPushRollsBack`, two `TestParsePush` cases, and `app update` in `TestCLIEndToEnd`.
+- `TestPhase1ExitCriteria` (e2e): PASS (442 s). Through Caddy: a push for a repository no app deploys is ignored; a push of `E2E/Demo` main with auto-deploy off is ignored; after `app update --auto-deploy` the same push deploys `good`, the operation succeeds, and Caddy serves the new container; redelivering that delivery answers "received before" with the same operation, and the release history is unchanged.
+- The first combined run hit the 10-minute background limit during the e2e; its containers (`shipyard-e2e-4x4ejsdo-*`, `shipyard-e2e-m3c36is2-caddy`, `buildx_buildkit_shipyard-e2e-m3c36is20`) were left on the owner's machine, not removed.
+
+**Next**
+- P4.4: the GitHub App. Its JWT, installation tokens, and key storage are vendor facts to re-verify first (`GH-APP-JWT`, `GH-APP-TOKEN`).
 
 ### 2026-10-04: P4.1 webhook receiver
 

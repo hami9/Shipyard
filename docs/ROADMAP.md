@@ -191,8 +191,8 @@ flowchart LR
 - [x] **P4.1** `internal/webhook` (the receiver is `POST /hooks/github` in the API; the secret is the file `SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE`; a verified push goes to a sink that P4.2 provides, until then it is answered `ignored`):
   - Read the raw body (≤ 25 MB) and verify `X-Hub-Signature-256` with `hmac.Equal` **before** parsing.
   - Respond 2XX in < 10 s. Accept only `push`, and ignore `deleted` pushes and other refs.
-- [ ] **P4.2** Delivery deduplication (`webhook_deliveries` primary key), with idempotent enqueue under the key `gh:<delivery-id>` and coalescing.
-- [ ] **P4.3** Repository-to-app mapping and branch policy (`auto_deploy`, tracked branch). Unknown repositories are logged and ignored.
+- [x] **P4.2** Delivery deduplication (`webhook_deliveries` primary key), with idempotent enqueue under the key `gh:<delivery-id>` and coalescing. The key is `gh:<delivery-id>:<slug>`: one push can deploy several apps. Done together with P4.3, which it needs (`store.RecordPush`).
+- [x] **P4.3** Repository-to-app mapping and branch policy (`auto_deploy`, tracked branch). Unknown repositories are logged and ignored. Matched by `owner/name`, case-insensitively (the owner's choice, 2026-10-04); GitHub's repository id waits for P4.4. CLI: `app update APP --branch B --auto-deploy`.
 - [ ] **P4.4** GitHub App:
   - RS256 JWT (`exp` ≤ 10 min, `iat` −60 s).
   - A per-operation installation token scoped to one repository with `contents: read`.

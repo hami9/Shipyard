@@ -86,6 +86,7 @@ func cmdAppCreate(ctx context.Context, e env, c *client.Client, args []string) e
 	fs.StringVar(&n.DockerfilePath, "dockerfile", "", "")
 	fs.StringVar(&n.BuildContext, "context", "", "")
 	fs.StringVar(&n.HealthPath, "health-path", "", "")
+	fs.BoolVar(&n.AutoDeploy, "auto-deploy", false, "")
 	pos, err := parse(fs, args, 1)
 	if err != nil {
 		return err
@@ -95,8 +96,45 @@ func cmdAppCreate(ctx context.Context, e env, c *client.Client, args []string) e
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(e.stdout, "Created app %s (%s, branch %s, port %d).\n", a.Slug, a.Repo, a.Branch, a.Port)
+	fmt.Fprintf(e.stdout, "Created app %s (%s, branch %s, port %d%s).\n", a.Slug, a.Repo, a.Branch, a.Port, autoDeployNote(a.AutoDeploy))
 	return nil
+}
+
+// cmdAppUpdate changes the settings that decide what a push deploys: the
+// tracked branch and auto-deploy. Only the flags given are sent.
+func cmdAppUpdate(ctx context.Context, e env, c *client.Client, args []string) error {
+	fs := flag.NewFlagSet("app update", flag.ContinueOnError)
+	branch := fs.String("branch", "", "")
+	auto := fs.Bool("auto-deploy", false, "")
+	pos, err := parse(fs, args, 1)
+	if err != nil {
+		return err
+	}
+	var u client.AppUpdate
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "branch":
+			u.Branch = branch
+		case "auto-deploy":
+			u.AutoDeploy = auto
+		}
+	})
+	if u.Branch == nil && u.AutoDeploy == nil {
+		return errUsage
+	}
+	a, err := c.UpdateApp(ctx, pos[0], u)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "Updated app %s (branch %s%s).\n", a.Slug, a.Branch, autoDeployNote(a.AutoDeploy))
+	return nil
+}
+
+func autoDeployNote(on bool) string {
+	if on {
+		return ", deploys on push"
+	}
+	return ""
 }
 
 func cmdAppShow(ctx context.Context, e env, c *client.Client, args []string) error {
