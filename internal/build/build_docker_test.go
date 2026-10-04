@@ -72,6 +72,25 @@ func TestBuilderLimits(t *testing.T) {
 	}
 }
 
+// ADR-0009: the builder's container is on its own labelled network only,
+// not on Docker's default bridge, and Remove deletes that network too.
+func TestBuilderNetwork(t *testing.T) {
+	b := newTestBuilder(t)
+	container := "buildx_buildkit_" + b.Name + "0"
+	if got := dockerOut(t, "inspect", "--format", "{{.HostConfig.NetworkMode}} {{range $k, $v := .NetworkSettings.Networks}}[{{$k}}]{{end}}", container); got != b.Network()+" ["+b.Network()+"]" {
+		t.Fatalf("builder networks = %q, want only %s", got, b.Network())
+	}
+	if got := dockerOut(t, "network", "inspect", "--format", `{{index .Labels "io.shipyard.role"}} {{.Driver}} {{.Internal}}`, b.Network()); got != "build bridge false" {
+		t.Fatalf("network = %q", got)
+	}
+	if err := b.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if exec.Command("docker", "network", "inspect", b.Network()).Run() == nil {
+		t.Fatal("Remove left the builder's network")
+	}
+}
+
 func TestBuildSucceeds(t *testing.T) {
 	b := newTestBuilder(t)
 	dockerfile, ctxDir := project(t, "FROM scratch\nCOPY hello.txt /hello.txt\n")

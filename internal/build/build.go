@@ -92,21 +92,35 @@ func (b *Builder) name() string {
 	return DefaultBuilder
 }
 
-// Ensure creates the builder if it is missing and starts it. Limits apply
-// only when the builder is created; changing them means removing it first.
+// Network is the bridge network the builder's container joins instead of
+// Docker's default bridge (ADR-0009). Nothing else is on it, so a build
+// cannot reach other containers by address; its label lets the installer
+// find its subnet, to block cloud metadata and host services.
+func (b *Builder) Network() string { return b.name() + "-build" }
+
+// NetworkLabel marks the builder's network.
+const NetworkLabel = "io.shipyard.role=build"
+
+// Ensure creates the builder's network and the builder if they are missing,
+// and starts the builder. Limits and the network apply only when the
+// builder is created; changing them means removing it first.
 func (b *Builder) Ensure(ctx context.Context, l Limits) error {
+	if _, err := b.run(ctx, "network", "inspect", "--format", "{{.Name}}", b.Network()); err != nil {
+		if _, err := b.run(ctx, "network", "create", "--driver", "bridge", "--label", NetworkLabel,
+			"--label", "io.shipyard.builder="+b.name(), b.Network()); err != nil {
+			return fmt.Errorf("create builder network %s: %w", b.Network(), err)
+		}
+	}
 	if _, err := b.run(ctx, "buildx", "inspect", b.name()); err != nil {
 		args := []string{"buildx", "create", "--name", b.name(), "--driver", "docker-container"}
-		var opts []string
+		opts := []string{"network=" + b.Network()} // [DK-BX-CONTAINER]
 		if l.Memory != "" {
 			opts = append(opts, "memory="+l.Memory)
 		}
 		if l.CPUQuota > 0 {
 			opts = append(opts, fmt.Sprintf("cpu-quota=%d", l.CPUQuota), "cpu-period=100000")
 		}
-		if len(opts) > 0 {
-			args = append(args, "--driver-opt", strings.Join(opts, ","))
-		}
+		args = append(args, "--driver-opt", strings.Join(opts, ","))
 		if _, err := b.run(ctx, args...); err != nil {
 			return fmt.Errorf("create builder %s: %w", b.name(), err)
 		}
@@ -117,9 +131,13 @@ func (b *Builder) Ensure(ctx context.Context, l Limits) error {
 	return nil
 }
 
-// Remove deletes the builder and its cache (tests and uninstall).
+// Remove deletes the builder, its cache, and its network (tests and
+// uninstall).
 func (b *Builder) Remove(ctx context.Context) error {
 	_, err := b.run(ctx, "buildx", "rm", "--force", b.name())
+	if _, nerr := b.run(ctx, "network", "rm", b.Network()); nerr != nil && !strings.Contains(nerr.Error(), "not found") {
+		err = errors.Join(err, nerr)
+	}
 	return err
 }
 

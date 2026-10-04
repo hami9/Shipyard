@@ -65,6 +65,10 @@ All notable changes to Shipyard are recorded here.
 - **Configuration:** `SHIPYARD_KEK_DIR` and `SHIPYARD_KEK_ACTIVE`. `shipyard-api serve` refuses to start without the active KEK, or with a KEK file other users can read.
 - **Secret encryption and environment revisions** (`internal/secrets`): envelope encryption with a per-value AES-256-GCM key wrapped by a file-based KEK. Every change creates an immutable, numbered revision that reuses unchanged values without decrypting them.
 
+### Security
+
+- **Builder network:** the build container now joins a Docker network of its own (`shipyard-build`, labelled `io.shipyard.role=build`) instead of the default bridge, so builds cannot reach other containers by address. An existing builder keeps its old network until removed (`docker buildx rm shipyard`, which also drops its cache). Outbound access from builds stays open, by decision: see ADR-0009.
+
 ### Removed
 
 - **`SHIPYARD_API_ALLOW_PUBLIC_LISTEN`.** The API now listens only on loopback or a Unix socket, and public traffic reaches it through Caddy. A non-loopback `SHIPYARD_API_LISTEN` is refused at startup, even with the old setting.

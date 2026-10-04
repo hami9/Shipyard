@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/store/storetest"
 )
 
@@ -57,6 +58,8 @@ func TestRestoreDrill(t *testing.T) {
 		h.docker("image", "rm", "--force", id)
 	}
 	h.docker("buildx", "rm", "--force", h.builder)
+	h.docker("network", "rm", (&build.Builder{Name: h.builder}).Network())
+	// The worker recreates the builder on its own network (ADR-0009).
 
 	// The new host: an empty database and an empty KEK directory.
 	dir := t.TempDir()

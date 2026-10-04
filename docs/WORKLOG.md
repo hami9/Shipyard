@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P4.6: deploys of apps with an installation show in GitHub as Deployments. Every Phase 4 task is done |
-| **Next task** | The Phase 4 exit criteria on a real VPS with a real GitHub App and webhook (the owner's), then Phase 5. Owner also: the Phase 3 restore drill on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); `build-network` (P5.1). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.1: builder egress control evaluated and deferred (ADR-0009); the builder has its own network |
+| **Next task** | P5.2: rootless Docker and stronger build isolation (evaluation ADR). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,32 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P5.1 builder egress
+
+- **Phase / task:** P5.1: builder egress control: evaluate a proxy or allow-list, then implement it or record an explicit deferral in an ADR
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Evaluation** (sources re-verified or added: `DK-BX-CONTAINER`, `DK-PREDEF-ARGS`, `DK-NET-INTERNAL`, `DK-26-DNS`, `BK-PROXY-NETWORK`). Three options went to the owner: an allow-list proxy on an internal network; BuildKit's `--proxy-network`; or deferral with cheap hardening. **The owner chose the deferral** (2026-10-04).
+- **[ADR-0009](adr/0009-builder-egress-deferred.md):** the deferral, the residual risk, and when to revisit.
+- **`build.Builder`:** `Ensure` creates the network `<builder>-build` (bridge, label `io.shipyard.role=build`) and puts the builder on it (`--driver-opt network=…`); `Remove` deletes it too. The e2e harness and the restore drill remove it with the builder.
+- **P5.7 got a sub-item:** host firewall rules for that subnet (no cloud metadata, no host services).
+
+**Decisions**
+- **Not `--internal`:** an internal network would cut off the downloads builds need, and the deferral keeps egress open. A network of its own still takes the builder off the default bridge it shared with unrelated containers.
+- **No migration for existing builders:** the network applies when a builder is created, like its limits. Shipyard has no production installs yet; the CHANGELOG says how to recreate one.
+- **BuildKit's `--proxy-network` is only in `buildkitd --help` and issues;** `SOURCES.md` records it as checked, not as documented behaviour.
+
+**Verification**
+- `make lint`, `make test`, `make test-integration`: exit 0. `go vet -tags e2e ./test/e2e/` and `go vet -tags docker ./internal/build/`: ok.
+- `go test -race -tags docker -count=1 ./internal/build/` (Engine 29.8.1, buildx 0.37.1): ok, 282.8 s; `TestBuilderNetwork` PASS (27.0 s). No test builders or `io.shipyard.role=build` networks left afterwards.
+- `go test -tags e2e -run TestPhase1ExitCriteria ./test/e2e`: PASS, 482.5 s (failed-switch check: 648 probes, 42 answered by the candidate before the restore).
+- `go test -tags e2e -run TestRestoreDrill ./test/e2e`: PASS, 199.5 s. No leftover containers or build networks after either run.
+- `TestCrashSafety`: not run (about 19 min, longer than this session's run limit).
+
+**Next**
+- P5.2: rootless Docker and stronger build isolation (evaluation ADR).
 
 ### 2026-10-04: P4.6 deploy status in GitHub
 

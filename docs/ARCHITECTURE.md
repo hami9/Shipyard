@@ -426,6 +426,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 - Enforce a per-build deadline and a bounded log size.
 - Never pass credentials as build args or environment variables.
 - Leave builder network access on in the MVP, because most builds download dependencies. Egress restriction is a Phase 5 hardening item.
+  - Decided in P5.1 ([ADR-0009](adr/0009-builder-egress-deferred.md)): egress control stays deferred under the trusted-repositories model. The builder's container is on a bridge network of its own, `<builder>-build`, labelled `io.shipyard.role=build`, not on Docker's default bridge. P5.7's installer firewalls that subnet from the metadata address and host services.
 
 **Containers** `[DK-RUN][DK-SEC][DK-BRIDGE]`
 

@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hami9/shipyard/internal/build"
 	"github.com/hami9/shipyard/internal/store"
 	"github.com/hami9/shipyard/internal/store/storetest"
 	"github.com/hami9/shipyard/internal/webhook"
@@ -52,6 +53,10 @@ func TestPhase1ExitCriteria(t *testing.T) {
 		t.Fatalf("replay:\n%s", out)
 	}
 	h.wantOp(op1, "succeeded", "")
+	// ADR-0009: the build ran on a builder that is on its own network only.
+	if net := (&build.Builder{Name: h.builder}).Network(); h.docker("inspect", "--format", "{{.HostConfig.NetworkMode}}", "buildx_buildkit_"+h.builder+"0") != net {
+		t.Fatalf("the builder is not on %s", net)
+	}
 	first := h.onlyRunning()
 	firstImage := h.docker("inspect", "--format", "{{.Image}}", first)
 	if got := h.docker("inspect", "--format", `{{index .Config.Labels "io.shipyard.commit"}}`, first); got != h.repo.good {
@@ -517,6 +522,7 @@ func start(t *testing.T) *harness {
 			exec.Command("docker", "image", "rm", "--force", id).Run()
 		}
 		exec.Command("docker", "buildx", "rm", "--force", builder).Run()
+		exec.Command("docker", "network", "rm", (&build.Builder{Name: builder}).Network()).Run() // ADR-0009
 	})
 
 	run(t, root, nil, "go", "build", "-o", h.bin+string(filepath.Separator), "./cmd/...")
