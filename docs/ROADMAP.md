@@ -197,7 +197,7 @@ flowchart LR
   - RS256 JWT (`exp` ≤ 10 min, `iat` −60 s).
   - A per-operation installation token scoped to one repository with `contents: read`.
   - The private key is stored outside the DB. Private repository fetch works.
-- [ ] **P4.5** Missed-delivery catch-up in the reconciler: compare the branch head with the last deployed SHA.
+- [x] **P4.5** Missed-delivery catch-up in the reconciler: compare the branch head with the last deployed SHA. As built: a worker job beside the reconciler (it calls GitHub), at start and every `SHIPYARD_CATCHUP_INTERVAL`; the head deploys when the app never tried that commit (`app.CatchUp`, `store.EnqueueCatchUp`).
 - [ ] **P4.6** (Optional) Report deployment status back to GitHub.
 
 **Exit criteria**

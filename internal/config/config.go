@@ -77,6 +77,7 @@ const (
 	EnvGitHubAppID      = "SHIPYARD_GITHUB_APP_ID"
 	EnvGitHubAppKeyFile = "SHIPYARD_GITHUB_APP_KEY_FILE"
 	EnvGitHubAPIURL     = "SHIPYARD_GITHUB_API_URL"
+	EnvCatchUpInterval  = "SHIPYARD_CATCHUP_INTERVAL"
 )
 
 // Defaults.
@@ -116,6 +117,9 @@ const (
 	DefaultBuildCacheMax     = 10 << 30
 	DefaultRetentionInterval = 24 * time.Hour
 	maxSize                  = 1 << 50
+	// DefaultCatchUpInterval is how often branch heads are compared with
+	// what auto-deploy apps have tried (P4.5): one ls-remote per app.
+	DefaultCatchUpInterval = 5 * time.Minute
 	// ADR-0006: backups go to two separate targets, A (the database and
 	// Caddy's data) and B (the KEKs); A keeps 14 dailies and 8 weeklies.
 	DefaultBackupDir        = "/var/backups/shipyard"
@@ -239,6 +243,9 @@ type Worker struct {
 	BuildCacheMax     int64
 	RetainOperations  int
 	OperationLogMax   int64
+	// CatchUpInterval is how often auto-deploy apps' branch heads are read
+	// to deploy pushes whose webhook was missed (P4.5); also once at start.
+	CatchUpInterval time.Duration
 	// WorkDir holds one checkout per running operation (mode 0700).
 	WorkDir string
 	// SourceBaseURL is where repositories are cloned from: https, or
@@ -409,6 +416,10 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 	cfg.OperationLogMax = r.size(EnvOperationLogMax, DefaultOperationLogMax, 1<<10)
 	cfg.Backup = r.backup(cfg.KEKDir)
 	cfg.GitHub = r.github()
+	cfg.CatchUpInterval = r.duration(EnvCatchUpInterval, DefaultCatchUpInterval)
+	if cfg.CatchUpInterval < time.Second {
+		r.fail(EnvCatchUpInterval, errors.New("must be at least 1s"))
+	}
 	if !filepath.IsAbs(cfg.WorkDir) {
 		r.fail(EnvWorkDir, fmt.Errorf("%q must be an absolute path", cfg.WorkDir))
 	}

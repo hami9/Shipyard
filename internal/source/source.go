@@ -134,6 +134,42 @@ func (f *Fetcher) Fetch(ctx context.Context, req Request) (Checkout, error) {
 	return Checkout{Dir: dir, SHA: sha, BranchHead: head}, nil
 }
 
+// Head returns the commit at the tip of branch in repo, without a clone:
+// `git ls-remote --refs --exit-code <remote> refs/heads/<branch>`. Patterns
+// match the tail of a ref name, so only the exact ref counts
+// [GIT-LS-REMOTE]. token authenticates it like a fetch (P4.5).
+func (f *Fetcher) Head(ctx context.Context, repo, branch, token string) (string, error) {
+	if !repoRE.MatchString(repo) || strings.Contains(repo, "..") {
+		return "", fmt.Errorf("repository %q must be owner/name", repo)
+	}
+	if err := app.CheckBranch(branch); err != nil {
+		return "", fmt.Errorf("branch: %w", err)
+	}
+	remote, scheme, err := f.remoteURL(repo)
+	if err != nil {
+		return "", err
+	}
+	g := &gitRunner{bin: f.gitBin(), scheme: scheme, token: token}
+	ref := "refs/heads/" + branch
+	out, err := g.run(ctx, "", "ls-remote", "--refs", "--exit-code", "--", remote, ref)
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 2 {
+			return "", fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
+		}
+		return "", fmt.Errorf("ls-remote %s: %w", repo, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if sha, name, ok := strings.Cut(line, "\t"); ok && name == ref {
+			if app.CheckCommitSHA(sha) != nil {
+				return "", fmt.Errorf("ls-remote %s: %q is not a commit SHA", repo, sha)
+			}
+			return sha, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %s", ErrBranchNotFound, branch)
+}
+
 // ErrEscapes means a path leaves the checkout, directly or through a symlink.
 var ErrEscapes = errors.New("path escapes the repository checkout")
 

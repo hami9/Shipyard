@@ -409,6 +409,20 @@ func TestLoadWorkerGitHubApp(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerCatchUpInterval(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.CatchUpInterval != DefaultCatchUpInterval {
+		t.Fatalf("default = %v, %v", cfg.CatchUpInterval, err)
+	}
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCatchUpInterval: "30s"})); err != nil || cfg.CatchUpInterval != 30*time.Second {
+		t.Fatalf("30s = %v, %v", cfg.CatchUpInterval, err)
+	}
+	for _, bad := range []string{"500ms", "0", "-1m", "soon"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCatchUpInterval: bad}))
+		checkErr(t, err, EnvCatchUpInterval)
+	}
+}
+
 func TestLoadWorkerRetainImages(t *testing.T) {
 	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
 		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))

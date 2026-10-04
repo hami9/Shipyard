@@ -110,6 +110,47 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
+// P4.5: Head reads a branch tip without cloning. ls-remote patterns match
+// the tail of a ref, so refs/heads/x/refs/heads/main also matches the
+// pattern for main; only the exact ref counts [GIT-LS-REMOTE].
+func TestHead(t *testing.T) {
+	s, r := newGitServer(t)
+	git(t, filepath.Join(s.root, "hami9", "demo.git"), "branch", "x/refs/heads/main", r.F)
+	f := fetcher(t, s)
+	for branch, want := range map[string]string{"main": r.C, "feature": r.F, "x/refs/heads/main": r.F} {
+		if got, err := f.Head(t.Context(), "hami9/demo", branch, ""); err != nil || got != want {
+			t.Errorf("Head(%s) = %s, %v; want %s", branch, got, err, want)
+		}
+	}
+	if _, err := f.Head(t.Context(), "hami9/demo", "nope", ""); !errors.Is(err, ErrBranchNotFound) {
+		t.Errorf("unknown branch: %v", err)
+	}
+	if _, err := f.Head(t.Context(), "hami9/demo", "-x", ""); err == nil {
+		t.Error("an option-like branch was accepted")
+	}
+	if _, err := f.Head(t.Context(), "../demo", "main", ""); err == nil {
+		t.Error("a bad repository was accepted")
+	}
+
+	// A private repository needs the token, sent in the header only.
+	priv := filepath.Join(s.root, "private", "demo.git")
+	os.MkdirAll(filepath.Dir(priv), 0o755)
+	git(t, s.root, "clone", "-q", "--bare", filepath.Join(s.root, "hami9", "demo.git"), priv)
+	if _, err := f.Head(t.Context(), "private/demo", "main", ""); err == nil || errors.Is(err, ErrBranchNotFound) {
+		t.Errorf("private without a token: %v", err)
+	}
+	const token = "ghs_head_token_value"
+	if got, err := f.Head(t.Context(), "private/demo", "main", token); err != nil || got != r.C {
+		t.Errorf("private with a token = %s, %v", got, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token))
+	if s.authSeen[len(s.authSeen)-1] != want {
+		t.Errorf("last Authorization = %q", s.authSeen[len(s.authSeen)-1])
+	}
+}
+
 func TestFetchBranchHead(t *testing.T) {
 	s, r := newGitServer(t)
 	f := fetcher(t, s)

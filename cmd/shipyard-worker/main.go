@@ -251,12 +251,23 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	ret := &app.Retention{Events: s, Cache: builder, CacheMax: cfg.BuildCacheMax,
 		KeepOperations: cfg.RetainOperations, MaxEventBytes: cfg.OperationLogMax, Log: log}
 
+	// Pushes whose webhook never arrived (P4.5): at start, which is when
+	// they are likely, and then every catch-up interval.
+	catchUp := &app.CatchUp{Store: s, Heads: src, Log: log}
+
 	var wg sync.WaitGroup
 	wg.Go(func() { rec.Run(ctx, cfg.ReconcileInterval) })
 	wg.Go(func() {
 		reconcile.Every(ctx, cfg.RetentionInterval, func(ctx context.Context) {
 			if err := ret.Run(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("retention incomplete", slog.Any("err", err))
+			}
+		})
+	})
+	wg.Go(func() {
+		reconcile.Every(ctx, cfg.CatchUpInterval, func(ctx context.Context) {
+			if _, err := catchUp.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("catch-up incomplete", slog.Any("err", err))
 			}
 		})
 	})

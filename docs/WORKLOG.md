@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P4.4: private repositories fetched through a GitHub App, one narrowed installation token per fetch |
-| **Next task** | P4.5: missed-delivery catch-up in the reconciler. Owner: a real GitHub App on a private repository (Phase 4 exit criterion), and the Phase 3 restore drill on a real VPS |
+| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P4.5: the catch-up deploys pushes whose webhook was missed |
+| **Next task** | P4.6 (optional): report deployment status back to GitHub; otherwise the Phase 4 exit criteria. Owner: a real GitHub App and webhook on a private repository (Phase 4 exit criteria), and the Phase 3 restore drill on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,31 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P4.5 catch-up
+
+- **Phase / task:** P4.5: missed-delivery catch-up: compare the branch head with the last deployed SHA
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`source.Fetcher.Head`:** the branch tip by `git ls-remote`, exact ref only, with the same locked-down git environment and token header as a fetch.
+- **`store.CatchUpCandidates`, `store.EnqueueCatchUp`;** **`app.CatchUp`** runs them per app; **worker:** a job at start and every `SHIPYARD_CATCHUP_INTERVAL` (5m), heads read through `sourceAdapter.Head` (App token when the app has an installation).
+- Details: ARCHITECTURE §5, Reconciler step 4, "As implemented (P4.5)".
+
+**Decisions**
+- **"Last deployed SHA" made precise:** the head deploys only when the app never tried that commit (no deployment of it in any status, no earlier catch-up of it). Comparing with the active release alone would undo every rollback and retry a broken head on every pass.
+- **Only apps deployed before.** Turning on auto-deploy for a new app does not deploy it by itself.
+- **Its own job, not a reconciler step:** it calls GitHub once per app, so it runs every 5 minutes, not every minute, and a slow GitHub does not hold up container and route repair.
+- **No audit event,** like the reconciler's rebuild: the operation's key (`catchup:<app>:<sha>`) records where it came from.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after one gofmt fix), `make test`, `make test-integration`: all ok. New: `TestHead` (source: exact ref only, even beside `refs/heads/x/refs/heads/main`; unknown branch; bad input; a private repository needs the token, sent in the header), `TestCatchUp` (store: candidates; no deploy of the deployed commit; one deploy of a new head, never twice, not retried after it failed; nothing after a branch change, with auto-deploy off, or while deleting), `TestCatchUp` (app: errors per app, the rest go on), `TestLoadWorkerCatchUpInterval`.
+- `TestPhase1ExitCriteria` (e2e): PASS (413 s). New step: with the worker stopped, a commit is pushed to `e2e/demo` main and no webhook is sent; after the worker starts, the catch-up deploys it, the release is active, and Caddy serves its container.
+- `TestRestoreDrill`: PASS (167 s), with the harness's new GitHub App settings and private repository.
+- `TestCrashSafety`: not rerun since P3.7 (about 19 minutes, longer than one background run here); the harness changes since then are the worker's GitHub App settings and a second, private repository on the git server.
+
+**Next**
+- P4.6 is optional. Then the Phase 4 exit criteria on a real VPS with a real GitHub App and webhook (the owner's).
 
 ### 2026-10-04: P4.4 GitHub App
 

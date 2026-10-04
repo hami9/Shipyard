@@ -340,6 +340,18 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	}
 	h.checkPrivateRepo()
 
+	// P4.5 (Phase 4 exit criterion): a push made while Shipyard was down,
+	// whose webhook therefore never arrived, is deployed by the catch-up
+	// when the worker starts again (auto-deploy is on since the step above).
+	h.stopWorker()
+	fixed := h.push("catchup.txt", "pushed while the worker was down\n")
+	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run").stop
+	h.waitActive(fixed)
+	caught := h.waitRunning(func(id string) bool { return id != pushed }) // the pushed one drains
+	if got := h.viaCaddy(host, "/read?path=/etc/hostname"); got != caught[:12] {
+		t.Fatalf("after the catch-up caddy serves %q, want %s", got, caught[:12])
+	}
+
 	// P3.8: deleting the app is an operation of the worker. It takes the app
 	// out of Caddy, then removes its container, network, and images, and at
 	// last the app itself; the CLI follows it until the app is gone.
@@ -464,6 +476,10 @@ type harness struct {
 	hookSecret []byte
 	github     *fakeGitHub
 
+	// src is the working repository; repos holds the bare ones the git
+	// server publishes (P4.5 pushes to them).
+	src, repos string
+
 	// For the restore drill, which stops both services and starts them
 	// again on another database: their environments, how to stop them, and
 	// what else a lost host loses.
@@ -508,6 +524,7 @@ func start(t *testing.T) *harness {
 	os.MkdirAll(src, 0o755)
 	run(t, root, []string{"CGO_ENABLED=0", "GOOS=linux"}, "go", "build", "-o", filepath.Join(src, "probe"), "./internal/runtime/testdata/probe")
 	h.repo = newRepo(t, src)
+	h.src, h.repos = src, filepath.Join(tmp, "repos")
 	gh, ghURL, ghKey := startGitHub(t, tmp)
 	h.github = gh
 	gitURL := serveGit(t, src, filepath.Join(tmp, "repos"), gh.authorized)
@@ -561,6 +578,8 @@ func start(t *testing.T) *harness {
 	return h
 }
 
+const goodDockerfile = "FROM scratch\nCOPY probe /probe\nEXPOSE 8080\nENTRYPOINT [\"/probe\"]\n"
+
 // newRepo commits a working app, then a feature branch commit, then a broken
 // Dockerfile at the head of main.
 func newRepo(t *testing.T, src string) repo {
@@ -576,12 +595,40 @@ func newRepo(t *testing.T, src string) repo {
 	}
 	git("init", "-q", "-b", "main")
 	var r repo
-	r.good = commit("Dockerfile", "FROM scratch\nCOPY probe /probe\nEXPOSE 8080\nENTRYPOINT [\"/probe\"]\n")
+	r.good = commit("Dockerfile", goodDockerfile)
 	git("switch", "-q", "-c", "feature")
 	r.offBranch = commit("feature.txt", "not on main\n")
 	git("switch", "-q", "main")
 	commit("Dockerfile", "FROM scratch\nCOPY missing-file /x\n")
 	return r
+}
+
+// push commits a working app with file changed to main, as a developer
+// would, and pushes it to e2e/demo; no webhook is sent. It returns the new
+// head.
+func (h *harness) push(file, content string) string {
+	h.t.Helper()
+	env := []string{"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t",
+		"GIT_COMMITTER_EMAIL=t@example.com", "GIT_CONFIG_GLOBAL=" + os.DevNull}
+	os.WriteFile(filepath.Join(h.src, "Dockerfile"), []byte(goodDockerfile), 0o644) // main's head is broken
+	os.WriteFile(filepath.Join(h.src, file), []byte(content), 0o644)
+	run(h.t, h.src, env, "git", "add", "-A")
+	run(h.t, h.src, env, "git", "commit", "-q", "-m", file)
+	run(h.t, h.src, env, "git", "push", "-q", filepath.Join(h.repos, "e2e", "demo.git"), "main")
+	return run(h.t, h.src, env, "git", "rev-parse", "HEAD")
+}
+
+// waitActive waits until the app's newest release is commit and active.
+func (h *harness) waitActive(commit string) {
+	h.t.Helper()
+	var rel string
+	for deadline := time.Now().Add(4 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
+		rel = h.cli("", "releases", h.slug, "--limit", "1")
+		if strings.Contains(rel, commit[:12]) && strings.Contains(rel, "active") {
+			return
+		}
+	}
+	h.t.Fatalf("commit %s did not become active:\n%s", commit[:12], rel)
 }
 
 // serveGit publishes src over git's smart HTTP protocol twice: as e2e/demo

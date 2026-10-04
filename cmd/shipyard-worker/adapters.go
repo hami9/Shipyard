@@ -39,17 +39,11 @@ type sourceAdapter struct {
 // and contents: read, passed to git in a header and then dropped (P4.4).
 func (a sourceAdapter) Fetch(ctx context.Context, r app.FetchRequest) (app.Fetched, error) {
 	req := source.Request{OperationID: r.OperationID, Repo: r.Repo, Branch: r.Branch, Ref: r.Ref}
-	if r.InstallationID > 0 {
-		if a.gh == nil {
-			return app.Fetched{}, fmt.Errorf("the app uses GitHub App installation %d, but this worker has no GitHub App (%s, %s)",
-				r.InstallationID, config.EnvGitHubAppID, config.EnvGitHubAppKeyFile)
-		}
-		tok, err := a.gh.InstallationToken(ctx, r.InstallationID, r.Repo)
-		if err != nil {
-			return app.Fetched{}, err
-		}
-		req.Token = tok.Value
+	token, err := a.token(ctx, r.InstallationID, r.Repo)
+	if err != nil {
+		return app.Fetched{}, err
 	}
+	req.Token = token
 	co, err := a.f.Fetch(ctx, req)
 	if err != nil {
 		return app.Fetched{}, err
@@ -66,6 +60,32 @@ func (a sourceAdapter) Fetch(ctx context.Context, r app.FetchRequest) (app.Fetch
 }
 
 func (a sourceAdapter) Cleanup(opID string) error { return a.f.Cleanup(opID) }
+
+// Head reads a branch tip for the catch-up (P4.5), authenticated like a fetch.
+func (a sourceAdapter) Head(ctx context.Context, repo, branch string, installationID int64) (string, error) {
+	token, err := a.token(ctx, installationID, repo)
+	if err != nil {
+		return "", err
+	}
+	return a.f.Head(ctx, repo, branch, token)
+}
+
+// token returns a new installation token for repo, or "" for an app
+// without an installation (a public repository).
+func (a sourceAdapter) token(ctx context.Context, installationID int64, repo string) (string, error) {
+	if installationID <= 0 {
+		return "", nil
+	}
+	if a.gh == nil {
+		return "", fmt.Errorf("the app uses GitHub App installation %d, but this worker has no GitHub App (%s, %s)",
+			installationID, config.EnvGitHubAppID, config.EnvGitHubAppKeyFile)
+	}
+	tok, err := a.gh.InstallationToken(ctx, installationID, repo)
+	if err != nil {
+		return "", err
+	}
+	return tok.Value, nil
+}
 
 type buildAdapter struct{ b *build.Builder }
 

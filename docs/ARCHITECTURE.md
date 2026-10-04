@@ -306,6 +306,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
    - Since P3.8 an app's containers are removed by its delete operation, before its rows go (§6). The janitor still leaves alone any container whose deployment is not in this database.
 3. Render the Caddy config from `routes`. If it differs from the running config, load it (`Admin.Apply`: compare, then a conditional whole replace). Since P2.3 the worker does this at start.
 4. For `auto_deploy` apps, compare the tracked branch head with the last deployed SHA and enqueue missed pushes. GitHub does not auto-redeliver failed webhooks `[GH-REDELIVER]`.
+   - As implemented (P4.5, `app.CatchUp`): a worker job of its own, not a reconciler step, because it calls GitHub. It runs at start, when missed pushes are likely, and every `SHIPYARD_CATCHUP_INTERVAL` (default 5 min).
+   - **Which apps.** Those with `auto_deploy` on, at least one deployment (a new app waits for its first deploy), and no operation queued or running.
+   - **Reading the head.** `git ls-remote --refs --exit-code` on `refs/heads/<branch>`, keeping only that exact ref `[GIT-LS-REMOTE]`. For an app with a GitHub App installation, it uses a new installation token, as a fetch does.
+   - **The rule** ("last deployed SHA" made precise). The head is queued only if the app never tried that commit: no deployment of it in any status, and no earlier catch-up of it (`store.EnqueueCatchUp`, key `catchup:<app id>:<sha>`). So a rollback is not undone, a failed commit is not retried every pass, and a push the webhook already deployed is left alone. The check repeats under the app's row lock, with the branch and `auto_deploy` as read, so a webhook deploy or a settings change in between wins.
+   - **One app's failure** (GitHub unreachable, a deleted branch) is logged and does not stop the others.
 5. Since P3.4a: remove the images retention no longer keeps (§4, Retention). It runs last, after the janitor, so the containers that used them are gone.
 
 ## 6. API and CLI shape
