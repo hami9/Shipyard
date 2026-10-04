@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P4.5: the catch-up deploys pushes whose webhook was missed |
-| **Next task** | P4.6 (optional): report deployment status back to GitHub; otherwise the Phase 4 exit criteria. Owner: a real GitHub App and webhook on a private repository (Phase 4 exit criteria), and the Phase 3 restore drill on a real VPS |
+| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P4.6: deploys of apps with an installation show in GitHub as Deployments. Every Phase 4 task is done |
+| **Next task** | The Phase 4 exit criteria on a real VPS with a real GitHub App and webhook (the owner's), then Phase 5. Owner also: the Phase 3 restore drill on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,32 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P4.6 deploy status in GitHub
+
+- **Phase / task:** P4.6 (optional): report deployment status back to GitHub
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Owner's choices (2026-10-04):** the Deployments API, not commit statuses; every deploy and rollback of an app with an installation.
+- **`github.Reporter`** (`CreateDeployment`, `CreateStatus`) and `App.TokenWith` (tokens with chosen permissions); **`app` reporting** hooks in the deployer (`report.go`); **migration `0004`**: `deployments.github_deployment_id`; `store.RecordGitHubDeployment`.
+- Details: ARCHITECTURE §7 GitHub, "As implemented (P4.6)".
+
+**Decisions**
+- **`auto_merge: false`, `required_contexts: []`:** GitHub's defaults would merge the default branch into the ref, or refuse a commit with red checks; Shipyard reports the commit it deployed.
+- **Shipyard marks the replaced release inactive,** because `auto_inactive` skips production environments `[GH-DEPLOY]`, and the apps are production.
+- **No error text in GitHub:** a failure names its phase and the operation. GitHub shows statuses to everyone who can read the repository, so the text is limited to what that audience may see.
+- **Best effort:** reporting never fails a deploy; a GitHub error is a warning event.
+- **Not reported:** a deploy that fails before its commit is known, and an app's delete (its GitHub Deployments stay as they were).
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint`, `make test-integration` (migration `0004` applied in the store tests): ok. `make test` failed first in the new `TestReporterFails`: `../x` matched the repository pattern (dots are allowed characters) and would have reached the URL path. Fixed: `..` and a `.` segment are refused, as `internal/source` refuses `..`; then ok.
+- New: `TestReporter` (the exact-commit body, one `deployments: write` token for all calls, a new one near expiry, the 140-character cut), `TestReporterFails`, `TestReportDeploy` (create, in progress, success with the URL, the replaced release inactive), `TestReportFailure` (phase and operation, no error text), `TestReportBestEffort`, `TestReportResumeAndRollback`.
+- `TestPhase1ExitCriteria` (e2e): PASS (466 s). The fake GitHub now takes deployments and statuses with a `deployments: write` token only (that token does not open the git server). The private deploy reported `deployment <good> <app> false []`, `in_progress`, `success`; the two deploys that failed before their commit was known reported nothing.
+- Not run: `TestRestoreDrill` and `TestCrashSafety` since P4.5; this task did not change the harness except the fake GitHub's new endpoints.
+
+**Next**
+- Phase 4 is done in code. Its exit criteria need a real GitHub App, webhook, and private repository on a VPS (the owner's).
 
 ### 2026-10-04: P4.5 catch-up
 

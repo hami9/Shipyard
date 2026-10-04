@@ -106,6 +106,12 @@ func (s *fakeStore) FailDeployment(_ context.Context, _, _, reason string) error
 	s.dep.Status, s.dep.FailureReason = store.DeployFailed, reason
 	return nil
 }
+func (s *fakeStore) RecordGitHubDeployment(_ context.Context, _, _ string, id int64) error {
+	if s.dep.GitHubDeploymentID == 0 {
+		s.dep.GitHubDeploymentID = id
+	}
+	return nil
+}
 func (s *fakeStore) MarkSwitching(context.Context, string, string) error {
 	s.dep.Status = store.DeploySwitching
 	return nil

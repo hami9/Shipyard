@@ -210,13 +210,15 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	defer logSrv.Close()
 
 	src := sourceAdapter{f: &source.Fetcher{Root: cfg.WorkDir, BaseURL: cfg.SourceBaseURL}}
+	var ghApp *github.App
 	if cfg.GitHub.AppID != "" {
 		// The App's key stays in its file, out of the database (P4.4).
 		key, err := github.LoadKey(cfg.GitHub.KeyFile)
 		if err != nil {
 			return fmt.Errorf("load the GitHub App key: %w", err)
 		}
-		src.gh = &github.App{ID: cfg.GitHub.AppID, Key: key, APIURL: cfg.GitHub.APIURL, HTTP: &http.Client{Timeout: 30 * time.Second}}
+		ghApp = &github.App{ID: cfg.GitHub.AppID, Key: key, APIURL: cfg.GitHub.APIURL, HTTP: &http.Client{Timeout: 30 * time.Second}}
+		src.gh = ghApp
 	}
 	deployer := &app.Deployer{
 		Store:   s,
@@ -226,6 +228,10 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		Env:     env,
 		Health:  healthGate,
 		Log:     log,
+	}
+	if ghApp != nil {
+		// Deploys of apps with an installation show up in GitHub (P4.6).
+		deployer.GitHub = githubReporter{&github.Reporter{App: ghApp}}
 	}
 	if router != nil { // a nil *routing.Router must not become a non-nil interface
 		deployer.Router = router

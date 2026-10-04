@@ -51,6 +51,7 @@ type DeployStore interface {
 	MarkHealthChecking(ctx context.Context, id, owner string) error
 	MarkSwitching(ctx context.Context, id, owner string) error
 	FailDeployment(ctx context.Context, id, owner, reason string) error
+	RecordGitHubDeployment(ctx context.Context, id, owner string, githubID int64) error
 	ActivateDeployment(ctx context.Context, id, owner, upstream string, hostnames []string) (*store.Deployment, error)
 }
 
@@ -172,6 +173,33 @@ type Deployer struct {
 	// crash-safety suite uses it to kill the worker there (P3.7); it is nil
 	// in production.
 	Fault func(point string)
+	// GitHub mirrors the deployments of apps with a GitHub App installation
+	// as GitHub Deployments (P4.6); nil reports nothing.
+	GitHub GitHubReporter
+}
+
+// GitHubReporter is the GitHub Deployments API (internal/github.Reporter).
+type GitHubReporter interface {
+	CreateDeployment(ctx context.Context, installationID int64, repo string, d GitHubDeployment) (int64, error)
+	CreateStatus(ctx context.Context, installationID int64, repo string, deploymentID int64, s GitHubStatus) error
+}
+
+// GitHubDeployment and GitHubStatus are what the deployer reports; the
+// worker maps them onto internal/github's types.
+type GitHubDeployment struct {
+	Ref, Environment, Description, ShipyardID string
+}
+
+// GitHub deployment states the deployer reports.
+const (
+	GitHubInProgress = "in_progress"
+	GitHubSuccess    = "success"
+	GitHubFailure    = "failure"
+	GitHubInactive   = "inactive"
+)
+
+type GitHubStatus struct {
+	State, Description, EnvironmentURL string
 }
 
 // Fault points: where a crash leaves the most to recover. Each phase name
@@ -236,6 +264,10 @@ type deployRun struct {
 	switched bool
 	upstream string
 	hosts    []string
+	// reported is set once this run told GitHub the deploy is in progress;
+	// lastPhase is the phase a failure is reported in (P4.6).
+	reported  bool
+	lastPhase string
 }
 
 func (r *deployRun) execute(ctx context.Context) error {
@@ -278,6 +310,9 @@ func (r *deployRun) execute(ctx context.Context) error {
 		if err := r.fetchAndBuild(ctx, p.Ref); err != nil {
 			return err
 		}
+	}
+	if err := r.reportStarted(ctx); err != nil { // a resumed run, or a rollback
+		return err
 	}
 	id, err := r.start(ctx)
 	if err != nil {
@@ -393,6 +428,9 @@ func (r *deployRun) fetchAndBuild(ctx context.Context, ref string) error {
 		r.log = r.log.With(slog.String("deployment_id", r.dep.ID))
 	}
 	r.event(ctx, store.LevelInfo, "deployment %s: commit %s", r.dep.ID, src.SHA)
+	if err := r.reportStarted(ctx); err != nil {
+		return err
+	}
 
 	if err := r.phase(ctx, PhaseBuild); err != nil {
 		return err
@@ -505,6 +543,7 @@ func (r *deployRun) activate(ctx context.Context) error {
 		}
 	}
 	r.event(ctx, store.LevelInfo, "deployment %s is active (commit %s)", r.dep.ID, r.dep.SourceCommitSHA)
+	r.reportActive(ctx, prev)
 	if prev != nil && prev.ContainerID != "" {
 		r.event(ctx, store.LevelInfo, "previous deployment %s keeps running through the observation window, then stops gracefully (stop timeout %s)",
 			prev.ID, r.app.StopTimeout)
@@ -554,6 +593,7 @@ func (r *deployRun) fail(ctx context.Context, cause error) error {
 		if err := r.Store.FailDeployment(ctx, r.dep.ID, r.owner, reason); err != nil {
 			return fmt.Errorf("record failure: %w", err)
 		}
+		r.reportFailed(ctx)
 	}
 	// A deploy failure is final: retrying the same commit and image rarely
 	// helps, and the operator can deploy again.
@@ -567,6 +607,7 @@ func (r *deployRun) phase(ctx context.Context, phase string) error {
 	if err := r.Store.SetOperationPhase(ctx, r.op.ID, r.owner, phase); err != nil {
 		return fmt.Errorf("phase %s: %w", phase, err)
 	}
+	r.lastPhase = phase
 	r.fault(phase)
 	return nil
 }

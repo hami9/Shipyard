@@ -91,6 +91,12 @@ func (a *App) JWT() (string, error) {
 // InstallationToken asks GitHub for a token of the installation that can
 // read the contents of repo (owner/name) and nothing else [GH-APP-TOKEN].
 func (a *App) InstallationToken(ctx context.Context, installationID int64, repo string) (Token, error) {
+	return a.TokenWith(ctx, installationID, repo, map[string]string{"contents": "read"})
+}
+
+// TokenWith asks for a token of the installation limited to repo and to
+// permissions, e.g. {"deployments": "write"} [GH-APP-TOKEN].
+func (a *App) TokenWith(ctx context.Context, installationID int64, repo string, permissions map[string]string) (Token, error) {
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
 		return Token{}, fmt.Errorf("repository %q is not owner/name", repo)
@@ -104,42 +110,14 @@ func (a *App) InstallationToken(ctx context.Context, installationID int64, repo 
 	}
 	body, _ := json.Marshal(map[string]any{
 		"repositories": []string{name}, // names within the installation's account
-		"permissions":  map[string]string{"contents": "read"},
+		"permissions":  permissions,
 	})
-	base := strings.TrimSuffix(a.APIURL, "/")
-	if base == "" {
-		base = DefaultAPIURL
+	raw, err := a.post(ctx, jwt, "/app/installations/"+strconv.FormatInt(installationID, 10)+"/access_tokens", body)
+	if se := (*statusError)(nil); errors.As(err, &se) {
+		return Token{}, fmt.Errorf("GitHub refused an installation token for %s (installation %d): %w", repo, installationID, err)
 	}
-	url := base + "/app/installations/" + strconv.FormatInt(installationID, 10) + "/access_tokens"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return Token{}, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("X-GitHub-Api-Version", apiVersion)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "shipyard")
-	hc := a.HTTP
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	resp, err := hc.Do(req)
 	if err != nil {
 		return Token{}, fmt.Errorf("request an installation token: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
-	if err != nil {
-		return Token{}, fmt.Errorf("read the installation token: %w", err)
-	}
-	if resp.StatusCode != http.StatusCreated {
-		var e struct {
-			Message string `json:"message"`
-		}
-		json.Unmarshal(raw, &e)
-		return Token{}, fmt.Errorf("GitHub refused an installation token for %s (installation %d): %s %.200q",
-			repo, installationID, resp.Status, e.Message)
 	}
 	var out struct {
 		Token     string    `json:"token"`
@@ -149,6 +127,52 @@ func (a *App) InstallationToken(ctx context.Context, installationID int64, repo 
 		return Token{}, errors.New("GitHub's installation token response has no token")
 	}
 	return Token{Value: out.Token, ExpiresAt: out.ExpiresAt}, nil
+}
+
+// statusError is a GitHub answer other than 201 Created.
+type statusError struct {
+	status, message string
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("%s %.200q", e.status, e.message) }
+
+// post sends a JSON body with a bearer credential (the App's JWT or an
+// installation token) and returns the body of a 201 answer.
+func (a *App) post(ctx context.Context, bearer, path string, body []byte) ([]byte, error) {
+	base := strings.TrimSuffix(a.APIURL, "/")
+	if base == "" {
+		base = DefaultAPIURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "shipyard")
+	hc := a.HTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		var e struct {
+			Message string `json:"message"`
+		}
+		json.Unmarshal(raw, &e)
+		return nil, &statusError{status: resp.Status, message: e.Message}
+	}
+	return raw, nil
 }
 
 // LoadKey reads the App's private key: a PEM RSA key (PKCS#1, as GitHub

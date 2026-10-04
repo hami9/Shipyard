@@ -87,6 +87,19 @@ func (a sourceAdapter) token(ctx context.Context, installationID int64, repo str
 	return tok.Value, nil
 }
 
+// githubReporter connects the deployer's GitHub port to internal/github (P4.6).
+type githubReporter struct{ r *github.Reporter }
+
+func (a githubReporter) CreateDeployment(ctx context.Context, inst int64, repo string, d app.GitHubDeployment) (int64, error) {
+	return a.r.CreateDeployment(ctx, inst, repo, github.Deployment{Ref: d.Ref, Environment: d.Environment,
+		Description: d.Description, ShipyardID: d.ShipyardID})
+}
+
+func (a githubReporter) CreateStatus(ctx context.Context, inst int64, repo string, id int64, s app.GitHubStatus) error {
+	return a.r.CreateStatus(ctx, inst, repo, id, github.DeploymentStatus{State: s.State, Description: s.Description,
+		EnvironmentURL: s.EnvironmentURL})
+}
+
 type buildAdapter struct{ b *build.Builder }
 
 func (a buildAdapter) Build(ctx context.Context, r app.BuildRequest) (app.Image, error) {

@@ -44,6 +44,8 @@ type Deployment struct {
 	EndedAt          *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// GitHubDeploymentID is the GitHub Deployment reporting it (P4.6); 0: none.
+	GitHubDeploymentID int64
 }
 
 // NewDeployment is the input to CreateDeployment.
@@ -55,14 +57,16 @@ type NewDeployment struct {
 
 const deployColumns = `id, app_id, operation_id, kind, source_deployment_id, source_commit_sha, coalesce(image_id, ''),
 	build_metadata, env_revision_id, coalesce(container_id, ''), status, coalesce(failure_reason, ''),
-	building_at, starting_at, health_checking_at, switching_at, active_at, ended_at, created_at, updated_at`
+	building_at, starting_at, health_checking_at, switching_at, active_at, ended_at, created_at, updated_at,
+	coalesce(github_deployment_id, 0)`
 
 // scanDeployment reads deployColumns, then any extra columns into extra.
 func scanDeployment(row interface{ Scan(...any) error }, extra ...any) (Deployment, error) {
 	var d Deployment
 	err := row.Scan(append([]any{&d.ID, &d.AppID, &d.OperationID, &d.Kind, &d.SourceDeployment, &d.SourceCommitSHA, &d.ImageID,
 		&d.BuildMetadata, &d.EnvRevisionID, &d.ContainerID, &d.Status, &d.FailureReason,
-		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.SwitchingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt},
+		&d.BuildingAt, &d.StartingAt, &d.HealthCheckingAt, &d.SwitchingAt, &d.ActiveAt, &d.EndedAt, &d.CreatedAt, &d.UpdatedAt,
+		&d.GitHubDeploymentID},
 		extra...)...)
 	return d, mapError(err)
 }
@@ -286,6 +290,13 @@ func (s *Store) MarkHealthChecking(ctx context.Context, id, owner string) error 
 // and verified (ARCHITECTURE §5 step 7).
 func (s *Store) MarkSwitching(ctx context.Context, id, owner string) error {
 	return s.ownedDeploymentUpdate(ctx, `status = 'switching', switching_at = coalesce(d.switching_at, now())`, id, owner)
+}
+
+// RecordGitHubDeployment stores the GitHub Deployment that reports this one
+// (P4.6). The first one stays: a resumed run that created another keeps
+// reporting to the recorded one.
+func (s *Store) RecordGitHubDeployment(ctx context.Context, id, owner string, githubID int64) error {
+	return s.ownedDeploymentUpdate(ctx, `github_deployment_id = coalesce(d.github_deployment_id, $3)`, id, owner, githubID)
 }
 
 // FailDeployment ends a deployment as failed. The reason must not contain
