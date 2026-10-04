@@ -51,6 +51,12 @@ func TestRun(t *testing.T) {
 		{[]string{"restore", "--from", "/a", "/b"}, 2, "", "restore needs --from DIR"},
 		{[]string{"restore", "--from", "/var/backups/shipyard/x"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
 		{[]string{"restore", "--from=/var/backups/shipyard/x"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
+		// kek takes exactly status or rewrap (ADR-0012).
+		{[]string{"kek"}, 2, "", "kek needs status or rewrap"},
+		{[]string{"kek", "rotate"}, 2, "", "kek needs status or rewrap"},
+		{[]string{"kek", "status", "extra"}, 2, "", "kek needs status or rewrap"},
+		{[]string{"kek", "status"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
+		{[]string{"kek", "rewrap"}, 1, "", "SHIPYARD_DATABASE_URL: required"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {

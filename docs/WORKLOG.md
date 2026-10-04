@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.3: per-client API limits (P5.3a) and token rotation and remote revocation (P5.3b), ADR-0011 |
-| **Next task** | P5.4: KEK rotation command with a test, and an evaluation of asymmetric sealing. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.4a: KEK rotation (`shipyard-worker kek status`, `kek rewrap`, migration 0005), ADR-0012 |
+| **Next task** | P5.4b: HPKE KEKs so the API seals with a public key and cannot decrypt (ADR-0012). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,55 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P5.4a KEK rotation
+
+- **Phase / task:** P5.4a: the KEK rotation command with a test (P5.4 split: P5.4b implements asymmetric sealing)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Owner's choices** (2026-10-04): allow a re-wrap-only update of `secret_values` rather than a side table; implement asymmetric sealing as P5.4b instead of only evaluating it.
+- **[ADR-0012](adr/0012-kek-rotation-and-asymmetric-sealing.md):** the rotation design and the HPKE design (`crypto/hpke`, DHKEM X25519, not the X-Wing draft).
+- **Migration `0005_secret_rewrap.sql`:** the `secret_values` trigger now allows only a new `wrapped_dek` with a new `kek_id`; anything else is still `SY001`.
+- **Store:** `KEKUsage`, `WrapsNotUnder` (keyset by ID), `Rewrap` (conditional on the old `kek_id`).
+- **Secrets:** `Keyring.Rewrap` (open the DEK with its KEK, seal it with the active one; the ciphertext is untouched), `Active`, `Has`, `IDs`.
+- **`shipyard-worker kek status|rewrap`:**
+  - refuses to start while a KEK in use is not loaded;
+  - stops at the first value that does not open;
+  - is safe to run again;
+  - writes the audit event `kek.rewrap`.
+- **Docs:** ADR-0005 note, ARCHITECTURE §7 secrets, SOURCES (`GO-HPKE`, `RFC9180`), ROADMAP split, CHANGELOG.
+
+**Decisions**
+- **The re-wrap must change both columns.** A new `kek_id` alone (a relabel) is still rejected, as the existing schema test expects.
+- **The worker runs rotation,** because it is the process that may open data keys. After P5.4b the API will not be able to.
+- **One pass in ID order.** Values that an API still on the old KEK seals during the pass show up in `kek status`, and a second run moves them.
+
+**Verification**
+- **First full run:**
+  - `make test` passed.
+  - `make lint` needed gofmt on `envelope_test.go`.
+  - `make test-integration` was cut off by this session's 10-minute run limit while `internal/store` was still running (load average about 5). Before that, every other package passed except `TestLeaseHandover`, the known flake. That includes `cmd/shipyard-worker` with `TestKEKRotation`, `internal/secrets`, and `internal/api`.
+- **`internal/store` alone:** finished in 203 s, so nothing hangs. Only `TestAudit` failed: the event recorded first had the later `now()`. That fits the WSL clock jumps this session ("Time jumped backwards" in the journal); the test is untouched.
+- **After the gofmt fix:**
+  - `make lint`: exit 0.
+  - `-count=3` of `TestAudit|TestSchema*|TestTokens|TestRotateToken`: ok.
+  - `-count=3` of `TestLeaseHandover`: ok.
+  - `TestKEKRotation`: PASS.
+- **New tests:**
+  - `TestKEKRotation` (integration):
+    - status before;
+    - 3 values moved from k1 to k2 while a value already under k2 stays;
+    - values open with k2 alone; the revision's entries are unchanged;
+    - status "unused: may be retired"; a second run moves 0; audit `0 values to k2`;
+    - a value under unloaded k3 blocks the run, and status says NOT LOADED;
+    - a corrupt wrapping stops it with "cannot be decrypted".
+  - `TestRewrap` (unit): the ciphertext is unchanged, opens with the new KEK alone; unknown KEK, wrong KEK, other value ID, tampered input, and a relabel each give `ErrDecrypt`.
+  - `TestSchemaSecretsAndAudit`: a relabel, a new wrapping without a new KEK, a ciphertext change, and a key change are rejected; a proper re-wrap is accepted.
+  - `TestRun`: `kek` argument checks.
+
+**Next**
+- P5.4b: HPKE KEKs (`<id>.hpke`/`<id>.pub`), `kek generate`, seal-only keyring in the API, backups of the new files.
 
 ### 2026-10-04: P5.3b token rotation
 

@@ -135,6 +135,48 @@ func TestKeyRotation(t *testing.T) {
 	}
 }
 
+// ADR-0012: a re-wrapped value opens with the new KEK alone, its ciphertext
+// unchanged; a re-wrap needs the right KEK, ID, and wrapping.
+func TestRewrap(t *testing.T) {
+	keys := map[string][]byte{"k1": GenerateKey(), "k2": GenerateKey()}
+	old, _ := NewKeyring("k1", map[string][]byte{"k1": keys["k1"]})
+	id := NewValueID()
+	s, _ := old.Seal(appA, "K", id, []byte("value"))
+	both, _ := NewKeyring("k2", keys)
+	if both.Active() != "k2" || !both.Has("k1") || both.Has("k3") {
+		t.Fatalf("Active/Has: %s", both.Active())
+	}
+	wrapped, err := both.Rewrap(id, s.WrappedDEK, "k1")
+	if err != nil || bytes.Equal(wrapped, s.WrappedDEK) {
+		t.Fatalf("Rewrap = %x, %v", wrapped, err)
+	}
+	onlyNew, _ := NewKeyring("k2", map[string][]byte{"k2": keys["k2"]})
+	moved := Sealed{ValueID: id, Ciphertext: s.Ciphertext, WrappedDEK: wrapped, KEKID: "k2"}
+	if got, err := onlyNew.Open(appA, "K", moved); err != nil || string(got) != "value" {
+		t.Fatalf("open after rewrap with the new KEK only: %q, %v", got, err)
+	}
+
+	// Negative: a wrapping only opens under its own KEK and value ID.
+	for name, try := range map[string]func() ([]byte, error){
+		"unknown KEK":    func() ([]byte, error) { return onlyNew.Rewrap(id, s.WrappedDEK, "k1") },
+		"wrong KEK":      func() ([]byte, error) { return both.Rewrap(id, s.WrappedDEK, "k2") },
+		"other value ID": func() ([]byte, error) { return both.Rewrap(NewValueID(), s.WrappedDEK, "k1") },
+		"tampered": func() ([]byte, error) {
+			b := bytes.Clone(s.WrappedDEK)
+			b[len(b)-1] ^= 1
+			return both.Rewrap(id, b, "k1")
+		},
+	} {
+		if _, err := try(); !errors.Is(err, ErrDecrypt) {
+			t.Errorf("%s: err = %v, want ErrDecrypt", name, err)
+		}
+	}
+	// The re-wrapped key is bound to the new KEK's ID: relabelling fails.
+	if _, err := onlyNew.Open(appA, "K", Sealed{ValueID: id, Ciphertext: s.Ciphertext, WrappedDEK: s.WrappedDEK, KEKID: "k2"}); !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("old wrapping relabelled as k2 opened: %v", err)
+	}
+}
+
 func TestNewKeyringRejects(t *testing.T) {
 	good := GenerateKey()
 	cases := map[string]struct {

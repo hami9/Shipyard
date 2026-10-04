@@ -513,6 +513,12 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   - All loaded KEKs can open; only the active one seals. That is what makes rotation possible.
 - Setting a key creates a new revision that references the unchanged value rows, so the API never decrypts. Only the worker's `Resolve` opens values, to start a container. Concurrent writers are serialized by a row lock on the app.
 - Document and test rotation and recovery before production (ADR-0005).
+- **Rotation** ([ADR-0012](adr/0012-kek-rotation-and-asymmetric-sealing.md)):
+  1. Add `<new>.key`, set `SHIPYARD_KEK_ACTIVE` to it for both services, and restart them.
+  2. Run `shipyard-worker kek rewrap`. It opens each data key with its old KEK and wraps it with the active one, leaving every ciphertext as it was.
+  3. `shipyard-worker kek status` shows what each KEK still wraps. Retire an old file once it wraps nothing; backup target B keeps its copy.
+  - Migration `0005` lets `secret_values` change only by such a re-wrap (a new `wrapped_dek` with a new `kek_id`). Any other UPDATE is still rejected.
+- **Asymmetric sealing** (P5.4b, ADR-0012): an HPKE KEK (`<id>.hpke` for the worker only, `<id>.pub` for the API) lets the API seal without being able to open `[GO-HPKE][RFC9180]`.
 
 **Host firewall** `[DK-FW]`
 

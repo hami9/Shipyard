@@ -126,3 +126,59 @@ func (s *Store) EnvRevisionByID(ctx context.Context, id string) (EnvRevision, er
 	})
 	return r, mapError(err)
 }
+
+// SecretWrap is how a value's data key is wrapped: what KEK rotation reads
+// and replaces (ADR-0012). The ciphertext never changes.
+type SecretWrap struct {
+	ID         string
+	WrappedDEK []byte
+	KEKID      string
+}
+
+// KEKUsage counts secret values per KEK.
+func (s *Store) KEKUsage(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.q.Query(ctx, `SELECT kek_id, count(*) FROM secret_values GROUP BY kek_id`)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	usage := map[string]int64{}
+	var id string
+	var n int64
+	_, err = pgx.ForEachRow(rows, []any{&id, &n}, func() error { usage[id] = n; return nil })
+	return usage, mapError(err)
+}
+
+// WrapsNotUnder returns up to limit values whose data key is not wrapped
+// by kekID, in ID order after the ID after (empty: from the start), so a
+// rotation pass visits each row once. IDs compare as text: the canonical
+// lowercase form sorts like the UUIDs themselves.
+func (s *Store) WrapsNotUnder(ctx context.Context, kekID, after string, limit int) ([]SecretWrap, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT id, wrapped_dek, kek_id FROM secret_values
+		WHERE kek_id <> $1 AND id::text > $2
+		ORDER BY id::text LIMIT $3`, kekID, after, limit)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	var out []SecretWrap
+	var w SecretWrap
+	_, err = pgx.ForEachRow(rows, []any{&w.ID, &w.WrappedDEK, &w.KEKID}, func() error {
+		out = append(out, w)
+		w = SecretWrap{}
+		return nil
+	})
+	return out, mapError(err)
+}
+
+// Rewrap replaces a value's wrapped data key, if it is still wrapped by
+// from.KEKID; it reports whether it did. A value deleted or re-wrapped
+// meanwhile is left alone.
+func (s *Store) Rewrap(ctx context.Context, from SecretWrap, wrapped []byte, kekID string) (bool, error) {
+	tag, err := s.q.Exec(ctx, `
+		UPDATE secret_values SET wrapped_dek = $3, kek_id = $4
+		WHERE id = $1 AND kek_id = $2`, from.ID, from.KEKID, wrapped, kekID)
+	if err != nil {
+		return false, mapError(err)
+	}
+	return tag.RowsAffected() == 1, nil
+}

@@ -13,6 +13,11 @@ All notable changes to Shipyard are recorded here.
 
 - **Database schema v1** (migration `0002`): users and API tokens, apps, encrypted secret values and immutable environment revisions, the operations queue and its events, deployments, routes, webhook deliveries, and audit events. The database itself enforces one running operation and one active deployment per app, unique idempotency keys and hostnames, and same-app references.
 - **API tokens:** `shipyard-api token create|list|revoke` bootstraps and manages `shp_` tokens on the server. Tokens have scopes (`read`, `deploy`, `admin`) and an expiry of 1h to 366d (default 90d). Only a SHA-256 hash is stored, the plaintext is printed once, and every create and revoke is audited.
+- **KEK rotation** (ADR-0012):
+  - `shipyard-worker kek status` shows how many secret values each KEK wraps.
+  - `shipyard-worker kek rewrap` moves them all to `SHIPYARD_KEK_ACTIVE`. It never re-encrypts a value or changes a revision, and can be run again safely.
+  - Migration `0005` allows exactly that one change to stored secrets.
+  - To rotate: add a key file, make it active, restart both services, run `kek rewrap`, then retire the old file once `kek status` shows it unused.
 - **Token rotation and remote revocation** (ADR-0011):
   - **On the server:** `shipyard-api token rotate PREFIX [--grace D]` replaces a token with one of the same user, name, scopes, and lifetime. The old token is revoked, or keeps working for up to 7 days.
   - **Remotely:** `shipyard token rotate [--grace D]` does the same for the CLI's own token and saves the new one; with `SHIPYARD_TOKEN` set, it prints it instead. `shipyard token list` and `shipyard token revoke PREFIX` need the admin scope.

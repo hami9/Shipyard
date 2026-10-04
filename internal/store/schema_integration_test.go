@@ -333,6 +333,12 @@ func TestSchemaSecretsAndAudit(t *testing.T) {
 		rev := f.revision(a, 1)
 		mustExec(t, db, entry, rev, a, "KEY", s, nil)
 		wantState(t, exec(t, db, `UPDATE secret_values SET kek_id = 'kek2' WHERE id = $1`, s), immutableRow)
+		// P5.4 (ADR-0012): only a re-wrap under another KEK may change a value
+		// row: a new wrapped_dek with a new kek_id, nothing else.
+		wantState(t, exec(t, db, `UPDATE secret_values SET wrapped_dek = '\xbeef' WHERE id = $1`, s), immutableRow)
+		wantState(t, exec(t, db, `UPDATE secret_values SET ciphertext = '\xbeef', wrapped_dek = '\xbeef', kek_id = 'kek2' WHERE id = $1`, s), immutableRow)
+		wantState(t, exec(t, db, `UPDATE secret_values SET key = 'OTHER', wrapped_dek = '\xbeef', kek_id = 'kek2' WHERE id = $1`, s), immutableRow)
+		mustExec(t, db, `UPDATE secret_values SET wrapped_dek = '\xbeef', kek_id = 'kek2' WHERE id = $1`, s)
 		wantState(t, exec(t, db, `UPDATE env_revisions SET number = 2 WHERE id = $1`, rev), immutableRow)
 		wantState(t, exec(t, db, `UPDATE env_revision_entries SET key = 'KEY2' WHERE revision_id = $1`, rev), immutableRow)
 	})

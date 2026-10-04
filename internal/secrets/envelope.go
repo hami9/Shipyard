@@ -14,9 +14,11 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -154,6 +156,31 @@ func (k *Keyring) Open(appID, key string, s Sealed) ([]byte, error) {
 		return nil, ErrDecrypt
 	}
 	return plaintext, nil
+}
+
+// Active is the ID of the KEK that seals new values.
+func (k *Keyring) Active() string { return k.active }
+
+// Has reports whether KEK id is loaded.
+func (k *Keyring) Has(id string) bool { _, ok := k.keks[id]; return ok }
+
+// IDs lists the loaded KEKs, sorted.
+func (k *Keyring) IDs() []string { return slices.Sorted(maps.Keys(k.keks)) }
+
+// Rewrap moves a value's data key from the KEK that wrapped it to the
+// active one (ADR-0012). The value's ciphertext is not touched: the DEK it
+// was sealed with stays the same. Every failure returns ErrDecrypt.
+func (k *Keyring) Rewrap(valueID string, wrapped []byte, kekID string) ([]byte, error) {
+	kek, ok := k.keks[kekID]
+	if !ok {
+		return nil, fmt.Errorf("%w: KEK %q is not loaded", ErrDecrypt, kekID)
+	}
+	dek, err := kek.Open(nil, nil, wrapped, dekAAD(kekID, valueID))
+	if err != nil {
+		return nil, ErrDecrypt
+	}
+	defer clear(dek)
+	return k.keks[k.active].Seal(nil, nil, dek, dekAAD(k.active, valueID)), nil
 }
 
 // NewValueID returns a random (version 4) UUID. The ID is part of the AAD,

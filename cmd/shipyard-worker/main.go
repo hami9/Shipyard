@@ -46,6 +46,12 @@ Commands:
   restore --from DIR
             Load one backup directory into an empty database and into
             Caddy; see docs/RESTORE.md. Stop both services first
+  kek status
+            Show the loaded KEKs and how many secret values each wraps
+  kek rewrap
+            Move every value's data key to SHIPYARD_KEK_ACTIVE (ADR-0012):
+            run it after adding a KEK file, making it active, and
+            restarting both services
   version   Print version information
 
 Configuration is read from SHIPYARD_* environment variables (see deploy/shipyard.env.example).
@@ -69,6 +75,11 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "run", "backup":
+	case "kek":
+		if len(args) != 2 || (args[1] != "status" && args[1] != "rewrap") {
+			fmt.Fprintf(stderr, "kek needs status or rewrap\n\n%s", usage)
+			return 2
+		}
 	case "restore":
 		// --from DIR or --from=DIR; nothing else.
 		switch rest := args[1:]; {
@@ -111,6 +122,12 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 		}
 		log.Info("restore finished: start shipyard-api and shipyard-worker; the worker rebuilds each app's active commit")
 		return 0
+	case "kek":
+		if err := kekNow(ctx, cfg, args[1], stdout, log); err != nil {
+			log.Error("kek "+args[1]+" failed", slog.Any("err", err))
+			return 1
+		}
+		return 0
 	}
 	if err := work(ctx, cfg, log); err != nil {
 		log.Error("worker failed", slog.Any("err", err))
@@ -135,6 +152,32 @@ func backupNow(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		job.Caddy = edgeData{rt, cfg.Caddy.Name}
 	}
 	return job.Run(ctx)
+}
+
+// kekNow runs `kek status` or `kek rewrap` against the database with the
+// KEKs in SHIPYARD_KEK_DIR (ADR-0012).
+func kekNow(ctx context.Context, cfg config.Worker, cmd string, stdout io.Writer, log *slog.Logger) error {
+	if cfg.KEKActive == "" {
+		return fmt.Errorf("%s is required: it names the KEK in %s", config.EnvKEKActive, cfg.KEKDir)
+	}
+	keys, err := secrets.LoadKeyring(cfg.KEKDir, cfg.KEKActive)
+	if err != nil {
+		return err
+	}
+	db, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	s := store.New(db)
+	if cmd == "rewrap" {
+		moved, err := kekRewrap(ctx, s, keys, log)
+		if err != nil {
+			return fmt.Errorf("after %d values: %w", moved, err)
+		}
+		fmt.Fprintf(stdout, "Moved %d values to %s.\n\n", moved, keys.Active())
+	}
+	return kekStatus(ctx, s, keys, stdout)
 }
 
 // restoreNow loads one backup onto this host (ADR-0006, docs/RESTORE.md):
