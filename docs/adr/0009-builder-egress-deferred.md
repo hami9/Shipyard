@@ -23,7 +23,7 @@
   - The builder's container joins a bridge network of its own, `<builder>-build` (default `shipyard-build`), labelled `io.shipyard.role=build`, instead of Docker's default bridge.
   - Nothing else is on that network, so a build cannot reach other containers by address.
   - The worker creates the network with the builder. `Builder.Remove` deletes both.
-  - A builder created before this change stays on the default bridge until it is removed (`docker buildx rm shipyard`; its cache goes with it) and the worker recreates it.
+  - A builder created before this change stays on the default bridge until it is removed (`docker buildx rm shipyard`; its cache goes with it) and the worker recreates it. (Since ADR-0010 the worker replaces such a builder itself, because its image differs.)
 - **Block what the bridge does not (P5.7).** The installer adds host firewall rules for the build network's subnet, found by its label:
   - deny the link-local metadata address `169.254.169.254`;
   - deny the host's own services except what builds need (none by default).

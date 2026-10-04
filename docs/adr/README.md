@@ -17,3 +17,4 @@ An ADR records one significant decision: its context, the choice made, and its c
 | [0007](0007-mvp-trust-model.md) | MVP trust model: single admin, trusted repositories | Accepted |
 | [0008](0008-worker-log-socket.md) | App logs through a worker log socket | Accepted |
 | [0009](0009-builder-egress-deferred.md) | Builder egress control deferred; the builder gets its own network | Accepted |
+| [0010](0010-rootless-buildkit.md) | Rootless BuildKit for builds; the Docker daemon stays rootful | Accepted |

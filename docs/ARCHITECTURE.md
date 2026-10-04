@@ -94,7 +94,7 @@ Shipyard runs on one host. The pieces interact as follows:
 | `shipyard-api` | systemd service, dedicated unprivileged user, **not** in the `docker` group | PostgreSQL, key file (to seal secrets) | Docker socket, Caddy admin socket |
 | `shipyard-worker` | systemd service in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]` | Docker socket, Caddy admin socket, PostgreSQL, GitHub, key file | — |
 | PostgreSQL | Host service on localhost or a Unix socket, or a container with **no** published port | — | Public network |
-| BuildKit | Container managed by `buildx` (`docker-container` driver) with CPU and memory limits | Internet, for dependency downloads | Shipyard credentials, Docker socket |
+| BuildKit | Rootless BuildKit (uid 1000) in a container managed by `buildx` (`docker-container` driver), with CPU and memory limits (ADR-0010) | Internet, for dependency downloads | Shipyard credentials, Docker socket |
 | App containers | One user-defined bridge network per app, with hardened flags (§7) | Their own network, Caddy, outbound internet | Docker socket, host network, other apps' networks |
 
 Docker-published ports bypass ufw rules `[DK-FW]`. Only Caddy publishes ports. PostgreSQL, the API, and app containers never use `-p`.
@@ -427,6 +427,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 - Never pass credentials as build args or environment variables.
 - Leave builder network access on in the MVP, because most builds download dependencies. Egress restriction is a Phase 5 hardening item.
   - Decided in P5.1 ([ADR-0009](adr/0009-builder-egress-deferred.md)): egress control stays deferred under the trusted-repositories model. The builder's container is on a bridge network of its own, `<builder>-build`, labelled `io.shipyard.role=build`, not on Docker's default bridge. P5.7's installer firewalls that subnet from the metadata address and host services.
+- Run BuildKit rootless ([ADR-0010](adr/0010-rootless-buildkit.md)) `[BK-ROOTLESS][BX-PRIVILEGED]`:
+  - The builder image is `moby/buildkit:v0.33.1-rootless`, pinned by digest (`build.DefaultImage`). buildkitd runs as uid 1000, and a build step's root maps to host uid 1000 (other IDs to 100000+), not to host root.
+  - buildx still makes the container privileged.
+  - At start, the worker replaces a builder whose container runs another image. This drops its cache.
+  - Ubuntu 24.04+ hosts need `kernel.apparmor_restrict_unprivileged_userns=0` (`deploy/sysctl/`) `[UB-USERNS]`. In return, the Shipyard units set `RestrictNamespaces=yes` `[SYSTEMD-EXEC]`.
 
 **Containers** `[DK-RUN][DK-SEC][DK-BRIDGE]`
 
@@ -444,7 +449,10 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 
 - `/etc/docker/daemon.json` sets `"log-driver": "local"`, which rotates at 5 × 20 MB per container by default. The default `json-file` driver never rotates.
 - It also sets `"live-restore": true`, so patch upgrades of the daemon do not stop apps.
-- Only the worker's user is in the `docker` group. Rootless Docker is evaluated in Phase 5 `[DK-ROOTLESS]`.
+- Only the worker's user is in the `docker` group.
+- The daemon stays rootful ([ADR-0010](adr/0010-rootless-buildkit.md)):
+  - Rootless Docker would hide container IPs from the host's health probes and drop AppArmor `[DK-ROOTLESS]`.
+  - `userns-remap` rules out the containerd image store `[DK-USERNS][DK-CONTAINERD]`.
 
 **Caddy** `[CADDY-API][CADDY-OPTIONS][CADDY-HTTPS]`
 

@@ -213,13 +213,14 @@ flowchart LR
 **Goal:** a stranger can install Shipyard on a fresh VPS and run the full acceptance demo.
 
 - [x] **P5.1** Builder egress control: evaluate a proxy or allow-list, then implement it or record an explicit deferral in an ADR. Deferred ([ADR-0009](adr/0009-builder-egress-deferred.md), the owner's choice 2026-10-04); the builder now has a network of its own.
-- [ ] **P5.2** Rootless Docker and stronger build isolation: evaluation ADR.
+- [x] **P5.2** Rootless Docker and stronger build isolation: evaluation ADR. [ADR-0010](adr/0010-rootless-buildkit.md), the owner's choice 2026-10-04: builds run on rootless BuildKit, and the Docker daemon stays rootful.
 - [ ] **P5.3** API rate limiting, auth-failure throttling, and token revoke and rotate commands.
 - [ ] **P5.4** KEK rotation command with a test, and an evaluation of asymmetric sealing so the API cannot decrypt.
 - [ ] **P5.5** Prometheus metrics on an internal listener: deploy duration, failure rate, queue depth, and health.
 - [ ] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold).
 - [ ] **P5.7** `deploy/install.sh` and an operator guide covering install, upgrade (including the major-upgrade limit of Docker live-restore), backup, restore, and troubleshooting.
   - Also (ADR-0009): host firewall rules for the build network's subnet (label `io.shipyard.role=build`): no `169.254.169.254`, no host services.
+  - Also (ADR-0010): on Ubuntu 24.04+, install `deploy/sysctl/60-shipyard-buildkit.conf`, and check that a rootless build works before the first deploy.
 - [ ] **P5.8** Security review against the invariants in CLAUDE.md §3, plus `govulncheck` and a dependency audit.
 - [ ] **P5.9** Run the full acceptance demo on a fresh VPS, record it, and tag `v1.0.0`.
 
@@ -268,6 +269,7 @@ The UI is never required for a deploy (ARCHITECTURE §1).
 | Risk | Impact | Mitigation | Phase |
 | --- | --- | --- | --- |
 | Builder has unrestricted egress | A malicious Dockerfile can exfiltrate or abuse the network | Trusted-repositories model (ADR-0007). Evaluated in P5.1 and deferred (ADR-0009): the builder is on a network of its own; P5.7 firewalls it from cloud metadata and host services; revisit with untrusted repositories (P7) | P5 |
+| A build step escapes BuildKit's sandbox (kernel or runc bug, malicious dependency) | Code on the host | Rootless BuildKit (ADR-0010): the escape lands as an unprivileged host uid, not root. The builder container is still privileged. A VM or gVisor builder is the next step for untrusted repositories (P7) | P5 |
 | Losing the KEK | All secrets become unrecoverable | Separate off-host KEK backup and a restore drill | P3 |
 | Let's Encrypt rate limits during tests | Certificates blocked for up to 7 days | Staging CA in development and CI, DNS preflight, Caddy data backup | P2 |
 | Owner's local machine uses Docker Desktop (macOS or Windows) | Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]` | Test on Linux, on WSL2 with native Docker Engine, or in a Linux VM (docs/DEVELOPMENT.md) | P1 |

@@ -27,6 +27,9 @@ TimeoutStartSec=2h
 ReadWritePaths=/var/backups/shipyard /var/backups/shipyard-kek
 UMask=0077
 NoNewPrivileges=yes
+# No namespaces of any kind: offsets the host-wide userns sysctl that
+# rootless BuildKit needs on Ubuntu 24.04+ (ADR-0010) [SYSTEMD-EXEC].
+RestrictNamespaces=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

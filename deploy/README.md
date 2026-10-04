@@ -9,6 +9,7 @@ Host configuration for running Shipyard on a single VPS. **This is a skeleton (P
 | `systemd/shipyard-worker.service` | `/etc/systemd/system/` | Worker as user `shipyard-worker`, in the `docker` group, which is root-equivalent |
 | `systemd/shipyard-backup.service`, `systemd/shipyard-backup.timer` | `/etc/systemd/system/` | Nightly `shipyard-worker backup` as user `shipyard-worker` (ADR-0006). Create `/var/backups/shipyard` and `/var/backups/shipyard-kek` first, owned by `shipyard-worker`, mode `0700`, then `systemctl enable --now shipyard-backup.timer` |
 | `docker/daemon.json` | `/etc/docker/daemon.json` | `local` log driver (rotates by default) and `live-restore` `[DK-LOG][DK-LIVE]` |
+| `sysctl/60-shipyard-buildkit.conf` | `/etc/sysctl.d/` (Ubuntu 24.04+ only), then `sudo sysctl --system` | Lets the rootless BuildKit builder create user namespaces (ADR-0010) `[UB-USERNS][BK-ROOTLESS]`. The Shipyard units set `RestrictNamespaces=yes` in return |
 | `caddy/caddy.json` | Caddy container bootstrap config | Admin API on a permissioned Unix socket only `[CADDY-API]` |
 | `dev/compose.yaml` | Nowhere (development only) | Local PostgreSQL 18 for `make dev-up` |
 

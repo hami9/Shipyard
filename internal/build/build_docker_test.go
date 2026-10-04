@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,72 @@ func TestBuilderNetwork(t *testing.T) {
 	}
 	if exec.Command("docker", "network", "inspect", b.Network()).Run() == nil {
 		t.Fatal("Remove left the builder's network")
+	}
+}
+
+// ADR-0010: buildkitd runs as uid 1000 from the pinned rootless image, and
+// a build step's root is not host root, while Dockerfiles that switch users
+// and chown still build.
+func TestBuilderRootless(t *testing.T) {
+	b := newTestBuilder(t)
+	container := "buildx_buildkit_" + b.Name + "0"
+	if got := dockerOut(t, "inspect", "--format", "{{.Config.Image}}", container); got != DefaultImage {
+		t.Fatalf("builder image = %q, want %q", got, DefaultImage)
+	}
+	if got := dockerOut(t, "exec", container, "id", "-u"); got != "1000" {
+		t.Fatalf("buildkitd uid = %q, want 1000", got)
+	}
+	dockerfile, ctxDir := project(t, "FROM busybox:1.37\n"+
+		"RUN echo \"uid_map $(head -n1 /proc/self/uid_map)\" && adduser -D -u 4242 app && mkdir /data && chown app:app /data\n"+
+		"USER app\nRUN touch /data/ok\n")
+	var lines []string
+	res, err := b.Build(t.Context(), Request{Dockerfile: dockerfile, Context: ctxDir, App: "rootless",
+		Commit: strings.Repeat("cd", 20), DeploymentID: deployment, Log: func(s string) { lines = append(lines, s) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removeImage(t, res.Tag)
+	log := strings.Join(lines, "\n")
+	// Root in the step maps to uid 1000 on the host, not to uid 0 [BK-ROOTLESS].
+	if !regexp.MustCompile(`(?m)uid_map[ \t]+0[ \t]+1000[ \t]+1[ \t]*$`).MatchString(log) {
+		t.Fatalf("build step root is not mapped to uid 1000:\n%s", log)
+	}
+	if got := dockerOut(t, "run", "--rm", res.ImageID, "stat", "-c", "%u", "/data/ok"); got != "4242" {
+		t.Fatalf("/data/ok owner = %q, want 4242", got)
+	}
+}
+
+// ADR-0010: Ensure replaces a builder that runs another image (here buildx's
+// default, rootful one, as Shipyard before ADR-0010 created it), and the new
+// one joins the builder network.
+func TestBuilderReplacesOtherImage(t *testing.T) {
+	old := &Builder{Name: "shipyard-test-" + strings.ToLower(rand.Text()[:8]), Image: "moby/buildkit:buildx-stable-1"}
+	if err := old.Ensure(t.Context(), Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Builder{Name: old.Name}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		b.Remove(ctx)
+	})
+	container := "buildx_buildkit_" + b.Name + "0"
+	if got := dockerOut(t, "inspect", "--format", "{{.Config.Image}}", container); got != old.Image {
+		t.Fatalf("old builder image = %q", got)
+	}
+	if err := b.Ensure(t.Context(), Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := dockerOut(t, "inspect", "--format", "{{.Config.Image}} {{.HostConfig.NetworkMode}}", container); got != DefaultImage+" "+b.Network() {
+		t.Fatalf("replaced builder = %q", got)
+	}
+	// Ensure is idempotent once the image matches.
+	id := dockerOut(t, "inspect", "--format", "{{.Id}}", container)
+	if err := b.Ensure(t.Context(), Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := dockerOut(t, "inspect", "--format", "{{.Id}}", container); got != id {
+		t.Fatal("Ensure replaced a builder whose image already matched")
 	}
 }
 

@@ -29,6 +29,13 @@ const (
 	DefaultMaxLog  = 5 << 20
 )
 
+// DefaultImage is the rootless BuildKit image (ADR-0010), pinned to its
+// multi-arch index digest [BK-ROOTLESS]. buildkitd runs as uid 1000 and each
+// build step in a user namespace mapped to unprivileged host IDs, so a step
+// that escapes BuildKit's sandbox is not root on the host. buildx still makes
+// the container privileged [BX-PRIVILEGED].
+const DefaultImage = "moby/buildkit:v0.33.1-rootless@sha256:f8a833b2de9d68e27f0815e4a737abdfaf8a2e4c615650557df11025101557b4"
+
 // ErrBuildFailed wraps a failed build; the error text ends with the last
 // lines of build output, so an operator sees why without reading all logs.
 var ErrBuildFailed = errors.New("image build failed")
@@ -50,6 +57,7 @@ type Limits struct {
 type Builder struct {
 	Docker  string        // docker CLI; "docker" when empty
 	Name    string        // buildx builder name; DefaultBuilder when empty
+	Image   string        // BuildKit image; DefaultImage when empty
 	Timeout time.Duration // per build; DefaultTimeout when zero
 	MaxLog  int           // bytes of build output kept; DefaultMaxLog when zero
 
@@ -92,6 +100,17 @@ func (b *Builder) name() string {
 	return DefaultBuilder
 }
 
+func (b *Builder) image() string {
+	if b.Image != "" {
+		return b.Image
+	}
+	return DefaultImage
+}
+
+// container is the builder's container, as buildx's docker-container driver
+// names it: "buildx_buildkit_" plus the node name, the builder's name and 0.
+func (b *Builder) container() string { return "buildx_buildkit_" + b.name() + "0" }
+
 // Network is the bridge network the builder's container joins instead of
 // Docker's default bridge (ADR-0009). Nothing else is on it, so a build
 // cannot reach other containers by address; its label lets the installer
@@ -102,8 +121,10 @@ func (b *Builder) Network() string { return b.name() + "-build" }
 const NetworkLabel = "io.shipyard.role=build"
 
 // Ensure creates the builder's network and the builder if they are missing,
-// and starts the builder. Limits and the network apply only when the
-// builder is created; changing them means removing it first.
+// and starts the builder. A builder running another image (one an older
+// Shipyard created, or a different Image) is removed and created again, with
+// the network and limits; its cache goes with it (ADR-0010). Otherwise limits
+// and the network apply only when the builder is created.
 func (b *Builder) Ensure(ctx context.Context, l Limits) error {
 	if _, err := b.run(ctx, "network", "inspect", "--format", "{{.Name}}", b.Network()); err != nil {
 		if _, err := b.run(ctx, "network", "create", "--driver", "bridge", "--label", NetworkLabel,
@@ -111,9 +132,27 @@ func (b *Builder) Ensure(ctx context.Context, l Limits) error {
 			return fmt.Errorf("create builder network %s: %w", b.Network(), err)
 		}
 	}
+	if err := b.start(ctx, l); err != nil {
+		return err
+	}
+	img, err := b.run(ctx, "inspect", "--format", "{{.Config.Image}}", b.container())
+	if err != nil {
+		return fmt.Errorf("inspect builder %s: %w", b.name(), err)
+	}
+	if img == b.image() {
+		return nil
+	}
+	if _, err := b.run(ctx, "buildx", "rm", "--force", b.name()); err != nil {
+		return fmt.Errorf("replace builder %s (image %s): %w", b.name(), img, err)
+	}
+	return b.start(ctx, l)
+}
+
+// start creates the builder if it is missing and boots it.
+func (b *Builder) start(ctx context.Context, l Limits) error {
 	if _, err := b.run(ctx, "buildx", "inspect", b.name()); err != nil {
 		args := []string{"buildx", "create", "--name", b.name(), "--driver", "docker-container"}
-		opts := []string{"network=" + b.Network()} // [DK-BX-CONTAINER]
+		opts := []string{"image=" + b.image(), "network=" + b.Network()} // [DK-BX-CONTAINER]
 		if l.Memory != "" {
 			opts = append(opts, "memory="+l.Memory)
 		}

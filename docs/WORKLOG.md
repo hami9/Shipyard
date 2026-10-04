@@ -8,11 +8,11 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); `build-network` (P5.1). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.1: builder egress control evaluated and deferred (ADR-0009); the builder has its own network |
-| **Next task** | P5.2: rootless Docker and stronger build isolation (evaluation ADR). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.2: rootless BuildKit for builds, the Docker daemon stays rootful (ADR-0010) |
+| **Next task** | P5.3: API rate limiting, auth-failure throttling, token revoke and rotate. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
-| **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
+| **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
 
 ## Entry template
@@ -53,6 +53,57 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P5.2 rootless BuildKit
+
+- **Phase / task:** P5.2: rootless Docker and stronger build isolation: evaluation ADR
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Evaluation** (sources added or re-verified: `DK-ROOTLESS`, `DK-USERNS`, `DK-SECCOMP`, `DK-CONTAINERD`, `BX-PRIVILEGED`, `BK-ROOTLESS`, `UB-USERNS`, `GVISOR-DOCKER`, `SYSTEMD-EXEC`):
+  - **Rootless Docker:** the host cannot reach container IPs (the health probes do), there is no AppArmor, and limits need cgroup delegation.
+  - **userns-remap:** rules out the containerd image store.
+  - **gVisor:** for untrusted apps, P7.
+  - **Builds:** the remaining lever, with three options for the owner. **The owner chose rootless BuildKit** (2026-10-04).
+- **[ADR-0010](adr/0010-rootless-buildkit.md).**
+- **`build.Builder`:**
+  - `DefaultImage` pins `moby/buildkit:v0.33.1-rootless` by index digest and goes in as `--driver-opt image=…`; until now buildx's floating default was used.
+  - `Ensure` replaces a builder whose container (`buildx_buildkit_<name>0`) runs another image. That also moves pre-ADR-0009 builders onto the build network.
+- **Host config:**
+  - `deploy/sysctl/60-shipyard-buildkit.conf` (Ubuntu 24.04+).
+  - `RestrictNamespaces=yes` in the api, worker and backup units.
+  - deploy README, ARCHITECTURE, ROADMAP (P5.7 sub-item, risk row), CHANGELOG.
+
+**Decisions**
+- **Replace on image mismatch instead of keeping the old builder:** the builder is derived state, and keeping a root builder after the upgrade would leave the risk in place silently. The cost is one cold cache.
+- **The sysctl is host-wide,** because buildx always makes the container privileged (so no AppArmor profile of our own applies to it). `RestrictNamespaces=` keeps our own services out of namespaces; containers already are, by Docker's seccomp profile without `CAP_SYS_ADMIN`.
+
+**Verification**
+- Exploration, WSL2 (kernel 6.18, no AppArmor; Engine 29.8.1, buildx 0.37.1), with throwaway builders that were removed afterwards:
+  - rootful `RUN` uid map `0 0 4294967295`, buildkitd uid 0;
+  - rootless `0 1000 1` + `1 100000 65536`, buildkitd uid 1000;
+  - `adduser`, `chown`, `USER` work in both;
+  - `Config.Image` equals the pinned reference as passed.
+- `systemd-run --user -p RestrictNamespaces=yes unshare -Ur true`: "Operation not permitted". `git`, `docker`, `docker buildx` run under it.
+- `make lint`, `make test`, `make test-integration`: exit 0. `go vet -tags e2e ./test/e2e/` and `-tags docker ./internal/build/`: ok.
+- A container with Shipyard's flags (`--cap-drop ALL`, `no-new-privileges`): `unshare -U` fails with "Operation not permitted" `[DK-SECCOMP]`.
+- `go test -race -tags docker -count=1 ./internal/build/`:
+  - all pass except `TestBuilderRootless`, which failed on its own check: the uid map line starts with a space, so the log had two spaces after `uid_map`. The mapping itself was right (`0 1000 1`).
+  - With the check fixed, `-run TestBuilderRootless`: PASS (98.6 s).
+  - `TestBuilderReplacesOtherImage`: PASS (80.5 s).
+  - No test builders or build networks left.
+- `go test -tags e2e -run TestPhase1ExitCriteria ./test/e2e`: PASS, 485.4 s, on the rootless builder (failed-switch check: 791 probes, 43 answered by the candidate before the restore).
+- `-run TestRestoreDrill`: PASS, 216.0 s.
+- No leftovers after either e2e run.
+- `TestCrashSafety`: not run (about 19 min, past this session's 10-minute run limit).
+
+**Problems / surprises**
+- The full `internal/build` Docker suite now takes about 590 s, close to this session's 10-minute limit for background runs. Run it in two halves next time.
+- The WSL kernel has no AppArmor, so Ubuntu 24.04's userns restriction is taken from Ubuntu's and BuildKit's docs, not observed. The P5.7 installer must check it on a real host.
+- A directory chowned in a rootless step kept the setgid bit (`drwxr-sr-x`).
+
+**Next**
+- P5.3: API rate limiting, auth-failure throttling, token revoke and rotate.
 
 ### 2026-10-04: P5.1 builder egress
 

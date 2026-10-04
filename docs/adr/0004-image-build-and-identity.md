@@ -46,4 +46,4 @@
 
 - **The default `docker` build driver:** no builder-level resource caps.
 - **Buildpacks or Nixpacks:** out of MVP scope.
-- **Kaniko or rootless BuildKit:** a stronger isolation option to evaluate in Phase 5.
+- **Kaniko or rootless BuildKit:** a stronger isolation option to evaluate in Phase 5. Rootless BuildKit was adopted in P5.2 (ADR-0010).

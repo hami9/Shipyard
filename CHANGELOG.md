@@ -67,7 +67,11 @@ All notable changes to Shipyard are recorded here.
 
 ### Security
 
-- **Builder network:** the build container now joins a Docker network of its own (`shipyard-build`, labelled `io.shipyard.role=build`) instead of the default bridge, so builds cannot reach other containers by address. An existing builder keeps its old network until removed (`docker buildx rm shipyard`, which also drops its cache). Outbound access from builds stays open, by decision: see ADR-0009.
+- **Builder network:** the build container now joins a Docker network of its own (`shipyard-build`, labelled `io.shipyard.role=build`) instead of the default bridge, so builds cannot reach other containers by address. Outbound access from builds stays open, by decision: see ADR-0009.
+- **Rootless builds:** builds run on rootless BuildKit (`moby/buildkit:v0.33.1-rootless`, pinned by digest), so a build step runs as an unprivileged host user, not as root (ADR-0010).
+  - At start, the worker replaces a builder that runs another image, including one created by an earlier Shipyard. The replacement also gets the builder network. The first build after the upgrade starts with an empty cache.
+  - **Ubuntu 24.04 and later:** install `deploy/sysctl/60-shipyard-buildkit.conf` and run `sudo sysctl --system`, or builds fail.
+- **Namespaces:** the API, worker and backup units set `RestrictNamespaces=yes`. Reinstall the units from `deploy/systemd/`.
 
 ### Removed
 
