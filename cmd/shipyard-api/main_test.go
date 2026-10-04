@@ -58,6 +58,30 @@ func TestParseTTL(t *testing.T) {
 	}
 }
 
+func TestParseTokenRotate(t *testing.T) {
+	good := []struct {
+		args  []string
+		grace time.Duration
+	}{
+		{[]string{"shp_abcd1234"}, 0},
+		{[]string{"shp_abcd1234", "--grace", "2h"}, 2 * time.Hour},
+		{[]string{"--grace", "7d", "shp_abcd1234"}, 7 * 24 * time.Hour},
+		{[]string{"shp_abcd1234", "--grace=0"}, 0},
+	}
+	for _, g := range good {
+		prefix, grace, err := parseTokenRotate(g.args)
+		if err != nil || prefix != "shp_abcd1234" || grace != g.grace {
+			t.Errorf("parseTokenRotate(%q) = %q, %v, %v", g.args, prefix, grace, err)
+		}
+	}
+	for _, args := range [][]string{nil, {"--grace", "1h"}, {"a", "b"}, {"shp_x", "--grace", "8d"}, {"shp_x", "--grace", "169h"},
+		{"shp_x", "--grace", "-1h"}, {"shp_x", "--grace", "200000000000d"}, {"shp_x", "--grace", "soon"}, {"shp_x", "--bogus"}} {
+		if _, _, err := parseTokenRotate(args); err == nil {
+			t.Errorf("parseTokenRotate(%q) succeeded, want error", args)
+		}
+	}
+}
+
 func TestParseTokenCreate(t *testing.T) {
 	o, err := parseTokenCreate(nil)
 	if err != nil || o.user != "admin" || o.name != "cli" || len(o.scopes) != 1 || o.scopes[0] != "admin" || o.ttl != 90*24*time.Hour {

@@ -324,6 +324,9 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 | `shipyard ps` | `GET /v1/apps` |
 | `shipyard login --url URL` (token read from stdin) | `GET /v1/whoami` to verify, then saves `~/.config/shipyard/config.json` with mode 0600 |
 | `shipyard whoami` | `GET /v1/whoami` (the calling token's prefix, scopes, and expiry) |
+| `shipyard token rotate [--grace D]` | `POST /v1/tokens/self/rotate` (any scope), optional body `{"grace_seconds": N}` (0 to 604800). 201 with the new plaintext (`Cache-Control: no-store`) and both tokens' metadata. The new token has the old one's user, name, scopes, and lifetime from now; the old one is revoked, or ends after the grace. 409 if the calling token stopped being active meanwhile. The CLI saves the new token to its config file, or prints it when `SHIPYARD_TOKEN` is set (ADR-0011) |
+| `shipyard token list` | `GET /v1/tokens` (`admin`): prefix, name, scopes, status, expiry, last use, revocation; never a hash |
+| `shipyard token revoke PREFIX` | `DELETE /v1/tokens/{prefix}` (`admin`). Idempotent; 404 for an unknown or malformed prefix |
 | `shipyard logs APP [--tail N] [--follow]` | `GET /v1/apps/{id}/logs?tail=&follow=` (`read` scope; SSE). The active deployment's output, read by the worker and proxied by the API (ADR-0008). `tail` is 0–1000 (default 100). 404 with no active deployment; 503 when the worker is down. Ends with `event: end` and the reason |
 | `shipyard events OPERATION` | `GET /v1/operations/{id}/events` (`read` scope; SSE, resumable). Ends with an `end` event carrying the operation |
 | `shipyard rollback APP --to <deployment-id> [--with-current-config\|--with-old-config] [--follow]` | `POST /v1/apps/{id}/rollbacks` (`deploy` scope), body `{"to", "with_current_config", "with_old_config"}`. 202 like a deploy; 409 if the target is active or its secrets changed since (keys named); 422 for a target that never served |
@@ -376,7 +379,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 
 - The API and CLI require bearer tokens with scopes and expiry `[RFC6750]`.
   - Scopes nest: `read` (list and inspect) ⊂ `deploy` (plus deploys and rollbacks, e.g. for CI) ⊂ `admin` (everything).
-  - The first token is created on the server with `shipyard-api token create`. Tokens are revoked with `shipyard-api token revoke <prefix>`.
+  - The first token is created on the server with `shipyard-api token create`.
+  - **Revoking and rotating** (ADR-0011):
+    - On the server: `shipyard-api token revoke <prefix>` and `token rotate <prefix> [--grace D]`.
+    - Remotely: `shipyard token revoke` (admin) and `shipyard token rotate` (the calling token).
+    - A rotation keeps the user, name, scopes, and lifetime.
   - Unknown, expired, revoked, and malformed tokens get the same 401, so a client cannot tell them apart.
 - Every authenticated mutation, whether allowed or denied, writes an audit event naming the token prefix, the route, and the path. Anonymous failures are logged only, so they cannot fill the audit table.
 - **Limits per client** (P5.3, [ADR-0011](adr/0011-api-limits-and-token-management.md)) `[RFC6585][RFC9110-RETRY]`:

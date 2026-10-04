@@ -22,10 +22,12 @@ type Pinger interface {
 type Deps struct {
 	DB     Pinger
 	Tokens TokenStore
-	Audit  AuditRecorder
-	Apps   AppStore
-	Env    EnvStore
-	Ops    OperationStore
+	// TokenAdmin serves /v1/tokens (ADR-0011).
+	TokenAdmin TokenAdmin
+	Audit      AuditRecorder
+	Apps       AppStore
+	Env        EnvStore
+	Ops        OperationStore
 	// Domains, Resolver, and DomainPolicy serve /v1/apps/{app}/domains.
 	Domains      DomainStore
 	Resolver     Resolver
@@ -72,6 +74,10 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	// Authenticated by its HMAC signature, not a token.
 	mux.HandleFunc("POST /hooks/github", hooks.github)
 	route(mux, "GET /v1/whoami", ScopeRead, handleWhoami)
+	tokens := &tokenHandlers{log: log, tokens: d.TokenAdmin, now: time.Now}
+	route(mux, "GET /v1/tokens", ScopeAdmin, tokens.list)
+	route(mux, "DELETE /v1/tokens/{prefix}", ScopeAdmin, tokens.revoke)
+	route(mux, "POST /v1/tokens/self/rotate", ScopeRead, tokens.rotateSelf)
 	route(mux, "GET /v1/apps", ScopeRead, apps.list)
 	route(mux, "POST /v1/apps", ScopeAdmin, apps.create)
 	route(mux, "GET /v1/apps/{app}", ScopeRead, apps.get)

@@ -165,6 +165,50 @@ func (c *Client) Whoami(ctx context.Context) (Whoami, error) {
 	return w, err
 }
 
+// Token mirrors the API's token metadata (never the token itself).
+type Token struct {
+	Prefix     string     `json:"prefix"`
+	Name       string     `json:"name"`
+	Scopes     []string   `json:"scopes"`
+	Status     string     `json:"status"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// Rotation is the result of rotating the calling token: Token is the new
+// plaintext, shown only here.
+type Rotation struct {
+	Token string `json:"token"`
+	New   Token  `json:"new"`
+	Old   Token  `json:"old"`
+}
+
+// ListTokens lists every token (admin scope).
+func (c *Client) ListTokens(ctx context.Context) ([]Token, error) {
+	var out struct {
+		Tokens []Token `json:"tokens"`
+	}
+	_, err := c.do(ctx, "GET", "/v1/tokens", nil, nil, &out)
+	return out.Tokens, err
+}
+
+// RevokeToken revokes the token with this prefix (admin scope).
+func (c *Client) RevokeToken(ctx context.Context, prefix string) (Token, error) {
+	var t Token
+	_, err := c.do(ctx, "DELETE", p("v1", "tokens", prefix), nil, nil, &t)
+	return t, err
+}
+
+// RotateSelf replaces the calling token; the old one ends after grace.
+// The client keeps using the old token: callers switch to Rotation.Token.
+func (c *Client) RotateSelf(ctx context.Context, grace time.Duration) (Rotation, error) {
+	var r Rotation
+	_, err := c.do(ctx, "POST", "/v1/tokens/self/rotate", map[string]int64{"grace_seconds": int64(grace / time.Second)}, nil, &r)
+	return r, err
+}
+
 // App mirrors the API's app representation.
 type App struct {
 	ID             string    `json:"id"`

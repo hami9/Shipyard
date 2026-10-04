@@ -82,3 +82,31 @@ func (s *Store) RevokeToken(ctx context.Context, prefix string) (Token, error) {
 		UPDATE api_tokens SET revoked_at = coalesce(revoked_at, now())
 		WHERE prefix = $1 RETURNING `+tokenColumns, prefix))
 }
+
+// TokenByPrefix returns the token with this prefix, active or not.
+func (s *Store) TokenByPrefix(ctx context.Context, prefix string) (Token, error) {
+	return scanToken(s.q.QueryRow(ctx, `SELECT `+tokenColumns+` FROM api_tokens WHERE prefix = $1`, prefix))
+}
+
+// RotateToken replaces the active token oldID with n in one transaction.
+// Without grace the old token is revoked; otherwise it keeps working for
+// grace, or until its own earlier expiry. The database's clock decides, so
+// the end does not depend on the caller's. ErrNotFound means the old token
+// is no longer active, and nothing changed.
+func (s *Store) RotateToken(ctx context.Context, oldID string, n NewToken, grace time.Duration) (old, created Token, err error) {
+	err = s.InTx(ctx, func(tx *Store) error {
+		old, err = scanToken(tx.q.QueryRow(ctx, `
+			UPDATE api_tokens SET
+				revoked_at = CASE WHEN $2::bigint <= 0 THEN now() END,
+				expires_at = CASE WHEN $2::bigint <= 0 THEN expires_at
+					ELSE least(coalesce(expires_at, 'infinity'), now() + $2::bigint::float8 * interval '1 microsecond') END
+			WHERE id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+			RETURNING `+tokenColumns, oldID, grace.Microseconds()))
+		if err != nil {
+			return err
+		}
+		created, err = tx.CreateToken(ctx, n)
+		return err
+	})
+	return old, created, err
+}

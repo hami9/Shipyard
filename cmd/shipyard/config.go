@@ -38,6 +38,25 @@ func defaultConfigPath(getenv func(string) string) (string, error) {
 // loadConfig reads the file if it exists, then applies SHIPYARD_URL and
 // SHIPYARD_TOKEN, which suit CI jobs.
 func loadConfig(path string, getenv func(string) string) (config, error) {
+	c, err := readConfigFile(path)
+	if err != nil {
+		return c, err
+	}
+	if v := getenv(envURL); v != "" {
+		c.URL = v
+	}
+	if v := getenv(envToken); v != "" {
+		c.Token = v
+	}
+	if c.URL == "" {
+		return c, fmt.Errorf("no API URL configured; run `shipyard login --url URL` or set %s", envURL)
+	}
+	return c, nil
+}
+
+// readConfigFile reads the file alone, without the environment overrides;
+// a missing file is an empty config.
+func readConfigFile(path string) (config, error) {
 	var c config
 	b, err := os.ReadFile(path)
 	switch {
@@ -51,15 +70,6 @@ func loadConfig(path string, getenv func(string) string) (config, error) {
 		if err := json.Unmarshal(b, &c); err != nil {
 			return c, fmt.Errorf("parse %s: %w", path, err)
 		}
-	}
-	if v := getenv(envURL); v != "" {
-		c.URL = v
-	}
-	if v := getenv(envToken); v != "" {
-		c.Token = v
-	}
-	if c.URL == "" {
-		return c, fmt.Errorf("no API URL configured; run `shipyard login --url URL` or set %s", envURL)
 	}
 	return c, nil
 }

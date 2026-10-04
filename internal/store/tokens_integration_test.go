@@ -111,6 +111,69 @@ func TestTokens(t *testing.T) {
 	})
 }
 
+// ADR-0011: a rotation inserts the new token and ends the old one in one
+// transaction, and does nothing for a token that is no longer active.
+func TestRotateToken(t *testing.T) {
+	s, u, _ := newStore(t)
+	ctx := t.Context()
+	in := func(d time.Duration) *time.Time { x := time.Now().Add(d); return &x }
+	newToken := func(prefix string, expires *time.Time) store.NewToken {
+		return store.NewToken{UserID: u.ID, Name: "ci", Prefix: prefix, Hash: hashOf(prefix), Scopes: []string{"deploy"}, ExpiresAt: expires}
+	}
+	count := func() int {
+		list, err := s.ListTokens(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(list)
+	}
+
+	// No grace: the old token is revoked at once.
+	a, _ := s.CreateToken(ctx, newToken("shp_rotA0001", in(48*time.Hour)))
+	old, created, err := s.RotateToken(ctx, a.ID, newToken("shp_rotA0002", in(48*time.Hour)), 0)
+	if err != nil || old.RevokedAt == nil || created.Prefix != "shp_rotA0002" || created.Name != "ci" {
+		t.Fatalf("rotate without grace = %+v, %+v, %v", old, created, err)
+	}
+	if _, err := s.ActiveTokenByHash(ctx, hashOf("shp_rotA0001")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old token still active: %v", err)
+	}
+
+	// Grace: the old token keeps working until then, never past its own expiry.
+	b, _ := s.CreateToken(ctx, newToken("shp_rotB0001", in(48*time.Hour)))
+	old, _, err = s.RotateToken(ctx, b.ID, newToken("shp_rotB0002", in(48*time.Hour)), time.Hour)
+	if err != nil || old.RevokedAt != nil || old.ExpiresAt == nil || time.Until(*old.ExpiresAt) < 59*time.Minute || time.Until(*old.ExpiresAt) > 61*time.Minute {
+		t.Fatalf("rotate with grace = %+v, %v (want an expiry in 1h)", old, err)
+	}
+	if _, err := s.ActiveTokenByHash(ctx, hashOf("shp_rotB0001")); err != nil {
+		t.Fatalf("old token stopped during its grace: %v", err)
+	}
+	c, _ := s.CreateToken(ctx, newToken("shp_rotC0001", in(time.Hour)))
+	old, _, err = s.RotateToken(ctx, c.ID, newToken("shp_rotC0002", in(48*time.Hour)), 24*time.Hour)
+	if err != nil || !old.ExpiresAt.Equal(*c.ExpiresAt) {
+		t.Fatalf("grace past the old expiry = %+v, %v (want expiry %v kept)", old, err, c.ExpiresAt)
+	}
+	d, _ := s.CreateToken(ctx, newToken("shp_rotD0001", nil))
+	if old, _, err = s.RotateToken(ctx, d.ID, newToken("shp_rotD0002", in(48*time.Hour)), time.Hour); err != nil || old.ExpiresAt == nil {
+		t.Fatalf("grace on a token without expiry = %+v, %v", old, err)
+	}
+
+	// Negative: a revoked token cannot be rotated, and no new token is left behind.
+	before := count()
+	if _, _, err := s.RotateToken(ctx, a.ID, newToken("shp_rotA0003", in(48*time.Hour)), 0); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("rotate a revoked token = %v, want ErrNotFound", err)
+	}
+	if count() != before {
+		t.Fatal("a failed rotation inserted a token")
+	}
+	got, err := s.TokenByPrefix(ctx, "shp_rotA0001")
+	if err != nil || got.ID != a.ID || got.RevokedAt == nil {
+		t.Fatalf("TokenByPrefix = %+v, %v", got, err)
+	}
+	if _, err := s.TokenByPrefix(ctx, "shp_nothere1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("TokenByPrefix unknown = %v", err)
+	}
+}
+
 func TestAudit(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := t.Context()

@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"strings"
+	"time"
+
+	"github.com/hami9/shipyard/internal/store"
 )
 
 // API tokens are "shp_" plus 32 random bytes in unpadded base64url
@@ -45,6 +48,30 @@ func NewToken() (plaintext, prefix string, hash []byte) {
 	rand.Read(b) // never returns an error [GO-RAND]
 	plaintext = TokenPrefix + base64.RawURLEncoding.EncodeToString(b)
 	return plaintext, plaintext[:tokenDisplayLen], HashToken(plaintext)
+}
+
+// Token lifetimes: what `shipyard-api token create --ttl` accepts, and what
+// a rotation keeps (ADR-0011).
+const (
+	MinTokenTTL     = time.Hour
+	MaxTokenTTL     = 366 * 24 * time.Hour
+	DefaultTokenTTL = 90 * 24 * time.Hour
+	// MaxRotationGrace is how long a rotated token may keep working.
+	MaxRotationGrace = 7 * 24 * time.Hour
+)
+
+// Rotation returns the token that replaces old: the same user, name, and
+// scopes, for old's lifetime (creation to expiry) counted from now.
+func Rotation(old store.Token, now time.Time) (plaintext string, n store.NewToken) {
+	life := DefaultTokenTTL
+	if old.ExpiresAt != nil {
+		life = old.ExpiresAt.Sub(old.CreatedAt)
+	}
+	life = min(max(life, MinTokenTTL), MaxTokenTTL)
+	expires := now.Add(life)
+	plaintext, prefix, hash := NewToken()
+	return plaintext, store.NewToken{UserID: old.UserID, Name: old.Name, Prefix: prefix, Hash: hash,
+		Scopes: old.Scopes, ExpiresAt: &expires}
 }
 
 // HashToken returns the SHA-256 digest under which a token is stored.

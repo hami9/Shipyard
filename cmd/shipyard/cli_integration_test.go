@@ -51,7 +51,7 @@ func newCLIFixture(t *testing.T) *cliFixture {
 	}
 	keys, _ := secrets.NewKeyring("t", map[string][]byte{"t": secrets.GenerateKey()})
 	h := api.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)),
-		api.Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s, Domains: s, // DNS preflight off
+		api.Deps{DB: pool, Tokens: s, TokenAdmin: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s, Domains: s, // DNS preflight off
 			StreamPoll: 20 * time.Millisecond})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
@@ -222,5 +222,81 @@ func TestCLIEndToEnd(t *testing.T) {
 		if strings.Contains(f.seen.String(), leak) {
 			t.Fatalf("the %s appeared in CLI output", name)
 		}
+	}
+}
+
+// ADR-0011: token list, revoke, and rotate through the API. rotate saves
+// the new token to the config file and never prints it; with
+// SHIPYARD_TOKEN it prints it instead, since the variable cannot be changed.
+func TestCLITokens(t *testing.T) {
+	f := newCLIFixture(t)
+	ctx := t.Context()
+	f.ok(f.token+"\n", "login", "--url", f.url)
+	u, _ := f.s.UserByName(ctx, "admin")
+	readPlain, readPrefix, readHash := api.NewToken()
+	if _, err := f.s.CreateToken(ctx, store.NewToken{UserID: u.ID, Name: "viewer", Prefix: readPrefix, Hash: readHash, Scopes: []string{api.ScopeRead}}); err != nil {
+		t.Fatal(err)
+	}
+	if out := f.ok("", "token", "list"); !regexp.MustCompile(`(?m)^shp_\S+\s+cli-test\s+admin\s+-\s+\S+\s+active$`).MatchString(out) || !strings.Contains(out, "viewer") {
+		t.Fatalf("token list:\n%s", out)
+	}
+
+	out := f.ok("", "token", "rotate")
+	if !strings.Contains(out, "The old token is revoked.") || !strings.Contains(out, "Saved to "+f.config) {
+		t.Fatalf("token rotate: %q", out)
+	}
+	cfg, err := readConfigFile(f.config)
+	if err != nil || cfg.Token == f.token || !strings.HasPrefix(cfg.Token, api.TokenPrefix) || cfg.URL != f.url {
+		t.Fatalf("config after rotate = %+v, %v", cfg, err)
+	}
+	if strings.Contains(f.seen.String(), cfg.Token) {
+		t.Fatal("the saved token was printed")
+	}
+	// The saved token works; the old one is gone.
+	if out := f.ok("", "whoami"); !strings.Contains(out, "cli-test") {
+		t.Fatalf("whoami after rotate: %s", out)
+	}
+	if _, err := f.s.ActiveTokenByHash(ctx, api.HashToken(f.token)); err == nil {
+		t.Fatal("the rotated token still authenticates")
+	}
+
+	// With SHIPYARD_TOKEN, a read token rotates itself and gets the token printed.
+	var stdout, stderr bytes.Buffer
+	code := run(ctx, []string{"token", "rotate", "--grace", "1h"}, env{strings.NewReader(""), &stdout, &stderr, func(k string) string {
+		return map[string]string{envConfig: f.config, envToken: readPlain}[k]
+	}})
+	printed := strings.TrimSpace(stdout.String())
+	if code != 0 || !strings.HasPrefix(printed, api.TokenPrefix) || !strings.Contains(stderr.String(), "SHIPYARD_TOKEN is set") ||
+		!strings.Contains(stderr.String(), "keeps working until") {
+		t.Fatalf("rotate with SHIPYARD_TOKEN: exit %d\nstdout %q\nstderr %q", code, stdout.String(), stderr.String())
+	}
+	if after, _ := readConfigFile(f.config); after.Token != cfg.Token {
+		t.Fatal("rotating an environment token changed the config file")
+	}
+
+	// Negative: list and revoke need admin; revoke of an unknown prefix is 404.
+	code, _, errb := f.run("", "token", "list")
+	if code != 0 {
+		t.Fatalf("token list as admin: exit %d %s", code, errb)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run(ctx, []string{"token", "list"}, env{strings.NewReader(""), &stdout, &stderr, func(k string) string {
+		return map[string]string{envConfig: f.config, envToken: printed}[k]
+	}})
+	if code != 1 || !strings.Contains(stderr.String(), "403") {
+		t.Fatalf("token list with a read token: exit %d %s", code, stderr.String())
+	}
+	if code, _, errb := f.run("", "token", "revoke", "shp_nothere1"); code != 1 || !strings.Contains(errb, "404") {
+		t.Fatalf("revoke unknown: exit %d %s", code, errb)
+	}
+	if out := f.ok("", "token", "revoke", readPrefix); !strings.Contains(out, "Revoked "+readPrefix+" (viewer)") {
+		t.Fatalf("revoke: %q", out)
+	}
+	if out := f.ok("", "token", "list"); !regexp.MustCompile(readPrefix + `\s+viewer\s+read\s+.*revoked`).MatchString(out) {
+		t.Fatalf("token list after revoke:\n%s", out)
+	}
+	if code, _, _ := f.run("", "token", "rotate", "extra"); code != 2 {
+		t.Fatalf("token rotate with an argument: exit %d, want 2", code)
 	}
 }

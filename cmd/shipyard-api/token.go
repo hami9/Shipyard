@@ -19,8 +19,11 @@ const tokenUsage = `Usage:
   shipyard-api token create [--user NAME] [--name NAME] [--scope SCOPES] [--ttl DURATION]
   shipyard-api token list
   shipyard-api token revoke PREFIX
+  shipyard-api token rotate PREFIX [--grace DURATION]
 
-create prints the new token once on stdout; store it immediately.
+create and rotate print the new token once on stdout; store it immediately.
+rotate issues a token with the same user, name, scopes, and lifetime, and
+revokes the old one, or lets it work for --grace longer (up to 7d).
   --user    owner, created if missing (default "admin")
   --name    label shown in listings (default "cli")
   --scope   comma-separated: read, deploy, admin (default "admin")
@@ -28,8 +31,8 @@ create prints the new token once on stdout; store it immediately.
 `
 
 const (
-	minTokenTTL = time.Hour
-	maxTokenTTL = 366 * 24 * time.Hour
+	minTokenTTL = api.MinTokenTTL
+	maxTokenTTL = api.MaxTokenTTL
 	cliActor    = "cli:shipyard-api"
 )
 
@@ -49,6 +52,8 @@ func tokenCommand(ctx context.Context, s *store.Store, args []string, stdout, st
 			return usageError(tokenUsage)
 		}
 		return tokenRevoke(ctx, s, args[1], stderr)
+	case "rotate":
+		return tokenRotate(ctx, s, args[1:], stdout, stderr)
 	default:
 		return usageError(tokenUsage)
 	}
@@ -197,4 +202,96 @@ func tokenRevoke(ctx context.Context, s *store.Store, prefix string, stderr io.W
 	}
 	fmt.Fprintf(stderr, "Revoked %s.\n", prefix)
 	return nil
+}
+
+func parseTokenRotate(args []string) (prefix string, grace time.Duration, err error) {
+	fs := flag.NewFlagSet("token rotate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	g := fs.String("grace", "0", "")
+	// The prefix may come before or after the flag.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		prefix, args = args[0], args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		return "", 0, usageError(tokenUsage)
+	}
+	if prefix == "" && fs.NArg() == 1 {
+		prefix = fs.Arg(0)
+	} else if fs.NArg() != 0 || prefix == "" {
+		return "", 0, usageError(tokenUsage)
+	}
+	if grace, err = parseGrace(*g); err != nil {
+		return "", 0, err
+	}
+	return prefix, grace, nil
+}
+
+// parseGrace accepts 0, Go durations, and whole days, up to 7d.
+func parseGrace(s string) (time.Duration, error) {
+	if s == "0" {
+		return 0, nil
+	}
+	var d time.Duration
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 || n > 7 {
+			return 0, fmt.Errorf("invalid --grace %q", s)
+		}
+		d = time.Duration(n) * 24 * time.Hour
+	} else {
+		var err error
+		if d, err = time.ParseDuration(s); err != nil {
+			return 0, fmt.Errorf("invalid --grace %q", s)
+		}
+	}
+	if d < 0 || d > api.MaxRotationGrace {
+		return 0, fmt.Errorf("--grace must be between 0 and 7d")
+	}
+	return d, nil
+}
+
+func tokenRotate(ctx context.Context, s *store.Store, args []string, stdout, stderr io.Writer) error {
+	prefix, grace, err := parseTokenRotate(args)
+	if err != nil {
+		return err
+	}
+	var plaintext string
+	var old, tok store.Token
+	err = s.InTx(ctx, func(tx *store.Store) error {
+		cur, err := tx.TokenByPrefix(ctx, prefix)
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("no token %s", prefix)
+		}
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		var n store.NewToken
+		plaintext, n = api.Rotation(cur, now)
+		old, tok, err = tx.RotateToken(ctx, cur.ID, n, grace)
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("token %s is revoked or expired: create a new one instead", prefix)
+		}
+		if err != nil {
+			return fmt.Errorf("rotate %s: %w", prefix, err)
+		}
+		_, err = tx.RecordAudit(ctx, store.AuditEvent{Actor: cliActor, Action: "token.rotate",
+			Target: old.Prefix + " -> " + tok.Prefix, Result: store.AuditSuccess})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, plaintext)
+	fmt.Fprintf(stderr, "Rotated %s: new token %s (scopes %s, expires %s).\n%s\nThe new token is shown only once: store it now.\n",
+		old.Prefix, tok.Prefix, strings.Join(tok.Scopes, ","), tok.ExpiresAt.UTC().Format(time.DateOnly), oldTokenEnd(old))
+	return nil
+}
+
+// oldTokenEnd says when a rotated token stops working.
+func oldTokenEnd(old store.Token) string {
+	if old.RevokedAt != nil {
+		return "The old token is revoked."
+	}
+	return "The old token keeps working until " + old.ExpiresAt.UTC().Format(time.RFC3339) + "."
 }

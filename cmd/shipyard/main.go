@@ -22,6 +22,14 @@ Connection:
   login --url URL          Save the API URL and a token (read from stdin)
   whoami                   Show the configured token's name, scopes, and expiry
 
+Tokens:
+  token rotate [--grace DURATION]
+                           Replace the configured token with a new one (same name, scopes,
+                           and lifetime) and save it; the old one is revoked, or keeps
+                           working for --grace (e.g. 24h, at most 168h)
+  token list               List all tokens (admin)
+  token revoke PREFIX      Revoke a token (admin)
+
 Apps:
   app create SLUG --repo OWNER/NAME --branch BRANCH --port PORT
              [--dockerfile PATH] [--context PATH] [--health-path PATH] [--auto-deploy]
@@ -98,7 +106,7 @@ func run(ctx context.Context, args []string, e env) int {
 		return 0
 	case "login":
 		err = cmdLogin(ctx, e, args[1:])
-	case "whoami", "app", "ps", "env", "domain", "deploy", "operation", "events", "logs", "releases", "rollback":
+	case "whoami", "app", "ps", "env", "domain", "token", "deploy", "operation", "events", "logs", "releases", "rollback":
 		err = withClient(e, func(c *client.Client) error { return dispatch(ctx, e, c, args) })
 	default:
 		fmt.Fprintf(e.stderr, "unknown command %q\n\n%s", args[0], usage)
@@ -134,7 +142,7 @@ func withClient(e env, fn func(*client.Client) error) error {
 func dispatch(ctx context.Context, e env, c *client.Client, args []string) error {
 	cmd, rest := args[0], args[1:]
 	sub := ""
-	if (cmd == "app" || cmd == "env" || cmd == "domain") && len(rest) > 0 {
+	if (cmd == "app" || cmd == "env" || cmd == "domain" || cmd == "token") && len(rest) > 0 {
 		sub, rest = rest[0], rest[1:]
 	}
 	switch cmd + " " + sub {
@@ -162,6 +170,12 @@ func dispatch(ctx context.Context, e env, c *client.Client, args []string) error
 		return cmdDomainRemove(ctx, e, c, rest)
 	case "domain list":
 		return cmdDomainList(ctx, e, c, rest)
+	case "token list":
+		return cmdTokenList(ctx, e, c, rest)
+	case "token revoke":
+		return cmdTokenRevoke(ctx, e, c, rest)
+	case "token rotate":
+		return cmdTokenRotate(ctx, e, c, rest)
 	case "deploy ":
 		return cmdDeploy(ctx, e, c, rest)
 	case "operation ":
