@@ -35,10 +35,15 @@ type Deps struct {
 	StreamPoll, StreamKeepalive time.Duration
 	// Logs reads app logs from the worker (ADR-0008); nil answers 503.
 	Logs LogSource
+	// WebhookSecret verifies POST /hooks/github; empty answers 404.
+	// Pushes receives the verified pushes; nil ignores them.
+	WebhookSecret []byte
+	Pushes        PushSink
 }
 
 // NewHandler returns the root handler with middleware applied. Health
-// endpoints are public; every /v1 route goes through auth.protect.
+// endpoints are public, /hooks/github verifies its own signature, and every
+// /v1 route goes through auth.protect.
 func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	auth := &authenticator{log: log, tokens: d.Tokens, audit: d.Audit}
 	route := func(mux *http.ServeMux, pattern, scope string, h http.HandlerFunc) {
@@ -55,10 +60,13 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	}
 	logs := &logHandlers{appHandlers: apps, source: d.Logs, keepalive: ops.keepalive}
 	domains := &domainHandlers{appHandlers: apps, routes: d.Domains, resolver: d.Resolver, policy: d.DomainPolicy}
+	hooks := &webhookHandlers{log: log, secret: d.WebhookSecret, sink: d.Pushes}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(log, d.DB))
+	// Authenticated by its HMAC signature, not a token.
+	mux.HandleFunc("POST /hooks/github", hooks.github)
 	route(mux, "GET /v1/whoami", ScopeRead, handleWhoami)
 	route(mux, "GET /v1/apps", ScopeRead, apps.list)
 	route(mux, "POST /v1/apps", ScopeAdmin, apps.create)

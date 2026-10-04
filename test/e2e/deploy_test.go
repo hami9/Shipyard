@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/hami9/shipyard/internal/store"
 	"github.com/hami9/shipyard/internal/store/storetest"
+	"github.com/hami9/shipyard/internal/webhook"
 )
 
 // The Phase 1 exit criteria (docs/ROADMAP.md), end to end: app create, env
@@ -105,6 +107,20 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	// Apps cannot take the API's hostname.
 	if out, err := h.cliErr("domain", "add", slug, apiHost); err == nil || !strings.Contains(out, "reserved for the Shipyard API") {
 		t.Fatalf("domain add %s: %v\n%s", apiHost, err, out)
+	}
+	// P4.1: GitHub's deliveries reach the API through Caddy with the raw body
+	// intact, so the signature verifies; a bad one is a 401. Pushes do not
+	// deploy yet (P4.2).
+	ping := `{"zen":"Design for failure.","hook_id":1}`
+	if resp, body := h.hook("ping", ping, webhook.Sign(h.hookSecret, []byte(ping))); resp.StatusCode != http.StatusOK || !strings.Contains(body, `"pong"`) {
+		t.Fatalf("signed ping through caddy: %s %s", resp.Status, body)
+	}
+	push := `{"ref":"refs/heads/main","after":"` + strings.Repeat("a", 40) + `","repository":{"id":1,"full_name":"e2e/app"}}`
+	if resp, body := h.hook("push", push, webhook.Sign(h.hookSecret, []byte(push))); resp.StatusCode != http.StatusAccepted || !strings.Contains(body, `"ignored"`) {
+		t.Fatalf("signed push through caddy: %s %s", resp.Status, body)
+	}
+	if resp, body := h.hook("push", push, webhook.Sign([]byte("not-the-e2e-webhook-secret"), []byte(push))); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("badly signed push through caddy: %s %s", resp.Status, body)
 	}
 
 	// 2. A broken Dockerfile at the branch head fails with the build log.
@@ -405,6 +421,9 @@ type harness struct {
 	workerEnv []string
 	kek       string
 
+	// hookSecret signs GitHub webhook deliveries (P4.1).
+	hookSecret []byte
+
 	// For the restore drill, which stops both services and starts them
 	// again on another database: their environments, how to stop them, and
 	// what else a lost host loses.
@@ -476,7 +495,14 @@ func start(t *testing.T) *harness {
 	token := run(t, tmp, common, h.bin+"/shipyard-api", "token", "create", "--name", "e2e")
 	h.token = token
 
-	h.apiEnv, h.apiSock, h.builder = append(common, "SHIPYARD_DNS_PREFLIGHT=false"), apiSock, builder
+	h.hookSecret = make([]byte, 32)
+	rand.Read(h.hookSecret)
+	h.hookSecret = []byte(hex.EncodeToString(h.hookSecret))
+	hookFile := filepath.Join(tmp, "github-webhook.secret")
+	if err := os.WriteFile(hookFile, append(h.hookSecret, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.apiEnv, h.apiSock, h.builder = append(common, "SHIPYARD_DNS_PREFLIGHT=false", "SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE="+hookFile), apiSock, builder
 	h.stopAPI = h.spawn("api", h.apiEnv, "shipyard-api", "serve").stop
 	waitUnix(t, apiSock)
 	h.kek = kek
@@ -892,6 +918,18 @@ func waitUnix(t *testing.T, sock string) {
 // over HTTP/2 when Caddy offers it; it returns the response and its body.
 func (h *harness) apiViaCaddy(path string) (*http.Response, string) {
 	h.t.Helper()
+	return h.callViaCaddy("GET", path, "", map[string]string{"Authorization": "Bearer " + h.token})
+}
+
+// hook delivers a GitHub webhook event through Caddy, signed with sig.
+func (h *harness) hook(event, body, sig string) (*http.Response, string) {
+	h.t.Helper()
+	return h.callViaCaddy("POST", "/hooks/github", body, map[string]string{"Content-Type": "application/json",
+		webhook.HeaderEvent: event, webhook.HeaderDelivery: "e2e-" + event, webhook.HeaderSignature: sig})
+}
+
+func (h *harness) callViaCaddy(method, path, body string, header map[string]string) (*http.Response, string) {
+	h.t.Helper()
 	addr := strings.Fields(h.docker("port", h.caddy, "443/tcp"))[0]
 	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // Caddy's internal CA
@@ -901,8 +939,10 @@ func (h *harness) apiViaCaddy(path string) (*http.Response, string) {
 		}}}
 	var last error
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
-		req, _ := http.NewRequestWithContext(h.t.Context(), "GET", "https://"+apiHost+path, nil)
-		req.Header.Set("Authorization", "Bearer "+h.token)
+		req, _ := http.NewRequestWithContext(h.t.Context(), method, "https://"+apiHost+path, strings.NewReader(body))
+		for k, v := range header {
+			req.Header.Set(k, v)
+		}
 		resp, err := hc.Do(req)
 		if err != nil {
 			last = err

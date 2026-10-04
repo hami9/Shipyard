@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 3: Recovery and durability. Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P3.8: delete app as an operation (`shipyard app delete`). Every Phase 3 task is done |
-| **Next task** | The Phase 3 exit criteria, then Phase 4 (GitHub App and webhooks). Owner: the restore drill on a real VPS (ADR-0006's production-ready gate) |
+| **Active phase** | Phase 4: GitHub integration. Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P4.1: the GitHub webhook receiver (`POST /hooks/github`, signature verified before parsing) |
+| **Next task** | P4.2: record deliveries in `webhook_deliveries` and enqueue deploys under `gh:<delivery-id>`. Owner: the Phase 3 restore drill on a real VPS (ADR-0006's production-ready gate) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted until Phase 5. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again |
-| **Last updated** | 2026-10-01 |
+| **Last updated** | 2026-10-04 |
 
 ## Entry template
 
@@ -53,6 +53,30 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P4.1 webhook receiver
+
+- **Phase / task:** P4.1: `internal/webhook`, verify before parsing, answer within 10 s, only `push`
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`internal/webhook`:** `Verify` (`sha256=` + hex, `hmac.Equal`, the SHA-1 header never read), `Sign`, `ParsePush` (ignores deleted refs and non-branch refs; rejects a missing repository id, a bad ref, or an `after` that is not a full SHA), `ValidDelivery`, and `LoadSecret`.
+- **`POST /hooks/github`** in the API, outside token auth; order of checks and answers in ARCHITECTURE §7 GitHub. A verified push to a branch goes to a `PushSink` (3 s deadline, 503 on failure). There is no sink yet, so pushes are answered `ignored`.
+- **Config:** `SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE`; unset turns the endpoint off (404).
+
+**Decisions**
+- **The secret is a file**, checked like the KEK files (regular, not readable by other users), at least 16 bytes. One secret serves every webhook, which fits both a GitHub App's single webhook (P4.4) and repository webhooks.
+- **Nothing is written before verification.** Failures before it are logged without payload or unvalidated headers, as for anonymous API failures. Verified deliveries are recorded in P4.2 (`webhook_deliveries`, actor `webhook`), not in the audit table.
+- **415 for form-encoded deliveries**, after the signature check, so an unsigned request always gets the same 401.
+- **No ADR:** the behaviour was already specified in ARCHITECTURE §7; this records how.
+
+**Verification** (WSL2, Engine 29.8.1, Caddy 2.11.4, PostgreSQL 18)
+- `make lint` (after one gofmt fix), `make test`, `make test-integration`: all ok. New: `TestSignMatchesGitHub` (GitHub's published test vector), `TestVerifyRejects` (15 cases), `TestParsePush` (15), `TestValidDelivery`, `TestLoadSecret`, `TestWebhookPush`, `TestWebhookIgnored` (6), `TestWebhookRejects` (13: each answer is problem+json, the sink and the audit table untouched, no payload or secret in the log), `TestWebhookNotConfigured`, `TestLoadAPIWebhookSecretFile`.
+- `TestPhase1ExitCriteria` (e2e): PASS (300 s). The real API, with the secret from its file, behind Caddy over HTTPS: a signed `ping` → 200 `pong`, a signed push → 202 `ignored`, a push signed with another secret → 401.
+- The rest of the e2e suite was not rerun: nothing it covers changed besides the harness's API environment.
+
+**Next**
+- P4.2: deliveries into `webhook_deliveries` (dedup on the delivery id) and the idempotent enqueue under `gh:<delivery-id>`; it needs P4.3's repository-to-app mapping to know which app a push deploys.
 
 ### 2026-10-01: P3.8 delete app
 

@@ -21,6 +21,7 @@ import (
 	"github.com/hami9/shipyard/internal/logging"
 	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
+	"github.com/hami9/shipyard/internal/webhook"
 	"github.com/hami9/shipyard/migrations"
 )
 
@@ -108,6 +109,12 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var hookSecret []byte
+	if cfg.WebhookSecretFile == "" {
+		log.Info("GitHub webhooks are off: POST /hooks/github answers 404", slog.String("env", config.EnvWebhookSecretFile))
+	} else if hookSecret, err = webhook.LoadSecret(cfg.WebhookSecretFile); err != nil {
+		return fmt.Errorf("load the GitHub webhook secret: %w", err)
+	}
 	s := store.New(db)
 	if cfg.Domains.Preflight && len(cfg.Domains.PublicIPs) == 0 {
 		log.Warn("adding domains is refused until the server's public IPs are set, or the DNS preflight is turned off",
@@ -118,7 +125,8 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes,
 			APIHostname: cfg.APIHostname},
 		// App logs come from the worker's socket, never from Docker (ADR-0008).
-		Logs: api.LogClient{Client: applogs.NewClient(cfg.WorkerSocket)}})
+		Logs:          api.LogClient{Client: applogs.NewClient(cfg.WorkerSocket)},
+		WebhookSecret: hookSecret})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
 }
 

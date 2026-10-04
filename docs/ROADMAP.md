@@ -188,7 +188,7 @@ flowchart LR
 
 **Goal:** a push to the tracked branch deploys automatically, safely, and exactly once.
 
-- [ ] **P4.1** `internal/webhook`:
+- [x] **P4.1** `internal/webhook` (the receiver is `POST /hooks/github` in the API; the secret is the file `SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE`; a verified push goes to a sink that P4.2 provides, until then it is answered `ignored`):
   - Read the raw body (≤ 25 MB) and verify `X-Hub-Signature-256` with `hmac.Equal` **before** parsing.
   - Respond 2XX in < 10 s. Accept only `push`, and ignore `deleted` pushes and other refs.
 - [ ] **P4.2** Delivery deduplication (`webhook_deliveries` primary key), with idempotent enqueue under the key `gh:<delivery-id>` and coalescing.

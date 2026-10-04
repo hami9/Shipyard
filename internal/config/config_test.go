@@ -190,6 +190,21 @@ func TestLoadWorker(t *testing.T) {
 	checkErr(t, err, "at least")
 }
 
+func TestLoadAPIWebhookSecretFile(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.WebhookSecretFile != "" {
+		t.Fatalf("default = %q, %v", cfg.WebhookSecretFile, err)
+	}
+	cfg, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvWebhookSecretFile: "/etc/shipyard/github-webhook.secret"}))
+	if err != nil || cfg.WebhookSecretFile != "/etc/shipyard/github-webhook.secret" {
+		t.Fatalf("set = %q, %v", cfg.WebhookSecretFile, err)
+	}
+	for _, bad := range []string{"secret", "/etc/shipyard/../secret", "/etc/shipyard/"} {
+		_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvWebhookSecretFile: bad}))
+		checkErr(t, err, EnvWebhookSecretFile)
+	}
+}
+
 func TestLoadAPIDomains(t *testing.T) {
 	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
 	if err != nil || !cfg.Domains.Preflight || cfg.Domains.PublicIPs != nil || cfg.Domains.Suffixes != nil {

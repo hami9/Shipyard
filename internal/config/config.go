@@ -71,6 +71,8 @@ const (
 	EnvPublicIPs          = "SHIPYARD_PUBLIC_IPS"
 	EnvDomainSuffixes     = "SHIPYARD_DOMAIN_SUFFIXES"
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
+	// EnvWebhookSecretFile names the file holding the GitHub webhook secret.
+	EnvWebhookSecretFile = "SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE"
 )
 
 // Defaults.
@@ -184,6 +186,9 @@ func (c Common) APISocket() string {
 type API struct {
 	Common
 	Domains Domains
+	// WebhookSecretFile holds the secret GitHub signs deliveries with
+	// (internal/webhook.LoadSecret). Empty turns POST /hooks/github off.
+	WebhookSecretFile string
 }
 
 // Domains is the policy for hostnames operators add (ADR-0003).
@@ -283,6 +288,11 @@ func LoadAPI(lookup LookupFunc) (API, error) {
 	r := reader{lookup: lookup}
 	cfg := API{Common: r.common()}
 	cfg.Domains = r.domains()
+	if p := r.str(EnvWebhookSecretFile, ""); p != "" && (!filepath.IsAbs(p) || filepath.Clean(p) != p) {
+		r.fail(EnvWebhookSecretFile, fmt.Errorf("%q must be a clean absolute path", p))
+	} else {
+		cfg.WebhookSecretFile = p
+	}
 	return cfg, r.err()
 }
 

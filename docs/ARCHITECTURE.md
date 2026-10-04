@@ -330,7 +330,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 | `shipyard domain add APP example.com` | `POST /v1/apps/{id}/domains` (`admin` scope): normalize, suffix allow-list, DNS preflight, then a `routes` row. 201; 409 if another app has the hostname; 422 for a bad name or DNS; 503 if the preflight cannot run. An app may have several hostnames |
 | `shipyard domain remove APP example.com` | `DELETE /v1/apps/{id}/domains/{hostname}` → 204 |
 | `shipyard domain list APP` | `GET /v1/apps/{id}/domains` (hostname, the deployment it targets, when DNS was checked) |
-| — | `POST /hooks/github` (public, HMAC-verified) |
+| — | `POST /hooks/github` (public, HMAC-verified; see §7 GitHub). 200 for `ping`, 202 with `{"delivery", "outcome", "reason"}` for any other verified delivery, 401 for a bad signature, 404 when no secret is configured |
 
 - **Routing and errors.** Standard-library routing (`GET /v1/apps/{id}`) is sufficient, so no router framework is needed `[GO-ROUTING]`. Errors use `application/problem+json` `[RFC9457]`.
 - **Environment changes.** A changed environment creates a new revision, which takes effect on the next deploy. Use `--redeploy` to apply it now.
@@ -389,6 +389,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 - Deduplicate on `X-GitHub-Delivery`.
 - Ignore pushes with `deleted: true`, pushes to other refs, and repositories not mapped to an app.
 - Answer within 10 s. The receiver only records and enqueues.
+- As implemented (P4.1, `internal/webhook` and `internal/api/webhook.go`):
+  - **Secret.** One secret for every webhook, in the file `SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE` (at least 16 bytes, not readable by other users, like the KEK files). Without it the endpoint answers 404.
+  - **Order of checks.** Size first (413 above 25 MB, by `Content-Length` and while reading; the body has 5 s to arrive). Then the signature over the raw bytes (401). Until it passes, a failure is logged only, with no database write and no payload in the log. Then `X-GitHub-Delivery` (400 unless it fits the `webhook_deliveries` column), the content type (415 unless `application/json`), and the payload (400 if it is not a well-formed push).
+  - **Events.** `ping` gets 200 `pong`. Any other event, a push that deleted its ref, and a push to a non-branch ref (tags) get 202 `ignored` with the reason.
+  - **Hand-off.** A push to a branch goes to the API's `PushSink` with a 3 s deadline; a failure there is a 503, so GitHub marks the delivery failed and it can be redelivered `[GH-REDELIVER]`. Until P4.2 there is no sink, and a push is answered `ignored`.
 - Use a GitHub App for private repositories. JWTs are RS256, `exp` ≤ 10 min, and `iat` −60 s `[GH-APP-JWT]`. Installation tokens are per operation and per repository `[GH-APP-TOKEN]`.
 
 **Builds** `[DK-BX-CONTAINER][DK-BX-BUILD][DK-BUILD-SECRETS]`
