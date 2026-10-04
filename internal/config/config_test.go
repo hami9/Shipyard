@@ -205,6 +205,23 @@ func TestLoadAPIWebhookSecretFile(t *testing.T) {
 	}
 }
 
+func TestLoadAPIRateLimits(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.Rate != 10 || cfg.Burst != 50 || cfg.AuthFailures != 10 {
+		t.Fatalf("defaults = %d/%d/%d, %v", cfg.Rate, cfg.Burst, cfg.AuthFailures, err)
+	}
+	cfg, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIRate: "0", EnvAPIBurst: "5", EnvAuthFailures: "0"}))
+	if err != nil || cfg.Rate != 0 || cfg.Burst != 5 || cfg.AuthFailures != 0 {
+		t.Fatalf("set = %d/%d/%d, %v", cfg.Rate, cfg.Burst, cfg.AuthFailures, err)
+	}
+	for _, tc := range []struct{ key, value string }{
+		{EnvAPIRate, "-1"}, {EnvAPIRate, "fast"}, {EnvAPIBurst, "0"}, {EnvAuthFailures, "100001"},
+	} {
+		_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+		checkErr(t, err, tc.key)
+	}
+}
+
 func TestLoadAPIDomains(t *testing.T) {
 	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
 	if err != nil || !cfg.Domains.Preflight || cfg.Domains.PublicIPs != nil || cfg.Domains.Suffixes != nil {

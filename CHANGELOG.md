@@ -72,6 +72,10 @@ All notable changes to Shipyard are recorded here.
   - At start, the worker replaces a builder that runs another image, including one created by an earlier Shipyard. The replacement also gets the builder network. The first build after the upgrade starts with an empty cache.
   - **Ubuntu 24.04 and later:** install `deploy/sysctl/60-shipyard-buildkit.conf` and run `sudo sysctl --system`, or builds fail.
 - **Namespaces:** the API, worker and backup units set `RestrictNamespaces=yes`. Reinstall the units from `deploy/systemd/`.
+- **API limits** (ADR-0011): the API now limits each client IP (IPv6 per /64) on every route except `/healthz` and `/readyz`.
+  - The limits are 10 requests per second with bursts of 50, and 10 failed authentications per 15 minutes.
+  - A client over a limit gets 429 with `Retry-After`. One out of authentication failures is refused even with a valid token until the window frees one.
+  - Tune with `SHIPYARD_API_RATE`, `SHIPYARD_API_BURST`, and `SHIPYARD_AUTH_FAILURES`; 0 turns one off.
 
 ### Removed
 

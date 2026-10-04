@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.2: rootless BuildKit for builds, the Docker daemon stays rootful (ADR-0010) |
-| **Next task** | P5.3: API rate limiting, auth-failure throttling, token revoke and rotate. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.3a: per-client API request limits and auth-failure throttling (ADR-0011) |
+| **Next task** | P5.3b: token rotate (server), `/v1/tokens` routes, and `shipyard token list`, `revoke`, `rotate` (ADR-0011). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-04 |
@@ -53,6 +53,45 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-04: P5.3a API limits
+
+- **Phase / task:** P5.3a: per-client API request limits and auth-failure throttling (P5.3 split in two: over 400 lines with the token commands)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Owner's choices** (2026-10-04): the proposed defaults (10 req/s, burst 50, 10 auth failures per 15 min); token commands on the server *and* through the API and CLI (P5.3b).
+- **[ADR-0011](adr/0011-api-limits-and-token-management.md)** covers both parts.
+- **`internal/api/ratelimit.go`:**
+  - Token buckets per client: one for requests, one for 401s.
+  - It wraps the mux inside the request-ID and access-log middleware, so 429s are logged with an ID.
+  - It skips `/healthz` and `/readyz`.
+- **Client key:**
+  - the last `X-Forwarded-For` entry (Caddy sets it and ignores the client's: `[CADDY-RP]`), IPv6 per /64;
+  - otherwise the peer address, or `local` for a Unix-socket peer.
+- **Memory:** bounded at 10,000 clients, with refilled ones swept first and an overflow bucket after that.
+- **Config:** `SHIPYARD_API_RATE`, `SHIPYARD_API_BURST`, `SHIPYARD_AUTH_FAILURES` (0 turns a limit off), in `shipyard.env.example`.
+- **Docs:** ARCHITECTURE §7, SOURCES (`RFC6585`, `RFC9110-RETRY`, `CADDY-IMAGE` modules), ROADMAP split, CHANGELOG.
+
+**Decisions**
+- **Count every 401** (bad or missing token, bad webhook signature), and refuse a throttled client before the token lookup, so a flood never reaches PostgreSQL.
+- **Standard library only:** `golang.org/x/time/rate` would still leave the per-key map and its eviction to us.
+
+**Verification**
+- `make lint`, `make test` (race), `make test-integration`: exit 0. New unit tests:
+  - `TestRateLimitRequests`: burst, then 429 with `Retry-After: 1` and problem+json; another client unaffected; `/healthz` exempt; a refill after 500 ms at 2/s;
+  - `TestRateLimitAuthFailures`: after 3 bad tokens even a valid one gets 429 with `Retry-After: 60` and never reaches the token store; logged once; a minute later allowed;
+  - `TestRateLimitMissingCredentialsCount`, `TestRateLimitOff`;
+  - `TestClientKey`: 11 cases (last header and entry win, IPv6 /64, IPv4-mapped, zone, bad header, Unix peer);
+  - `TestRateLimitBoundedClients`: 10,000 + overflow, swept when refilled;
+  - `TestLoadAPIRateLimits`.
+- `caddy list-modules` in the pinned Caddy image: 132 standard modules, none for rate limiting.
+- `go test -tags e2e -run TestPhase1ExitCriteria ./test/e2e` with the default limits on: PASS, 509.4 s; no leftovers.
+  - A first attempt was cut off when the WSL VM powered off mid-run ("The system will power off now!" in the journal; the host had slept).
+  - With the owner's approval, I removed what it left: 3 containers, the e2e builder, and the e2e networks. I then reran it with keep-awake on.
+
+**Next**
+- P5.3b: `shipyard-api token rotate PREFIX [--grace D]`, `GET /v1/tokens`, `DELETE /v1/tokens/{prefix}`, `POST /v1/tokens/self/rotate`, and `shipyard token list|revoke|rotate`.
 
 ### 2026-10-04: P5.2 rootless BuildKit
 

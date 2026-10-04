@@ -214,7 +214,9 @@ flowchart LR
 
 - [x] **P5.1** Builder egress control: evaluate a proxy or allow-list, then implement it or record an explicit deferral in an ADR. Deferred ([ADR-0009](adr/0009-builder-egress-deferred.md), the owner's choice 2026-10-04); the builder now has a network of its own.
 - [x] **P5.2** Rootless Docker and stronger build isolation: evaluation ADR. [ADR-0010](adr/0010-rootless-buildkit.md), the owner's choice 2026-10-04: builds run on rootless BuildKit, and the Docker daemon stays rootful.
-- [ ] **P5.3** API rate limiting, auth-failure throttling, and token revoke and rotate commands.
+- [ ] **P5.3** API rate limiting, auth-failure throttling, and token revoke and rotate commands ([ADR-0011](adr/0011-api-limits-and-token-management.md)). Split into:
+  - [x] **P5.3a** Per-client request limits and auth-failure throttling (429 with `Retry-After`).
+  - [ ] **P5.3b** `shipyard-api token rotate`, plus `GET /v1/tokens`, `DELETE /v1/tokens/{prefix}`, `POST /v1/tokens/self/rotate`, and `shipyard token list|revoke|rotate`.
 - [ ] **P5.4** KEK rotation command with a test, and an evaluation of asymmetric sealing so the API cannot decrypt.
 - [ ] **P5.5** Prometheus metrics on an internal listener: deploy duration, failure rate, queue depth, and health.
 - [ ] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold).

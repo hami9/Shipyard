@@ -379,6 +379,13 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   - The first token is created on the server with `shipyard-api token create`. Tokens are revoked with `shipyard-api token revoke <prefix>`.
   - Unknown, expired, revoked, and malformed tokens get the same 401, so a client cannot tell them apart.
 - Every authenticated mutation, whether allowed or denied, writes an audit event naming the token prefix, the route, and the path. Anonymous failures are logged only, so they cannot fill the audit table.
+- **Limits per client** (P5.3, [ADR-0011](adr/0011-api-limits-and-token-management.md)) `[RFC6585][RFC9110-RETRY]`:
+  - **Scope:** every route except `/healthz` and `/readyz`.
+  - **Requests:** a token bucket of `SHIPYARD_API_RATE` per second (default 10), with bursts of `SHIPYARD_API_BURST` (50).
+  - **Authentication failures:** every 401 (bad or missing token, bad webhook signature) costs one of `SHIPYARD_AUTH_FAILURES` (10) per 15 minutes. A client without any left gets 429 for every request, before any token lookup, until the window frees one.
+  - **Response:** 429 with `Retry-After` in seconds and a problem+json body. A client running out of authentication failures is logged once each time.
+  - **Client identity:** the API sits behind Caddy, which ignores client-sent `X-Forwarded-For` and sets it to the client's address `[CADDY-RP]`, so the header's last entry is the client. IPv6 counts per /64. Requests without the header (local CLI over the socket) share the key `local`.
+  - **State:** in memory, at most 10,000 clients. Fully refilled clients are dropped first; beyond that, new clients share one bucket. An API restart resets everything.
 - The API listens on localhost or a Unix socket and is exposed only through Caddy over TLS.
   - As implemented (P2.8, ADR-0003 note):
     - **Listen.** Any other listen address is refused, and no override exists.

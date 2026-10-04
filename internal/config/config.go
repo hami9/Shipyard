@@ -73,6 +73,10 @@ const (
 	EnvDNSPreflight       = "SHIPYARD_DNS_PREFLIGHT"
 	// EnvWebhookSecretFile names the file holding the GitHub webhook secret.
 	EnvWebhookSecretFile = "SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE"
+	// P5.3: per-client limits of the API; 0 turns one off.
+	EnvAPIRate      = "SHIPYARD_API_RATE"
+	EnvAPIBurst     = "SHIPYARD_API_BURST"
+	EnvAuthFailures = "SHIPYARD_AUTH_FAILURES"
 	// The worker's GitHub App (P4.4).
 	EnvGitHubAppID      = "SHIPYARD_GITHUB_APP_ID"
 	EnvGitHubAppKeyFile = "SHIPYARD_GITHUB_APP_KEY_FILE"
@@ -120,6 +124,11 @@ const (
 	// DefaultCatchUpInterval is how often branch heads are compared with
 	// what auto-deploy apps have tried (P4.5): one ls-remote per app.
 	DefaultCatchUpInterval = 5 * time.Minute
+	// P5.3: per client, 10 requests per second with bursts of 50, and 10
+	// failed authentications per 15 minutes.
+	DefaultAPIRate      = 10
+	DefaultAPIBurst     = 50
+	DefaultAuthFailures = 10
 	// ADR-0006: backups go to two separate targets, A (the database and
 	// Caddy's data) and B (the KEKs); A keeps 14 dailies and 8 weeklies.
 	DefaultBackupDir        = "/var/backups/shipyard"
@@ -200,6 +209,9 @@ type API struct {
 	// WebhookSecretFile holds the secret GitHub signs deliveries with
 	// (internal/webhook.LoadSecret). Empty turns POST /hooks/github off.
 	WebhookSecretFile string
+	// Per client: requests per second and burst, and failed
+	// authentications per 15 minutes (P5.3). Zero turns a limit off.
+	Rate, Burst, AuthFailures int
 }
 
 // Domains is the policy for hostnames operators add (ADR-0003).
@@ -317,6 +329,9 @@ func LoadAPI(lookup LookupFunc) (API, error) {
 	} else {
 		cfg.WebhookSecretFile = p
 	}
+	cfg.Rate = r.intRange(EnvAPIRate, DefaultAPIRate, 0, 100_000)
+	cfg.Burst = r.intRange(EnvAPIBurst, DefaultAPIBurst, 1, 100_000)
+	cfg.AuthFailures = r.intRange(EnvAuthFailures, DefaultAuthFailures, 0, 100_000)
 	return cfg, r.err()
 }
 

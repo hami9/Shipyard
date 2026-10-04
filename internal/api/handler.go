@@ -39,11 +39,15 @@ type Deps struct {
 	// Pushes receives the verified pushes; nil ignores them.
 	WebhookSecret []byte
 	Pushes        PushSink
+	// Limits caps requests and failed authentications per client; the
+	// zero value turns both off.
+	Limits RateLimits
 }
 
 // NewHandler returns the root handler with middleware applied. Health
 // endpoints are public, /hooks/github verifies its own signature, and every
-// /v1 route goes through auth.protect.
+// /v1 route goes through auth.protect. Everything but the health endpoints
+// is rate limited per client (d.Limits).
 func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	auth := &authenticator{log: log, tokens: d.Tokens, audit: d.Audit}
 	route := func(mux *http.ServeMux, pattern, scope string, h http.HandlerFunc) {
@@ -85,7 +89,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "POST /v1/apps/{app}/rollbacks", ScopeDeploy, ops.rollback)
 	route(mux, "GET /v1/operations/{id}", ScopeRead, ops.get)
 	route(mux, "GET /v1/operations/{id}/events", ScopeRead, ops.events)
-	return withRequestID(withAccessLog(log, mux))
+	return withRequestID(withAccessLog(log, newLimiter(log, d.Limits).limit(mux)))
 }
 
 // handleWhoami describes the calling token, so the CLI can check its

@@ -18,3 +18,4 @@ An ADR records one significant decision: its context, the choice made, and its c
 | [0008](0008-worker-log-socket.md) | App logs through a worker log socket | Accepted |
 | [0009](0009-builder-egress-deferred.md) | Builder egress control deferred; the builder gets its own network | Accepted |
 | [0010](0010-rootless-buildkit.md) | Rootless BuildKit for builds; the Docker daemon stays rootful | Accepted |
+| [0011](0011-api-limits-and-token-management.md) | Per-client API limits, and token rotation and revocation without SSH | Accepted |
