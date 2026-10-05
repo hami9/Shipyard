@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-04
 - **Deciders:** Project owner (option chosen 2026-10-04), Claude Code (evaluation)
-- **Sources:** `DK-BX-CONTAINER`, `DK-PREDEF-ARGS`, `DK-NET-INTERNAL`, `DK-26-DNS`, `BK-PROXY-NETWORK`
+- **Sources:** `DK-BX-CONTAINER`, `DK-PREDEF-ARGS`, `DK-NET-INTERNAL`, `DK-26-DNS`, `BK-PROXY-NETWORK`; P5.7a: `DK-BRIDGE`, `DK-IPTABLES`, `DK-NFTABLES`, `NF-CHAINS`
 
 ## Context
 
@@ -28,6 +28,19 @@
   - deny the link-local metadata address `169.254.169.254`;
   - deny the host's own services except what builds need (none by default).
   - Until P5.7, the operator guide says to do this by hand.
+  - **Amended 2026-10-05 (P5.7a, the owner's choice):** the rules match the bridge's interface name, not its subnet. See "As implemented" below.
+
+### As implemented (P5.7a)
+
+- **A fixed bridge name.** The worker creates `<builder>-build` with `com.docker.network.bridge.name=sybuild-<7 hex digits of the SHA-256 of the builder's name>` `[DK-BRIDGE]`.
+  - Linux interface names have at most 15 bytes. Observed on Engine 29.8.1: 15 works, and 16 fails with "numerical result out of range".
+  - A network without that name, from before this change, is removed with its builder and created again.
+- **The rules** (`deploy/firewall/shipyard-firewall.sh`, run by `shipyard-firewall.service` after Docker and on each Docker restart). They match `-i sybuild-+`, so they never go stale when a network is recreated with another subnet.
+  - **To the host:** traffic for a local address goes through INPUT, not FORWARD `[NF-CHAINS]`. Chain `SHIPYARD-BUILD-IN` is jumped to first from INPUT. It allows replies to connections the host opened and drops everything else: every host service, on every address, including the bridge gateway.
+  - **Forwarded:** chain `SHIPYARD-BUILD-FWD` is jumped to from DOCKER-USER, which Docker evaluates before its own rules `[DK-IPTABLES]`. It drops `169.254.0.0/16` (cloud metadata and the rest of link-local) and, for IPv6, AWS's `fd00:ec2::254`. Everything else, the internet included, passes.
+  - **Idempotent:** `apply` refills Shipyard's own chains and adds each jump once. `remove` takes all of it away.
+  - **Backends:** the script refuses Docker's nftables firewall backend, which is experimental in 29.x and has no DOCKER-USER chain `[DK-NFTABLES]`.
+- The worker's unit starts after the firewall unit, so no build runs unfiltered at boot.
 - **Revisit when** any of these happens:
   - Shipyard accepts repositories the admin does not control: multi-user (P7.1), or webhook-registered repositories.
   - An app needs builds without internet access.

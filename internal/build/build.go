@@ -8,6 +8,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,22 +115,51 @@ func (b *Builder) container() string { return "buildx_buildkit_" + b.name() + "0
 
 // Network is the bridge network the builder's container joins instead of
 // Docker's default bridge (ADR-0009). Nothing else is on it, so a build
-// cannot reach other containers by address; its label lets the installer
-// find its subnet, to block cloud metadata and host services.
+// cannot reach other containers by address; its bridge's fixed name lets
+// the host firewall block cloud metadata and host services
+// (deploy/firewall).
 func (b *Builder) Network() string { return b.name() + "-build" }
 
 // NetworkLabel marks the builder's network.
 const NetworkLabel = "io.shipyard.role=build"
 
+// BridgePrefix starts the Linux interface name of every builder network's
+// bridge, so firewall rules match them all as "sybuild-+" (ADR-0009).
+const BridgePrefix = "sybuild-"
+
+// bridgeOption names a bridge network's interface [DK-BRIDGE].
+const bridgeOption = "com.docker.network.bridge.name"
+
+// Bridge is the Linux interface of Network: BridgePrefix and 7 hex digits
+// of the SHA-256 of the builder's name. Interface names have at most 15
+// bytes [DK-BRIDGE], too few for the name itself.
+func (b *Builder) Bridge() string {
+	sum := sha256.Sum256([]byte(b.name()))
+	return BridgePrefix + hex.EncodeToString(sum[:])[:7]
+}
+
 // Ensure creates the builder's network and the builder if they are missing,
 // and starts the builder. A builder running another image (one an older
 // Shipyard created, or a different Image) is removed and created again, with
-// the network and limits; its cache goes with it (ADR-0010). Otherwise limits
-// and the network apply only when the builder is created.
+// the network and limits; its cache goes with it (ADR-0010). So is a network
+// without the fixed bridge name, which predates the firewall (P5.7a), with
+// its builder. Otherwise limits and the network apply only when the builder
+// is created.
 func (b *Builder) Ensure(ctx context.Context, l Limits) error {
-	if _, err := b.run(ctx, "network", "inspect", "--format", "{{.Name}}", b.Network()); err != nil {
+	bridge, err := b.run(ctx, "network", "inspect", "--format", `{{index .Options "`+bridgeOption+`"}}`, b.Network())
+	if err == nil && bridge != b.Bridge() {
+		if _, err := b.run(ctx, "buildx", "inspect", b.name()); err == nil {
+			if _, err := b.run(ctx, "buildx", "rm", "--force", b.name()); err != nil {
+				return fmt.Errorf("replace builder %s (network without a fixed bridge): %w", b.name(), err)
+			}
+		}
+		if _, err := b.run(ctx, "network", "rm", b.Network()); err != nil {
+			return fmt.Errorf("replace builder network %s: %w", b.Network(), err)
+		}
+	}
+	if err != nil || bridge != b.Bridge() {
 		if _, err := b.run(ctx, "network", "create", "--driver", "bridge", "--label", NetworkLabel,
-			"--label", "io.shipyard.builder="+b.name(), b.Network()); err != nil {
+			"--label", "io.shipyard.builder="+b.name(), "--opt", bridgeOption+"="+b.Bridge(), b.Network()); err != nil {
 			return fmt.Errorf("create builder network %s: %w", b.Network(), err)
 		}
 	}

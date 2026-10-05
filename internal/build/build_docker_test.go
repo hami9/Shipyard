@@ -84,6 +84,14 @@ func TestBuilderNetwork(t *testing.T) {
 	if got := dockerOut(t, "network", "inspect", "--format", `{{index .Labels "io.shipyard.role"}} {{.Driver}} {{.Internal}}`, b.Network()); got != "build bridge false" {
 		t.Fatalf("network = %q", got)
 	}
+	// P5.7a: the bridge has the fixed name the host firewall matches.
+	if got := dockerOut(t, "network", "inspect", "--format", `{{index .Options "com.docker.network.bridge.name"}}`, b.Network()); got != b.Bridge() ||
+		!strings.HasPrefix(got, BridgePrefix) || len(got) != 15 {
+		t.Fatalf("bridge name = %q, want %s", got, b.Bridge())
+	}
+	if exec.Command("ip", "link", "show", b.Bridge()).Run() != nil {
+		t.Fatalf("no interface %s on the host", b.Bridge())
+	}
 	if err := b.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +163,28 @@ func TestBuilderReplacesOtherImage(t *testing.T) {
 	}
 	if got := dockerOut(t, "inspect", "--format", "{{.Id}}", container); got != id {
 		t.Fatal("Ensure replaced a builder whose image already matched")
+	}
+}
+
+// P5.7a: a builder network from before the fixed bridge name is replaced,
+// with its builder, by one the firewall rules match.
+func TestBuilderReplacesUnnamedNetwork(t *testing.T) {
+	b := &Builder{Name: "shipyard-test-" + strings.ToLower(rand.Text()[:8])}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		b.Remove(ctx)
+	})
+	dockerOut(t, "network", "create", "--driver", "bridge", "--label", NetworkLabel, b.Network())
+	if err := b.Ensure(t.Context(), Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := dockerOut(t, "network", "inspect", "--format", `{{index .Options "com.docker.network.bridge.name"}}`, b.Network()); got != b.Bridge() {
+		t.Fatalf("bridge name = %q, want %s", got, b.Bridge())
+	}
+	container := "buildx_buildkit_" + b.Name + "0"
+	if got := dockerOut(t, "inspect", "--format", "{{.HostConfig.NetworkMode}}", container); got != b.Network() {
+		t.Fatalf("builder network = %q", got)
 	}
 }
 

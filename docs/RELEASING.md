@@ -9,7 +9,7 @@ Releases are cut by pushing a `vX.Y.Z` tag. [`.github/workflows/release.yml`](..
 | Artifact | Platforms | Contents |
 | --- | --- | --- |
 | `shipyard_<ver>_<os>_<arch>` | Linux, macOS, Windows × amd64, arm64 | CLI, LICENSE, NOTICE, README, CHANGELOG |
-| `shipyard-server_<ver>_linux_<arch>.tar.gz` | Linux amd64, arm64 | `shipyard-api`, `shipyard-worker`, and `deploy/` (systemd units, `daemon.json`, Caddy bootstrap, env example) |
+| `shipyard-server_<ver>_linux_<arch>.tar.gz` | Linux amd64, arm64 | `shipyard-api`, `shipyard-worker`, and `deploy/` (systemd units, `daemon.json`, Caddy bootstrap, env example, sysctl, firewall script, Prometheus rules) |
 | `checksums.txt` | — | SHA-256 of every archive |
 | Build provenance attestation | — | Signed SLSA provenance for every archive `[GH-ATTEST]` |
 | `ghcr.io/hami9/shipyard:v<ver>` (and `:latest` for stable releases) | linux/amd64, linux/arm64 | All three binaries on distroless `static:nonroot` `[GHCR]` |

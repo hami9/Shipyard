@@ -440,7 +440,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 - Enforce a per-build deadline and a bounded log size.
 - Never pass credentials as build args or environment variables.
 - Leave builder network access on in the MVP, because most builds download dependencies. Egress restriction is a Phase 5 hardening item.
-  - Decided in P5.1 ([ADR-0009](adr/0009-builder-egress-deferred.md)): egress control stays deferred under the trusted-repositories model. The builder's container is on a bridge network of its own, `<builder>-build`, labelled `io.shipyard.role=build`, not on Docker's default bridge. P5.7's installer firewalls that subnet from the metadata address and host services.
+  - Decided in P5.1 ([ADR-0009](adr/0009-builder-egress-deferred.md)): egress control stays deferred under the trusted-repositories model. The builder's container is on a bridge network of its own, `<builder>-build`, labelled `io.shipyard.role=build`, not on Docker's default bridge.
+    - **Firewall (P5.7a).** Its bridge interface is named `sybuild-<7 hex>`. `shipyard-firewall.service` (`deploy/firewall/shipyard-firewall.sh`) matches `-i sybuild-+` and does two things:
+      - it drops traffic to the host itself (INPUT, except replies) `[NF-CHAINS]`;
+      - it drops link-local destinations such as cloud metadata (DOCKER-USER) `[DK-IPTABLES]`.
+      - Docker's iptables backend only `[DK-NFTABLES]`.
 - Run BuildKit rootless ([ADR-0010](adr/0010-rootless-buildkit.md)) `[BK-ROOTLESS][BX-PRIVILEGED]`:
   - The builder image is `moby/buildkit:v0.33.1-rootless`, pinned by digest (`build.DefaultImage`). buildkitd runs as uid 1000, and a build step's root maps to host uid 1000 (other IDs to 100000+), not to host root.
   - buildx still makes the container privileged.

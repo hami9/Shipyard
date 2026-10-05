@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+// P5.7a: every builder's bridge is a valid interface name (at most 15
+// bytes) that the firewall's "sybuild-+" matches, and distinct per builder.
+func TestBridge(t *testing.T) {
+	seen := map[string]bool{}
+	for _, name := range []string{"shipyard", "shipyard-e2e-abcdefgh", strings.Repeat("x", 200)} {
+		br := (&Builder{Name: name}).Bridge()
+		if len(br) != 15 || !strings.HasPrefix(br, BridgePrefix) || seen[br] {
+			t.Errorf("Bridge(%q) = %q", name, br)
+		}
+		seen[br] = true
+	}
+	if (&Builder{}).Bridge() != (&Builder{Name: DefaultBuilder}).Bridge() {
+		t.Error("the default builder's bridge depends on how it is named")
+	}
+}
+
 func TestBoundedLog(t *testing.T) {
 	var got []string
 	l := newBoundedLog(100, func(s string) { got = append(got, s) })

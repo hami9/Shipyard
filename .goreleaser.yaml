@@ -67,6 +67,14 @@ archives:
         dst: deploy/docker
       - src: deploy/caddy/*
         dst: deploy/caddy
+      - src: deploy/sysctl/*
+        dst: deploy/sysctl
+      - src: deploy/prometheus/*
+        dst: deploy/prometheus
+      - src: deploy/firewall/*
+        dst: deploy/firewall
+        info:
+          mode: 0755
       - deploy/shipyard.env.example
       - deploy/README.md
 

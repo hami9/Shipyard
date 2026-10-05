@@ -11,6 +11,8 @@ All notable changes to Shipyard are recorded here.
 
 ### Added
 
+- **Build network firewall** (ADR-0009): `shipyard-firewall.service` runs `deploy/firewall/shipyard-firewall.sh`, which stops builds from reaching the host's own services or cloud metadata (`169.254.0.0/16`) while keeping internet access. It needs Docker's default iptables firewall backend.
+  - The builder's network now has a fixed bridge name (`sybuild-…`). An existing build network and its builder are recreated once at the worker's next start, and the build cache goes with them.
 - **Disk and certificate checks** (ADR-0014): every `SHIPYARD_CHECK_INTERVAL` (default 5m), the worker checks two things. It warns once in its log when either passes 80%, or when Caddy presents no certificate.
   - **Disks:** the filesystems of Docker's data root, the work directory, and the backup directory.
   - **Certificates:** the one Caddy serves for each hostname.
