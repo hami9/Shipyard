@@ -557,6 +557,13 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 
 - Emit structured logs (`log/slog`) that carry `request_id`, `operation_id`, `app`, and `deployment_id`.
 - Expose Prometheus metrics on an internal listener: deployment duration, failure rate, health state, queue depth, disk usage, and certificate expiry.
+  - As implemented (P5.5a, ADR-0013): `internal/metrics` writes the text format `[PROM-TEXT]` without a client library.
+    - The worker serves `GET /metrics` on `SHIPYARD_WORKER_METRICS_LISTEN`, a loopback `host:port`, off by default.
+    - Each scrape reads PostgreSQL:
+      - finished operations by kind and result, with their durations (`shipyard_operations_total`, `shipyard_operation_duration_seconds`), counted once each through a cursor on `finished_at`;
+      - the queue (`shipyard_queue_operations`, `shipyard_queue_oldest_wait_seconds`);
+      - `shipyard_database_up`.
+    - App health and the API's 429s follow in P5.5b.
 
 ## 8. Repository layout
 

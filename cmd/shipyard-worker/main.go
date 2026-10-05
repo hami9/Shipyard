@@ -28,6 +28,7 @@ import (
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/github"
 	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/metrics"
 	"github.com/hami9/shipyard/internal/queue"
 	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/routing"
@@ -257,6 +258,17 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 
 	s := store.New(db)
+	if cfg.MetricsListen != "" {
+		reg := &metrics.Registry{}
+		if _, err := newWorkerMetrics(ctx, s, reg, log); err != nil {
+			return fmt.Errorf("metrics: %w", err)
+		}
+		srv, err := serveMetrics(cfg.MetricsListen, reg, log)
+		if err != nil {
+			return fmt.Errorf("metrics listener: %w", err)
+		}
+		defer srv.Close()
+	}
 	if err := ensureEdge(ctx, cfg, rt, log); err != nil {
 		return err
 	}

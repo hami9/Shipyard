@@ -440,6 +440,19 @@ func TestLoadWorkerCatchUpInterval(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerMetricsListen(t *testing.T) {
+	for value, want := range map[string]string{"": "", "127.0.0.1:9187": "127.0.0.1:9187", "[::1]:9187": "[::1]:9187", "localhost:9187": "localhost:9187"} {
+		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: value}))
+		if err != nil || cfg.MetricsListen != want {
+			t.Errorf("%q: %q, %v", value, cfg.MetricsListen, err)
+		}
+	}
+	for _, bad := range []string{"0.0.0.0:9187", ":9187", "192.0.2.1:9187", "127.0.0.1", "127.0.0.1:0", "127.0.0.1:x", "unix:/run/m.sock"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: bad}))
+		checkErr(t, err, EnvWorkerMetricsListen)
+	}
+}
+
 func TestLoadWorkerRetainImages(t *testing.T) {
 	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
 		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))

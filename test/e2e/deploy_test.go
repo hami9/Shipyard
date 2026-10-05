@@ -53,6 +53,11 @@ func TestPhase1ExitCriteria(t *testing.T) {
 		t.Fatalf("replay:\n%s", out)
 	}
 	h.wantOp(op1, "succeeded", "")
+	// P5.5: the worker's metrics count the deploy.
+	if m := get(t, "http://"+h.metrics+"/metrics"); !strings.Contains(m, `shipyard_operations_total{kind="deploy",result="succeeded"} 1`+"\n") ||
+		!strings.Contains(m, "shipyard_database_up 1\n") {
+		t.Fatalf("worker metrics:\n%s", m)
+	}
 	// ADR-0009: the build ran on a builder that is on its own network only.
 	if net := (&build.Builder{Name: h.builder}).Network(); h.docker("inspect", "--format", "{{.HostConfig.NetworkMode}}", "buildx_buildkit_"+h.builder+"0") != net {
 		t.Fatalf("the builder is not on %s", net)
@@ -491,6 +496,9 @@ type harness struct {
 	apiEnv              []string
 	apiSock, builder    string
 	stopAPI, stopWorker func()
+
+	// metrics is the worker's Prometheus listener (P5.5).
+	metrics string
 }
 
 type repo struct{ good, offBranch string }
@@ -571,7 +579,8 @@ func start(t *testing.T) *harness {
 	h.stopAPI = h.spawn("api", h.apiEnv, "shipyard-api", "serve").stop
 	waitUnix(t, apiSock)
 	h.kek = kek
-	h.workerEnv = append(common, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
+	h.metrics = freePort(t)
+	h.workerEnv = append(common, "SHIPYARD_WORKER_METRICS_LISTEN="+h.metrics, "SHIPYARD_WORK_DIR="+filepath.Join(tmp, "work"), "SHIPYARD_SOURCE_BASE_URL="+gitURL,
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
@@ -1064,6 +1073,17 @@ func (h *harness) callViaCaddy(method, path, body string, header map[string]stri
 	}
 	h.t.Fatalf("https://%s%s through caddy: %v", apiHost, path, last)
 	return nil, ""
+}
+
+// freePort returns a loopback address with a port that was free just now.
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().String()
 }
 
 func get(t *testing.T, url string) string {

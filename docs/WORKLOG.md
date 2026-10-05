@@ -8,12 +8,12 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.4: KEK rotation (P5.4a) and HPKE KEKs so the API cannot decrypt (P5.4b), ADR-0012 |
-| **Next task** | P5.5: Prometheus metrics on an internal listener. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.5a: worker Prometheus metrics (operations, durations, queue), ADR-0013 |
+| **Next task** | P5.5b: app health metrics from the reconciler, and the API's metrics listener (429s). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
-| **Last updated** | 2026-10-04 |
+| **Last updated** | 2026-10-05 |
 
 ## Entry template
 
@@ -53,6 +53,38 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-05: P5.5a worker metrics
+
+- **Phase / task:** P5.5a: Prometheus metrics on an internal listener, worker part (P5.5 split: P5.5b adds app health and the API's 429s)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`internal/metrics`:** counters, gauges, and histograms with fixed labels, written in the text format 0.0.4 `[PROM-TEXT]`. `GET /metrics` only. No dependency.
+- **Worker:** `SHIPYARD_WORKER_METRICS_LISTEN` takes a loopback `host:port` and is off by default. Each scrape reads PostgreSQL with a 5 s limit:
+  - `shipyard_operations_total{kind,result}` and `shipyard_operation_duration_seconds{kind,result}`: a cursor on `finished_at`, starting at the newest finish when the worker starts, re-reads one minute back so a late commit is still counted, and dedupes by ID;
+  - `shipyard_queue_operations{status}` and `shipyard_queue_oldest_wait_seconds`;
+  - `shipyard_database_up` (on failure: 0, and the queue gauges are dropped);
+  - `shipyard_build_info`.
+- **Store:** `QueueStats`, `FinishedOperations`, `LastFinished`.
+- **Docs:** ADR-0013, SOURCES (`PROM-TEXT`, `PROM-PORTS`), ARCHITECTURE, ROADMAP (P5.5 split), CHANGELOG, env example.
+
+**Decisions**
+- **Conventional options, chosen without asking (CLAUDE.md §10):** no client library; metrics read from the database rather than counted on each code path; loopback only; no default port. ADR-0013 lists the alternatives for the owner to revisit.
+
+**Verification**
+- `make lint` and `go test -race ./...`: exit 0.
+- **New unit tests:**
+  - `TestExposition`, `TestGaugeResetAndScrape`, `TestFormatFloat`, `TestRegistryRejects` (8 cases), `TestHandler`;
+  - `TestWorkerMetrics`: nothing from before the start, a late commit counted, no double count, database down;
+  - `TestWorkerMetricsPages`: 2005 operations over three pages, counted once;
+  - `TestLoadWorkerMetricsListen`.
+- **Integration:** `TestQueueStatsAndFinished`: ok. The first attempt timed out creating its database while the dev PostgreSQL was restarting; the rerun passed.
+- `go test -tags e2e -run TestPhase1ExitCriteria`: PASS, 391.5 s; no leftovers. It now scrapes the worker after the first deploy: `shipyard_operations_total{kind="deploy",result="succeeded"} 1` and `shipyard_database_up 1`.
+- **Not run:** `TestRestoreDrill` and `TestCrashSafety`; the restarted workers there reuse the same metrics port.
+
+**Next**
+- P5.5b: app health from the reconciler, and the API's metrics listener.
 
 ### 2026-10-04: P5.4b HPKE KEKs
 

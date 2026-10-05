@@ -82,6 +82,8 @@ const (
 	EnvGitHubAppKeyFile = "SHIPYARD_GITHUB_APP_KEY_FILE"
 	EnvGitHubAPIURL     = "SHIPYARD_GITHUB_API_URL"
 	EnvCatchUpInterval  = "SHIPYARD_CATCHUP_INTERVAL"
+	// P5.5: the worker's Prometheus metrics, loopback host:port; empty is off.
+	EnvWorkerMetricsListen = "SHIPYARD_WORKER_METRICS_LISTEN"
 )
 
 // Defaults.
@@ -271,6 +273,9 @@ type Worker struct {
 	Caddy         Caddy
 	Backup        Backup
 	GitHub        GitHub
+	// MetricsListen is where Prometheus metrics are served: a loopback
+	// host:port, or "" for none (ADR-0013).
+	MetricsListen string
 }
 
 // GitHub is the GitHub App the worker fetches private repositories with
@@ -451,6 +456,11 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 			r.fail(EnvBuilderCPUs, fmt.Errorf("%q must be a number of CPUs between 0.01 and 1024", s))
 		} else {
 			cfg.BuilderCPUs = cpus
+		}
+	}
+	if cfg.MetricsListen = r.str(EnvWorkerMetricsListen, ""); cfg.MetricsListen != "" {
+		if err := validateMetricsListen(cfg.MetricsListen); err != nil {
+			r.fail(EnvWorkerMetricsListen, err)
 		}
 	}
 	return cfg, r.err()
@@ -650,6 +660,22 @@ func validateListen(addr string) error {
 		return nil
 	}
 	return fmt.Errorf("%q is not a loopback address; the API is published through Caddy (%s), never directly", addr, EnvAPIHostname)
+}
+
+// validateMetricsListen allows a loopback host:port only: metrics carry app
+// names and have no authentication (ADR-0013).
+func validateMetricsListen(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("want a loopback host:port: %w", err)
+	}
+	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+		return fmt.Errorf("invalid port %q", port)
+	}
+	if !isLoopback(host) {
+		return fmt.Errorf("%q is not a loopback address; metrics have no authentication", addr)
+	}
+	return nil
 }
 
 // reader accumulates every validation error so operators can fix the whole
