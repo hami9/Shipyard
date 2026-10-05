@@ -221,6 +221,19 @@ func New() (*Runtime, error) {
 
 func (r *Runtime) Close() error { return r.cli.Close() }
 
+// DockerRootDir is the Engine's data root, where images, the build cache,
+// container logs and volumes live (P5.6 watches its disk).
+func (r *Runtime) DockerRootDir(ctx context.Context) (string, error) {
+	got, err := r.cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return "", fmt.Errorf("docker info: %w", wrap(err))
+	}
+	if got.Info.DockerRootDir == "" {
+		return "", errors.New("docker info reports no data root")
+	}
+	return got.Info.DockerRootDir, nil
+}
+
 // EnsureNetwork creates the app's bridge network if it is missing and returns
 // its ID. An existing network with that name is used only if Shipyard created
 // it for this app.

@@ -565,6 +565,11 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
       - `shipyard_database_up`.
     - App health (P5.5b): after the restore step, each reconcile pass inspects every active container and makes one GET of its health path (`shipyard_app_up`, `shipyard_app_healthy`). This is information only; a failed probe changes nothing.
   - The API serves its own `GET /metrics` on `SHIPYARD_API_METRICS_LISTEN` (P5.5b): answers by status class, and 429s by reason (ADR-0011).
+- Watch disks and certificates (P5.6, ADR-0014). Every `SHIPYARD_CHECK_INTERVAL` (5 minutes), the worker checks:
+  - the filesystems of Docker's data root, the work directory and the backup directory (`statfs`);
+  - the certificate Caddy presents for each routed hostname and the API hostname (a TLS handshake with SNI to its published 443).
+  - Past 80% of a disk, or 80% of a certificate's lifetime (Caddy renews at 67% `[CM-RENEW]`), or with no certificate, it logs a warning once per change. With metrics on it also exposes the numbers.
+  - `deploy/prometheus/shipyard-alerts.yml` alerts on them and on the P5.5 metrics.
 
 ## 8. Repository layout
 

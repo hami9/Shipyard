@@ -223,7 +223,7 @@ flowchart LR
 - [x] **P5.5** Prometheus metrics on an internal listener: deploy duration, failure rate, queue depth, and health ([ADR-0013](adr/0013-prometheus-metrics.md)). Split into:
   - [x] **P5.5a** `internal/metrics` (text format, no client library), and the worker's listener (`SHIPYARD_WORKER_METRICS_LISTEN`): finished operations by kind and result with durations, the queue, and database reachability.
   - [x] **P5.5b** Each active app's health from the reconciler (container running, one probe of its health path), and the API's listener: requests by status class and 429s by reason (ADR-0011).
-- [ ] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold).
+- [x] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold) ([ADR-0014](adr/0014-disk-and-certificate-checks.md); alerts: log warnings plus shipped Prometheus rules, the owner's choice).
 - [ ] **P5.7** `deploy/install.sh` and an operator guide covering install, upgrade (including the major-upgrade limit of Docker live-restore), backup, restore, and troubleshooting.
   - Also (ADR-0009): host firewall rules for the build network's subnet (label `io.shipyard.role=build`): no `169.254.169.254`, no host services.
   - Also (ADR-0010): on Ubuntu 24.04+, install `deploy/sysctl/60-shipyard-buildkit.conf`, and check that a rootless build works before the first deploy.

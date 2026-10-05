@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ import (
 	"github.com/hami9/shipyard/internal/health"
 	"github.com/hami9/shipyard/internal/logging"
 	"github.com/hami9/shipyard/internal/metrics"
+	"github.com/hami9/shipyard/internal/monitor"
 	"github.com/hami9/shipyard/internal/queue"
 	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/routing"
@@ -343,8 +345,17 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	// they are likely, and then every catch-up interval.
 	catchUp := &app.CatchUp{Store: s, Heads: src, Log: log}
 
+	checker, err := newChecker(ctx, cfg, s, rt, log)
+	if err != nil {
+		return err
+	}
+	if wm != nil {
+		checker.Report = wm
+	}
+
 	var wg sync.WaitGroup
 	wg.Go(func() { rec.Run(ctx, cfg.ReconcileInterval) })
+	wg.Go(func() { reconcile.Every(ctx, cfg.CheckInterval, checker.Run) })
 	wg.Go(func() {
 		reconcile.Every(ctx, cfg.RetentionInterval, func(ctx context.Context) {
 			if err := ret.Run(ctx); err != nil && ctx.Err() == nil {
@@ -370,6 +381,45 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	wg.Wait()
 	log.Info("worker stopped")
 	return nil
+}
+
+// newChecker watches the disks Shipyard fills (Docker's data root: images,
+// build cache, logs, Caddy's volume; the checkouts; the backups) and the
+// certificate Caddy serves for each routed hostname and the API's (P5.6,
+// ADR-0014). It warns in the log past 80%; the metrics, when on, carry the
+// numbers.
+func newChecker(ctx context.Context, cfg config.Worker, s *store.Store, rt *runtime.Runtime, log *slog.Logger) (*monitor.Checker, error) {
+	root, err := rt.DockerRootDir(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c := &monitor.Checker{Paths: monitor.Sorted(root, cfg.WorkDir, cfg.Backup.Dir), StatFS: monitor.StatFS, Log: log}
+	if !cfg.Caddy.Enabled {
+		return c, nil
+	}
+	c.Hostnames = func(ctx context.Context) ([]string, error) {
+		routes, err := s.ListRoutes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var hosts []string
+		if cfg.APIHostname != "" {
+			hosts = append(hosts, cfg.APIHostname)
+		}
+		for _, r := range routes {
+			hosts = append(hosts, r.Hostname)
+		}
+		return hosts, nil
+	}
+	c.Serve = func(ctx context.Context, hostname string) (*x509.Certificate, error) {
+		// Looked up each time: a recreated edge may publish another port.
+		addr, err := rt.EdgeHTTPSAddr(ctx, cfg.Caddy.Name)
+		if err != nil {
+			return nil, err
+		}
+		return monitor.ServedCert(ctx, addr.String(), hostname)
+	}
+	return c, nil
 }
 
 // crashAt is the crash-safety suite's hook (P3.7, SHIPYARD_TEST_CRASH_AT):

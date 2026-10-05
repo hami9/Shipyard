@@ -21,3 +21,4 @@ An ADR records one significant decision: its context, the choice made, and its c
 | [0011](0011-api-limits-and-token-management.md) | Per-client API limits, and token rotation and revocation without SSH | Accepted |
 | [0012](0012-kek-rotation-and-asymmetric-sealing.md) | KEK rotation by re-wrapping, and asymmetric sealing so the API cannot decrypt | Accepted |
 | [0013](0013-prometheus-metrics.md) | Prometheus metrics without a client library, read from PostgreSQL | Accepted |
+| [0014](0014-disk-and-certificate-checks.md) | Disk and certificate checks, warned in the log and alerted by shipped Prometheus rules | Accepted |

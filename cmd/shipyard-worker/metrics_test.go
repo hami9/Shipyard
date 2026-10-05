@@ -6,12 +6,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hami9/shipyard/internal/api"
 	"github.com/hami9/shipyard/internal/metrics"
+	"github.com/hami9/shipyard/internal/monitor"
 	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/store"
 )
@@ -137,6 +141,76 @@ func TestWorkerMetricsHealth(t *testing.T) {
 	}
 	if strings.Contains(got, `app="old"`) {
 		t.Errorf("an app no longer active is still exposed:\n%s", got)
+	}
+}
+
+// P5.6: a check replaces the disk and certificate series; a certificate
+// that could not be read has only shipyard_certificate_ok, at 0.
+func TestWorkerMetricsChecks(t *testing.T) {
+	reg := &metrics.Registry{}
+	m, err := newWorkerMetrics(context.Background(), &fakeMetricsStore{}, reg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Unix(1_790_000_000, 0)
+	m.ReportChecks(monitor.Report{At: t0, Certs: []monitor.Cert{{Hostname: "gone.example", NotAfter: t0}}})
+	m.ReportChecks(monitor.Report{At: t0,
+		Disks: []monitor.Disk{{Path: "/var/lib/docker", Size: 100, Used: 85, Avail: 15}},
+		Certs: []monitor.Cert{
+			{Hostname: "app.example", NotBefore: t0.Add(-80 * time.Hour), NotAfter: t0.Add(20 * time.Hour)},
+			{Hostname: "new.example", Err: errors.New("tls: internal error")},
+		}})
+	got := scrape(t, reg)
+	for _, want := range []string{
+		`shipyard_filesystem_size_bytes{path="/var/lib/docker"} 100`,
+		`shipyard_filesystem_avail_bytes{path="/var/lib/docker"} 15`,
+		`shipyard_filesystem_used_ratio{path="/var/lib/docker"} 0.85`,
+		`shipyard_certificate_ok{hostname="app.example"} 1`,
+		`shipyard_certificate_ok{hostname="new.example"} 0`,
+		`shipyard_certificate_lifetime_used_ratio{hostname="app.example"} 0.8`,
+		`shipyard_certificate_not_after_timestamp_seconds{hostname="app.example"} 1.790072e+09`,
+		`shipyard_checks_timestamp_seconds 1.79e+09`,
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "gone.example") || strings.Contains(got, `_used_ratio{hostname="new.example"}`) ||
+		strings.Contains(got, `not_after_timestamp_seconds{hostname="new.example"}`) {
+		t.Errorf("stale or unreadable series exposed:\n%s", got)
+	}
+}
+
+// Every metric the shipped alert rules use exists, in the worker's or the
+// API's registry, so a rename cannot silently break an alert.
+func TestAlertRulesUseRealMetrics(t *testing.T) {
+	rules, err := os.ReadFile("../../deploy/prometheus/shipyard-alerts.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := &metrics.Registry{}
+	if _, err := newWorkerMetrics(context.Background(), &fakeMetricsStore{}, reg, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatal(err)
+	}
+	apiReg := &metrics.Registry{}
+	api.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), api.Deps{Metrics: apiReg})
+	known := map[string]bool{}
+	for _, exp := range []string{scrape(t, reg), scrape(t, apiReg)} {
+		for _, m := range regexp.MustCompile(`(?m)^# TYPE (\S+) (\S+)$`).FindAllStringSubmatch(exp, -1) {
+			known[m[1]] = true
+			if m[2] == "histogram" {
+				known[m[1]+"_bucket"], known[m[1]+"_sum"], known[m[1]+"_count"] = true, true, true
+			}
+		}
+	}
+	used := regexp.MustCompile(`\bshipyard_[a-z0-9_]+`).FindAllString(string(rules), -1)
+	if len(used) < 8 {
+		t.Fatalf("only %d metric references in the rules", len(used))
+	}
+	for _, name := range used {
+		if !known[name] {
+			t.Errorf("the alert rules use %s, which no registry exposes", name)
+		}
 	}
 }
 

@@ -69,6 +69,19 @@ func TestPhase1ExitCriteria(t *testing.T) {
 			t.Fatalf("worker metrics never showed %s healthy:\n%s", slug, m)
 		}
 	}
+	// P5.6: the checks (every 2s here) read the certificate Caddy serves
+	// for the app's hostname, and the disks.
+	certRE := regexp.MustCompile(`(?m)^shipyard_certificate_lifetime_used_ratio\{hostname="` + regexp.QuoteMeta(host) + `"\} 0(\.\d+)?(e-\d+)?$`)
+	diskRE := regexp.MustCompile(`(?m)^shipyard_filesystem_used_ratio\{path="[^"]+"\} (0|1)(\.\d+)?$`)
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		m := get(t, "http://"+h.metrics+"/metrics")
+		if strings.Contains(m, `shipyard_certificate_ok{hostname="`+host+`"} 1`+"\n") && certRE.MatchString(m) && diskRE.MatchString(m) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker metrics never showed the certificate of %s and the disks:\n%s", host, m)
+		}
+	}
 	if m := get(t, "http://"+h.apiMetrics+"/metrics"); !regexp.MustCompile(`(?m)^shipyard_api_requests_total\{code="2xx"\} [1-9]`).MatchString(m) {
 		t.Fatalf("API metrics:\n%s", m)
 	}
@@ -600,7 +613,7 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
-		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s",
+		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s", "SHIPYARD_CHECK_INTERVAL=2s",
 		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2",
 		"SHIPYARD_GITHUB_APP_ID="+gh.appID, "SHIPYARD_GITHUB_APP_KEY_FILE="+ghKey, "SHIPYARD_GITHUB_API_URL="+ghURL)
 	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run").stop

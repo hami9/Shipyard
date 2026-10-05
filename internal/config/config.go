@@ -85,6 +85,8 @@ const (
 	// P5.5: the worker's Prometheus metrics, loopback host:port; empty is off.
 	EnvWorkerMetricsListen = "SHIPYARD_WORKER_METRICS_LISTEN"
 	EnvAPIMetricsListen    = "SHIPYARD_API_METRICS_LISTEN"
+	// P5.6: how often the worker checks disks and certificates.
+	EnvCheckInterval = "SHIPYARD_CHECK_INTERVAL"
 )
 
 // Defaults.
@@ -127,6 +129,9 @@ const (
 	// DefaultCatchUpInterval is how often branch heads are compared with
 	// what auto-deploy apps have tried (P4.5): one ls-remote per app.
 	DefaultCatchUpInterval = 5 * time.Minute
+	// DefaultCheckInterval is how often disks and served certificates are
+	// checked (P5.6).
+	DefaultCheckInterval = 5 * time.Minute
 	// P5.3: per client, 10 requests per second with bursts of 50, and 10
 	// failed authentications per 15 minutes.
 	DefaultAPIRate      = 10
@@ -280,6 +285,10 @@ type Worker struct {
 	// MetricsListen is where Prometheus metrics are served: a loopback
 	// host:port, or "" for none (ADR-0013).
 	MetricsListen string
+	// CheckInterval is how often disk usage and the certificates Caddy
+	// serves are checked, and warned about past 80% (ADR-0014); also once at
+	// start.
+	CheckInterval time.Duration
 }
 
 // GitHub is the GitHub App the worker fetches private repositories with
@@ -462,6 +471,10 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 		} else {
 			cfg.BuilderCPUs = cpus
 		}
+	}
+	cfg.CheckInterval = r.duration(EnvCheckInterval, DefaultCheckInterval)
+	if cfg.CheckInterval < time.Second {
+		r.fail(EnvCheckInterval, errors.New("must be at least 1s"))
 	}
 	cfg.MetricsListen = r.metricsListen(EnvWorkerMetricsListen)
 	if cfg.MetricsListen != "" && cfg.MetricsListen == r.str(EnvAPIMetricsListen, "") {

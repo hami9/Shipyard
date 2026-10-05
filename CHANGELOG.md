@@ -11,6 +11,11 @@ All notable changes to Shipyard are recorded here.
 
 ### Added
 
+- **Disk and certificate checks** (ADR-0014): every `SHIPYARD_CHECK_INTERVAL` (default 5m), the worker checks two things. It warns once in its log when either passes 80%, or when Caddy presents no certificate.
+  - **Disks:** the filesystems of Docker's data root, the work directory, and the backup directory.
+  - **Certificates:** the one Caddy serves for each hostname.
+  - **Metrics:** `shipyard_filesystem_*`, `shipyard_certificate_*`, and `shipyard_checks_timestamp_seconds`.
+  - **Alert rules:** `deploy/prometheus/shipyard-alerts.yml` ships ready-made Prometheus rules for these and for app health, the database, deploy failures, and a stuck queue.
 - **Prometheus metrics** (ADR-0013): set `SHIPYARD_WORKER_METRICS_LISTEN` to a loopback `host:port` and the worker serves `GET /metrics`. It covers finished operations by kind and result with their durations (`shipyard_operations_total`, `shipyard_operation_duration_seconds`), the queue (`shipyard_queue_operations`, `shipyard_queue_oldest_wait_seconds`), and `shipyard_database_up`. Off by default.
   - **App health:** with the worker's metrics on, each reconcile pass reports whether each app's container runs (`shipyard_app_up`) and answers its health path (`shipyard_app_healthy`).
   - **API:** `SHIPYARD_API_METRICS_LISTEN` serves answers by status class (`shipyard_api_requests_total`) and 429s by reason (`shipyard_api_throttled_total`).

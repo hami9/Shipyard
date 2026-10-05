@@ -296,6 +296,37 @@ func (r *Runtime) attachEdge(ctx context.Context, edge, netName string) error {
 	return nil
 }
 
+// EdgeHTTPSAddr is where the host reaches the edge container's published
+// HTTPS port, for reading the certificates it serves (P5.6). A port
+// published on every interface is reached on loopback.
+func (r *Runtime) EdgeHTTPSAddr(ctx context.Context, name string) (netip.AddrPort, error) {
+	got, err := r.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		return netip.AddrPort{}, fmt.Errorf("inspect edge %s: %w", name, wrap(err))
+	}
+	c := got.Container
+	if c.Config == nil || c.Config.Labels[labelRole] != roleEdge || c.Config.Labels[labelManaged] != "true" {
+		return netip.AddrPort{}, fmt.Errorf("container %s: %w", name, ErrNotManaged)
+	}
+	if c.NetworkSettings != nil {
+		for _, b := range c.NetworkSettings.Ports[network.MustParsePort("443/tcp")] {
+			port, err := strconv.ParseUint(b.HostPort, 10, 16)
+			if err != nil || port == 0 {
+				continue
+			}
+			ip := b.HostIP
+			if !ip.IsValid() || ip.IsUnspecified() {
+				ip = netip.IPv6Loopback()
+				if !b.HostIP.Is6() {
+					ip = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+				}
+			}
+			return netip.AddrPortFrom(ip, uint16(port)), nil
+		}
+	}
+	return netip.AddrPort{}, fmt.Errorf("edge %s publishes no HTTPS port (is it running?)", name)
+}
+
 // ArchiveEdgeData writes the edge container's /data volume (certificates,
 // their private keys, and ACME accounts [CADDY-HTTPS]) to w as a tar stream
 // rooted at data/, for backups (ADR-0006). The archive API reads volumes

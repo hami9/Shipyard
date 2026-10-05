@@ -440,6 +440,20 @@ func TestLoadWorkerCatchUpInterval(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerCheckInterval(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.CheckInterval != DefaultCheckInterval {
+		t.Fatalf("default = %v, %v", cfg.CheckInterval, err)
+	}
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCheckInterval: "2s"})); err != nil || cfg.CheckInterval != 2*time.Second {
+		t.Fatalf("2s = %v, %v", cfg.CheckInterval, err)
+	}
+	for _, bad := range []string{"500ms", "0", "-1m", "often"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCheckInterval: bad}))
+		checkErr(t, err, EnvCheckInterval)
+	}
+}
+
 func TestLoadWorkerMetricsListen(t *testing.T) {
 	for value, want := range map[string]string{"": "", "127.0.0.1:9187": "127.0.0.1:9187", "[::1]:9187": "[::1]:9187", "localhost:9187": "localhost:9187"} {
 		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: value}))

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hami9/shipyard/internal/metrics"
+	"github.com/hami9/shipyard/internal/monitor"
 	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/store"
 )
@@ -53,6 +54,11 @@ type workerMetrics struct {
 
 	// From the reconciler (ReportHealth), not the database.
 	appUp, appHealthy, healthAt *metrics.Gauge
+
+	// From the disk and certificate checks (ReportChecks, P5.6).
+	fsSize, fsAvail, fsUsed        *metrics.Gauge
+	certNotAfter, certUsed, certOK *metrics.Gauge
+	checkedAt                      *metrics.Gauge
 }
 
 func newWorkerMetrics(ctx context.Context, s metricsStore, reg *metrics.Registry, log *slog.Logger) (*workerMetrics, error) {
@@ -78,6 +84,19 @@ func newWorkerMetrics(ctx context.Context, s metricsStore, reg *metrics.Registry
 	m.healthAt = reg.NewGauge("shipyard_app_health_checked_timestamp_seconds",
 		"When the reconciler last checked app health (Unix time); 0 before the first check.")
 	m.healthAt.Set(0)
+	m.fsSize = reg.NewGauge("shipyard_filesystem_size_bytes", "Size of the filesystem holding a path Shipyard writes to.", "path")
+	m.fsAvail = reg.NewGauge("shipyard_filesystem_avail_bytes", "Bytes an unprivileged user may still write there.", "path")
+	m.fsUsed = reg.NewGauge("shipyard_filesystem_used_ratio",
+		"Used share of the filesystem, as df's Use% (reserved blocks do not count as free); alert at 0.8.", "path")
+	m.certNotAfter = reg.NewGauge("shipyard_certificate_not_after_timestamp_seconds",
+		"When the certificate Caddy serves for a hostname expires (Unix time).", "hostname")
+	m.certUsed = reg.NewGauge("shipyard_certificate_lifetime_used_ratio",
+		"How much of that certificate's lifetime has passed; Caddy renews at about 0.67, so 0.8 means renewal is failing.", "hostname")
+	m.certOK = reg.NewGauge("shipyard_certificate_ok",
+		"Whether Caddy presented a certificate for the hostname at the last check.", "hostname")
+	m.checkedAt = reg.NewGauge("shipyard_checks_timestamp_seconds",
+		"When disks and certificates were last checked (Unix time); 0 before the first check.")
+	m.checkedAt.Set(0)
 	reg.OnScrape(m.collect)
 	return m, nil
 }
@@ -156,12 +175,6 @@ func (m *workerMetrics) countFinished(ctx context.Context) error {
 // ReportHealth takes the reconciler's view of the active apps (P5.5b).
 // Apps that are no longer active drop out.
 func (m *workerMetrics) ReportHealth(apps []reconcile.AppHealth) {
-	bit := func(b bool) float64 {
-		if b {
-			return 1
-		}
-		return 0
-	}
 	m.appUp.Replace(func(set func(float64, ...string)) {
 		for _, a := range apps {
 			set(bit(a.Running), a.App)
@@ -173,4 +186,52 @@ func (m *workerMetrics) ReportHealth(apps []reconcile.AppHealth) {
 		}
 	})
 	m.healthAt.Set(float64(m.now().UnixMilli()) / 1000)
+}
+
+// ReportChecks takes a disk and certificate check (P5.6). Each set is
+// replaced whole, so a removed hostname drops out. A certificate that could
+// not be read keeps only its _ok series, at 0.
+func (m *workerMetrics) ReportChecks(r monitor.Report) {
+	m.fsSize.Replace(func(set func(float64, ...string)) {
+		for _, d := range r.Disks {
+			set(float64(d.Size), d.Path)
+		}
+	})
+	m.fsAvail.Replace(func(set func(float64, ...string)) {
+		for _, d := range r.Disks {
+			set(float64(d.Avail), d.Path)
+		}
+	})
+	m.fsUsed.Replace(func(set func(float64, ...string)) {
+		for _, d := range r.Disks {
+			set(d.UsedRatio(), d.Path)
+		}
+	})
+	m.certOK.Replace(func(set func(float64, ...string)) {
+		for _, c := range r.Certs {
+			set(bit(c.Err == nil), c.Hostname)
+		}
+	})
+	m.certNotAfter.Replace(func(set func(float64, ...string)) {
+		for _, c := range r.Certs {
+			if c.Err == nil {
+				set(float64(c.NotAfter.Unix()), c.Hostname)
+			}
+		}
+	})
+	m.certUsed.Replace(func(set func(float64, ...string)) {
+		for _, c := range r.Certs {
+			if c.Err == nil {
+				set(c.UsedRatio(r.At), c.Hostname)
+			}
+		}
+	})
+	m.checkedAt.Set(float64(r.At.UnixMilli()) / 1000)
+}
+
+func bit(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }

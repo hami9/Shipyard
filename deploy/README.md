@@ -10,6 +10,7 @@ Host configuration for running Shipyard on a single VPS. **This is a skeleton (P
 | `systemd/shipyard-backup.service`, `systemd/shipyard-backup.timer` | `/etc/systemd/system/` | Nightly `shipyard-worker backup` as user `shipyard-worker` (ADR-0006). Create `/var/backups/shipyard` and `/var/backups/shipyard-kek` first, owned by `shipyard-worker`, mode `0700`, then `systemctl enable --now shipyard-backup.timer` |
 | `docker/daemon.json` | `/etc/docker/daemon.json` | `local` log driver (rotates by default) and `live-restore` `[DK-LOG][DK-LIVE]` |
 | `sysctl/60-shipyard-buildkit.conf` | `/etc/sysctl.d/` (Ubuntu 24.04+ only), then `sudo sysctl --system` | Lets the rootless BuildKit builder create user namespaces (ADR-0010) `[UB-USERNS][BK-ROOTLESS]`. The Shipyard units set `RestrictNamespaces=yes` in return |
+| `prometheus/shipyard-alerts.yml` | Your Prometheus server's `rule_files` | Alerts at 80% of a disk or of a certificate's lifetime, and on app health, the database, failing deploys, and a stuck queue (ADR-0013, ADR-0014). Needs `SHIPYARD_WORKER_METRICS_LISTEN` (and the API's for its metrics) scraped. Check with `promtool check rules` |
 | `caddy/caddy.json` | Caddy container bootstrap config | Admin API on a permissioned Unix socket only `[CADDY-API]` |
 | `dev/compose.yaml` | Nowhere (development only) | Local PostgreSQL 18 for `make dev-up` |
 
