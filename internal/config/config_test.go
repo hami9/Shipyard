@@ -450,7 +450,15 @@ func TestLoadWorkerMetricsListen(t *testing.T) {
 	for _, bad := range []string{"0.0.0.0:9187", ":9187", "192.0.2.1:9187", "127.0.0.1", "127.0.0.1:0", "127.0.0.1:x", "unix:/run/m.sock"} {
 		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: bad}))
 		checkErr(t, err, EnvWorkerMetricsListen)
+		_, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIMetricsListen: bad}))
+		checkErr(t, err, EnvAPIMetricsListen)
 	}
+	if cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIMetricsListen: "127.0.0.1:9188"})); err != nil || cfg.MetricsListen != "127.0.0.1:9188" {
+		t.Errorf("API: %q, %v", cfg.MetricsListen, err)
+	}
+	// Both processes read one environment file: one port each.
+	_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: "127.0.0.1:9187", EnvAPIMetricsListen: "127.0.0.1:9187"}))
+	checkErr(t, err, EnvWorkerMetricsListen)
 }
 
 func TestLoadWorkerRetainImages(t *testing.T) {

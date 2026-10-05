@@ -27,6 +27,7 @@ import (
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/github"
+	"github.com/hami9/shipyard/internal/health"
 	"github.com/hami9/shipyard/internal/logging"
 	"github.com/hami9/shipyard/internal/metrics"
 	"github.com/hami9/shipyard/internal/queue"
@@ -258,14 +259,15 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 
 	s := store.New(db)
+	var wm *workerMetrics
 	if cfg.MetricsListen != "" {
 		reg := &metrics.Registry{}
-		if _, err := newWorkerMetrics(ctx, s, reg, log); err != nil {
+		if wm, err = newWorkerMetrics(ctx, s, reg, log); err != nil {
 			return fmt.Errorf("metrics: %w", err)
 		}
-		srv, err := serveMetrics(cfg.MetricsListen, reg, log)
+		srv, err := metrics.Serve(cfg.MetricsListen, reg, log)
 		if err != nil {
-			return fmt.Errorf("metrics listener: %w", err)
+			return err
 		}
 		defer srv.Close()
 	}
@@ -326,6 +328,11 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 		Images:  &app.ImagePruner{Store: s, Runtime: runtimeAdapter{rt}, Keep: cfg.RetainImages, Log: log}}
 	if router != nil {
 		rec.Router = router
+	}
+	if wm != nil {
+		// Each pass checks the active apps for the metrics (ADR-0013).
+		rec.Health = wm
+		rec.Probe = func(ctx context.Context, url string) error { return health.Probe(ctx, url, 0) }
 	}
 
 	// The rest of retention (ADR-0006): daily by default, and at start.

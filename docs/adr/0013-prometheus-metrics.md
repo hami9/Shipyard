@@ -46,9 +46,26 @@
     - A transaction that commits a little after its `now()` is still counted, and nothing is counted twice.
     - Counters start at zero with each worker, which Prometheus's `rate` handles.
   - **When PostgreSQL cannot be read:** `shipyard_database_up` is 0, and the queue gauges are left out rather than shown stale.
-- **Next (P5.5b):**
-  - each active app's health, from the reconciler: container running, and one probe of its health path;
-  - the API's own listener, with requests by status class and 429s by reason (ADR-0011).
+- **App health (P5.5b),** from the reconciler, only while the worker's metrics are on:
+  - After restoring active containers, each pass inspects each active app's container. When it runs, the pass makes one GET of the app's health path at its container IP, as the deploy gate does: 2xx or 3xx passes, 2 s limit, no redirects followed.
+  - The pass then replaces the whole set at once, so a deleted app drops out:
+
+    | Metric | Type | Meaning |
+    | --- | --- | --- |
+    | `shipyard_app_up{app}` | gauge | The active container was running. |
+    | `shipyard_app_healthy{app}` | gauge | It was running, and the probe passed. |
+    | `shipyard_app_health_checked_timestamp_seconds` | gauge | When the last check ran. A stale value means the reconciler is stuck. |
+
+  - **Information only.** A failed probe changes nothing: no restart, no route change.
+- **API listener (P5.5b):** `SHIPYARD_API_METRICS_LISTEN`, under the same rules, and it must differ from the worker's.
+
+  | Metric | Type | Meaning |
+  | --- | --- | --- |
+  | `shipyard_api_requests_total{code}` | counter | Answers by status class, `2xx` to `5xx`, 429s included. |
+  | `shipyard_api_throttled_total{reason}` | counter | 429s by reason: `requests` (the rate) or `auth` (failed authentications), ADR-0011. |
+  | `shipyard_build_info` | gauge | As for the worker. |
+
+  - No label names a client, a token or a path, so cardinality stays fixed.
 
 ## Consequences
 
@@ -59,6 +76,8 @@
 - **Negative / risks:**
   - **Loopback only.** A Prometheus server on another host needs a local agent or a tunnel, and one inside a container needs host networking.
   - **Cost.** Each scrape scans `operations` for finishes, and `finished_at` has no index. That is cheap at single-VPS volumes. If it is not, an index is a later migration.
+  - **More traffic to apps.** With metrics on, every app gets one GET of its health path per reconcile pass, once a minute by default. Health endpoints should be cheap anyway.
+  - **Health lags.** It is as fresh as the last pass, up to a reconcile interval old.
   - **A late commit can be missed.** An operation whose transaction commits more than a minute after its `finished_at` is not counted. Shipyard's finishing transactions are short.
   - **A hand-written format** must keep to the text format's rules. Tests pin its escaping and histogram output.
 
@@ -68,3 +87,5 @@
 - **Counting in the code paths:** exact without a cursor, but it needs a hook on every path that finishes an operation, including the API's cancel and the reconciler's SQL. A path added later would be missed silently.
 - **`count(*)` per scrape as a gauge:** simple, but app deletion removes rows, so the totals could fall. Prometheus counters must not fall.
 - **The metrics in the API process:** the API reads PostgreSQL too, but the health of running apps needs Docker, which only the worker may reach (invariant 1).
+- **Probing at scrape time,** as the blackbox exporter does: fresher, but every scrape would reach every app, and a hung app would slow the scrape. The reconciler already visits each active container once per pass.
+- **Docker `HEALTHCHECK` status:** many images define none, and the deploy gate's probe is what Shipyard already relies on.

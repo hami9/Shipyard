@@ -84,6 +84,7 @@ const (
 	EnvCatchUpInterval  = "SHIPYARD_CATCHUP_INTERVAL"
 	// P5.5: the worker's Prometheus metrics, loopback host:port; empty is off.
 	EnvWorkerMetricsListen = "SHIPYARD_WORKER_METRICS_LISTEN"
+	EnvAPIMetricsListen    = "SHIPYARD_API_METRICS_LISTEN"
 )
 
 // Defaults.
@@ -214,6 +215,9 @@ type API struct {
 	// Per client: requests per second and burst, and failed
 	// authentications per 15 minutes (P5.3). Zero turns a limit off.
 	Rate, Burst, AuthFailures int
+	// MetricsListen is where Prometheus metrics are served: a loopback
+	// host:port, or "" for none (ADR-0013).
+	MetricsListen string
 }
 
 // Domains is the policy for hostnames operators add (ADR-0003).
@@ -337,6 +341,7 @@ func LoadAPI(lookup LookupFunc) (API, error) {
 	cfg.Rate = r.intRange(EnvAPIRate, DefaultAPIRate, 0, 100_000)
 	cfg.Burst = r.intRange(EnvAPIBurst, DefaultAPIBurst, 1, 100_000)
 	cfg.AuthFailures = r.intRange(EnvAuthFailures, DefaultAuthFailures, 0, 100_000)
+	cfg.MetricsListen = r.metricsListen(EnvAPIMetricsListen)
 	return cfg, r.err()
 }
 
@@ -458,10 +463,9 @@ func LoadWorker(lookup LookupFunc) (Worker, error) {
 			cfg.BuilderCPUs = cpus
 		}
 	}
-	if cfg.MetricsListen = r.str(EnvWorkerMetricsListen, ""); cfg.MetricsListen != "" {
-		if err := validateMetricsListen(cfg.MetricsListen); err != nil {
-			r.fail(EnvWorkerMetricsListen, err)
-		}
+	cfg.MetricsListen = r.metricsListen(EnvWorkerMetricsListen)
+	if cfg.MetricsListen != "" && cfg.MetricsListen == r.str(EnvAPIMetricsListen, "") {
+		r.fail(EnvWorkerMetricsListen, fmt.Errorf("the API's metrics already use %s", cfg.MetricsListen))
 	}
 	return cfg, r.err()
 }
@@ -662,20 +666,26 @@ func validateListen(addr string) error {
 	return fmt.Errorf("%q is not a loopback address; the API is published through Caddy (%s), never directly", addr, EnvAPIHostname)
 }
 
-// validateMetricsListen allows a loopback host:port only: metrics carry app
-// names and have no authentication (ADR-0013).
-func validateMetricsListen(addr string) error {
+// metricsListen reads a metrics address: a loopback host:port only, since
+// metrics carry app names and have no authentication (ADR-0013). Empty is
+// off.
+func (r *reader) metricsListen(key string) string {
+	addr := r.str(key, "")
+	if addr == "" {
+		return ""
+	}
 	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("want a loopback host:port: %w", err)
+	switch p, perr := strconv.Atoi(port); {
+	case err != nil:
+		r.fail(key, fmt.Errorf("want a loopback host:port: %w", err))
+	case perr != nil || p < 1 || p > 65535:
+		r.fail(key, fmt.Errorf("invalid port %q", port))
+	case !isLoopback(host):
+		r.fail(key, fmt.Errorf("%q is not a loopback address; metrics have no authentication", addr))
+	default:
+		return addr
 	}
-	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
-		return fmt.Errorf("invalid port %q", port)
-	}
-	if !isLoopback(host) {
-		return fmt.Errorf("%q is not a loopback address; metrics have no authentication", addr)
-	}
-	return nil
+	return ""
 }
 
 // reader accumulates every validation error so operators can fix the whole

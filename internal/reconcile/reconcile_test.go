@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ type fakes struct {
 	createErr  error
 	replaceErr error
 	syncErr    error
+	depsErr    error
 }
 
 func (f *fakes) ImageExists(_ context.Context, id string) (bool, error) { return !f.noImage[id], nil }
@@ -48,10 +50,11 @@ func (f *fakes) RequeueExpired(context.Context) (int, int, error) {
 	return 0, 0, nil
 }
 func (f *fakes) ActiveDeployments(context.Context) ([]store.Deployment, error) {
-	return f.deps, nil
+	return f.deps, f.depsErr
 }
 func (f *fakes) AppByID(_ context.Context, id string) (store.App, error) {
-	return store.App{ID: id, Slug: "web-" + id, CPULimit: 0.5, MemoryLimit: 64 << 20, StopTimeout: 7 * time.Second}, nil
+	return store.App{ID: id, Slug: "web-" + id, CPULimit: 0.5, MemoryLimit: 64 << 20, StopTimeout: 7 * time.Second,
+		InternalPort: 8080, HealthPath: "/healthz"}, nil
 }
 func (f *fakes) ReplaceContainer(_ context.Context, id, old, c string) error {
 	f.call("record %s %s->%s", id, old, c)
@@ -195,6 +198,57 @@ func TestPassRebuilds(t *testing.T) {
 				t.Fatalf("logs lack %q:\n%s", tc.log, logs)
 			}
 		})
+	}
+}
+
+type healthLog struct{ reports [][]AppHealth }
+
+func (h *healthLog) ReportHealth(apps []AppHealth) { h.reports = append(h.reports, apps) }
+
+// P5.5b: after the restore, each active app is reported running or not,
+// and healthy when one GET of its health path passes; a recreated container
+// is checked under its new ID. A pass that cannot list the deployments
+// reports nothing; one with none reports an empty list.
+func TestPassReportsHealth(t *testing.T) {
+	ip := func(s string) netip.Addr { return netip.MustParseAddr(s) }
+	f := &fakes{
+		deps: []store.Deployment{
+			{ID: "d1", AppID: "a1", ContainerID: "c1", ImageID: "sha256:1"},
+			{ID: "d2", AppID: "a2", ContainerID: "c2", ImageID: "sha256:2"},
+			{ID: "d3", AppID: "a3", ContainerID: "c-gone", ImageID: "sha256:3"},
+			{ID: "d4", AppID: "a4", ContainerID: "c-stopped", ImageID: "sha256:4"},
+		},
+		states: map[string]app.ContainerState{
+			"c1": {Running: true, IP: ip("10.0.0.1")}, "c2": {Running: true, IP: ip("10.0.0.2")},
+			"new-d3": {Running: true, IP: ip("10.0.0.3")}, "c-stopped": {ExitCode: 1},
+		},
+	}
+	r, _ := newReconciler(f)
+	var probed []string
+	r.Probe = func(_ context.Context, url string) error {
+		probed = append(probed, url)
+		if strings.Contains(url, "10.0.0.2") {
+			return errors.New("status 503")
+		}
+		return nil
+	}
+	h := &healthLog{}
+	r.Health = h
+	r.Pass(t.Context())
+	want := []AppHealth{{"web-a1", true, true}, {"web-a2", true, false}, {"web-a3", true, true}, {"web-a4", false, false}}
+	if len(h.reports) != 1 || !slices.Equal(h.reports[0], want) {
+		t.Fatalf("reports = %+v, want [%+v]", h.reports, want)
+	}
+	if wantURLs := []string{"http://10.0.0.1:8080/healthz", "http://10.0.0.2:8080/healthz", "http://10.0.0.3:8080/healthz"}; !slices.Equal(probed, wantURLs) {
+		t.Fatalf("probed %q, want %q", probed, wantURLs)
+	}
+
+	f.depsErr = errors.New("connection refused")
+	r.Pass(t.Context())
+	f.depsErr, f.deps = nil, nil
+	r.Pass(t.Context())
+	if len(h.reports) != 2 || h.reports[1] == nil || len(h.reports[1]) != 0 {
+		t.Fatalf("reports = %+v, want one more, empty", h.reports)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/metrics"
 	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
 	"github.com/hami9/shipyard/internal/webhook"
@@ -122,7 +123,17 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 		log.Warn("adding domains is refused until the server's public IPs are set, or the DNS preflight is turned off",
 			slog.String("env", config.EnvPublicIPs+" / "+config.EnvDNSPreflight))
 	}
-	h := api.NewHandler(log, api.Deps{DB: db, Tokens: s, TokenAdmin: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s,
+	var reg *metrics.Registry
+	if cfg.MetricsListen != "" {
+		reg = &metrics.Registry{}
+		metrics.BuildInfo(reg)
+		srv, err := metrics.Serve(cfg.MetricsListen, reg, log)
+		if err != nil {
+			return err
+		}
+		defer srv.Close()
+	}
+	h := api.NewHandler(log, api.Deps{Metrics: reg, DB: db, Tokens: s, TokenAdmin: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s,
 		Domains: s, Resolver: net.DefaultResolver,
 		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes,
 			APIHostname: cfg.APIHostname},

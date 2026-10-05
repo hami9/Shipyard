@@ -55,6 +55,22 @@ func TestRedirectPasses(t *testing.T) {
 	}
 }
 
+// Probe is one request: 2xx and 3xx pass (not followed), anything else
+// fails, and so does a slow answer.
+func TestProbe(t *testing.T) {
+	for code, ok := range map[int]bool{200: true, 204: true, http.StatusFound: true, 404: false, 503: false} {
+		srv, n := statuses(t, code)
+		if err := Probe(t.Context(), srv.URL+"/healthz", time.Second); (err == nil) != ok || n.Load() != 1 {
+			t.Errorf("%d: err %v after %d requests, want pass=%v after 1", code, err, n.Load(), ok)
+		}
+	}
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer slow.Close()
+	if err := Probe(t.Context(), slow.URL, 50*time.Millisecond); err == nil {
+		t.Error("a probe that never answers passed")
+	}
+}
+
 func TestUnhealthyTimesOut(t *testing.T) {
 	srv, _ := statuses(t, 500)
 	c := fast(srv.URL + "/ready")

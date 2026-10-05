@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net"
-	"net/http"
 	"sync"
 	"time"
 
-	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/metrics"
+	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/store"
 )
 
@@ -40,6 +38,7 @@ var durationBounds = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600
 type workerMetrics struct {
 	store metricsStore
 	log   *slog.Logger
+	now   func() time.Time
 
 	mu    sync.Mutex
 	floor time.Time            // operations finished by then predate this process
@@ -51,6 +50,9 @@ type workerMetrics struct {
 	queue    *metrics.Gauge
 	oldest   *metrics.Gauge
 	dbUp     *metrics.Gauge
+
+	// From the reconciler (ReportHealth), not the database.
+	appUp, appHealthy, healthAt *metrics.Gauge
 }
 
 func newWorkerMetrics(ctx context.Context, s metricsStore, reg *metrics.Registry, log *slog.Logger) (*workerMetrics, error) {
@@ -58,9 +60,8 @@ func newWorkerMetrics(ctx context.Context, s metricsStore, reg *metrics.Registry
 	if err != nil {
 		return nil, err
 	}
-	m := &workerMetrics{store: s, log: log, floor: floor, since: floor, seen: map[string]time.Time{}}
-	reg.NewGauge("shipyard_build_info", "The running Shipyard version.", "version", "commit").
-		Set(1, buildinfo.Get().Version, buildinfo.Get().Commit)
+	m := &workerMetrics{store: s, log: log, now: time.Now, floor: floor, since: floor, seen: map[string]time.Time{}}
+	metrics.BuildInfo(reg)
 	m.ops = reg.NewCounter("shipyard_operations_total",
 		"Operations finished since the worker started, by kind (deploy, rollback, delete) and result (succeeded, failed, cancelled).",
 		"kind", "result")
@@ -70,6 +71,13 @@ func newWorkerMetrics(ctx context.Context, s metricsStore, reg *metrics.Registry
 	m.oldest = reg.NewGauge("shipyard_queue_oldest_wait_seconds",
 		"How long the longest-waiting due operation has waited; 0 when none waits.")
 	m.dbUp = reg.NewGauge("shipyard_database_up", "Whether the last scrape could read PostgreSQL.")
+	m.appUp = reg.NewGauge("shipyard_app_up",
+		"Whether the active deployment's container was running at the last reconcile pass.", "app")
+	m.appHealthy = reg.NewGauge("shipyard_app_healthy",
+		"Whether the active deployment answered one GET of its health path (2xx or 3xx) at the last reconcile pass.", "app")
+	m.healthAt = reg.NewGauge("shipyard_app_health_checked_timestamp_seconds",
+		"When the reconciler last checked app health (Unix time); 0 before the first check.")
+	m.healthAt.Set(0)
 	reg.OnScrape(m.collect)
 	return m, nil
 }
@@ -145,18 +153,24 @@ func (m *workerMetrics) countFinished(ctx context.Context) error {
 	return nil
 }
 
-// serveMetrics serves the registry on a loopback address (ADR-0013).
-func serveMetrics(addr string, reg *metrics.Registry, log *slog.Logger) (*http.Server, error) {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	srv := &http.Server{Handler: reg.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second}
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("metrics listener stopped", slog.Any("err", err))
+// ReportHealth takes the reconciler's view of the active apps (P5.5b).
+// Apps that are no longer active drop out.
+func (m *workerMetrics) ReportHealth(apps []reconcile.AppHealth) {
+	bit := func(b bool) float64 {
+		if b {
+			return 1
 		}
-	}()
-	log.Info("metrics ready", slog.String("addr", ln.Addr().String()))
-	return srv, nil
+		return 0
+	}
+	m.appUp.Replace(func(set func(float64, ...string)) {
+		for _, a := range apps {
+			set(bit(a.Running), a.App)
+		}
+	})
+	m.appHealthy.Replace(func(set func(float64, ...string)) {
+		for _, a := range apps {
+			set(bit(a.Healthy), a.App)
+		}
+	})
+	m.healthAt.Set(float64(m.now().UnixMilli()) / 1000)
 }

@@ -6,14 +6,20 @@ package metrics
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/hami9/shipyard/internal/buildinfo"
 )
 
 // ContentType is the text format's media type [PROM-TEXT].
@@ -82,6 +88,30 @@ func (r *Registry) Handler() http.Handler {
 		_ = r.Write(req.Context(), bufio.NewWriter(w))
 	})
 	return mux
+}
+
+// Serve serves the registry on addr, a loopback host:port the config has
+// checked, until the returned server is closed.
+func Serve(addr string, r *Registry, log *slog.Logger) (*http.Server, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("metrics listener: %w", err)
+	}
+	srv := &http.Server{Handler: r.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("metrics listener stopped", slog.Any("err", err))
+		}
+	}()
+	log.Info("metrics ready", slog.String("addr", ln.Addr().String()))
+	return srv, nil
+}
+
+// BuildInfo registers shipyard_build_info, always 1, labelled with this
+// binary's version and commit.
+func BuildInfo(r *Registry) {
+	info := buildinfo.Get()
+	r.NewGauge("shipyard_build_info", "The running Shipyard version.", "version", "commit").Set(1, info.Version, info.Commit)
 }
 
 // vec is the label-value bookkeeping every kind shares.
@@ -184,6 +214,16 @@ func (g *Gauge) Reset() {
 	defer g.v.mu.Unlock()
 	clear(g.v.series)
 	clear(g.v.values)
+}
+
+// Replace drops every series and keeps those fn sets, in one step: a
+// scrape sees the old set or the new one, never a mix.
+func (g *Gauge) Replace(fn func(set func(n float64, values ...string))) {
+	g.v.mu.Lock()
+	defer g.v.mu.Unlock()
+	clear(g.v.series)
+	clear(g.v.values)
+	fn(func(n float64, values ...string) { *g.v.get(values) = n })
 }
 
 func (g *Gauge) write(w *bufio.Writer) {

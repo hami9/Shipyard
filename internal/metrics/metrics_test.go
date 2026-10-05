@@ -68,6 +68,16 @@ func TestGaugeResetAndScrape(t *testing.T) {
 	}
 }
 
+func TestGaugeReplace(t *testing.T) {
+	r := &Registry{}
+	g := r.NewGauge("app_up", "Up.", "app")
+	g.Set(1, "gone")
+	g.Replace(func(set func(float64, ...string)) { set(0, "web"); set(1, "api") })
+	if got, want := expose(t, r), "# HELP app_up Up.\n# TYPE app_up gauge\napp_up{app=\"api\"} 1\napp_up{app=\"web\"} 0\n"; got != want {
+		t.Errorf("exposition:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatFloat(t *testing.T) {
 	for x, want := range map[float64]string{
 		0: "0", 1.5: "1.5", 1e21: "1e+21", math.Inf(1): "+Inf", math.Inf(-1): "-Inf", math.NaN(): "NaN",

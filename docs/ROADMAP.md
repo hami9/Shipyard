@@ -220,9 +220,9 @@ flowchart LR
 - [x] **P5.4** KEK rotation command with a test, and an evaluation of asymmetric sealing so the API cannot decrypt ([ADR-0012](adr/0012-kek-rotation-and-asymmetric-sealing.md); the owner chose to implement the sealing too). Split into:
   - [x] **P5.4a** `shipyard-worker kek status|rewrap`, and migration `0005` (re-wrap-only updates of `secret_values`).
   - [x] **P5.4b** HPKE KEKs (`<id>.hpke`/`<id>.pub`, DHKEM X25519): the API seals with the public key only; `shipyard-worker kek generate`; backups copy the new files.
-- [ ] **P5.5** Prometheus metrics on an internal listener: deploy duration, failure rate, queue depth, and health ([ADR-0013](adr/0013-prometheus-metrics.md)). Split into:
+- [x] **P5.5** Prometheus metrics on an internal listener: deploy duration, failure rate, queue depth, and health ([ADR-0013](adr/0013-prometheus-metrics.md)). Split into:
   - [x] **P5.5a** `internal/metrics` (text format, no client library), and the worker's listener (`SHIPYARD_WORKER_METRICS_LISTEN`): finished operations by kind and result with durations, the queue, and database reachability.
-  - [ ] **P5.5b** Each active app's health from the reconciler (container running, one probe of its health path), and the API's listener: requests by status class and 429s by reason (ADR-0011).
+  - [x] **P5.5b** Each active app's health from the reconciler (container running, one probe of its health path), and the API's listener: requests by status class and 429s by reason (ADR-0011).
 - [ ] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold).
 - [ ] **P5.7** `deploy/install.sh` and an operator guide covering install, upgrade (including the major-upgrade limit of Docker live-restore), backup, restore, and troubleshooting.
   - Also (ADR-0009): host firewall rules for the build network's subnet (label `io.shipyard.role=build`): no `169.254.169.254`, no host services.

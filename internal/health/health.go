@@ -39,13 +39,7 @@ func Wait(ctx context.Context, c Config, alive func(context.Context) error) erro
 	c = c.withDefaults()
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
-	client := &http.Client{
-		// The target is a container IP: never go through a proxy from the
-		// environment, never follow redirects (a 3xx passes), and never keep
-		// connections to a container that may be replaced.
-		Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	client := newClient()
 	defer client.CloseIdleConnections()
 
 	passes, last := 0, "no probe completed"
@@ -75,6 +69,25 @@ func Wait(ctx context.Context, c Config, alive func(context.Context) error) erro
 		return cause // cancelled by the caller, e.g. the lease was lost
 	}
 	return fmt.Errorf("%w within %s: %s", ErrUnhealthy, c.Timeout, last)
+}
+
+// Probe makes one request as the gate does: 2xx or 3xx passes. The
+// reconciler checks active apps with it (ADR-0013). A timeout of 0 means
+// DefaultRequestTimeout.
+func Probe(ctx context.Context, url string, timeout time.Duration) error {
+	client := newClient()
+	defer client.CloseIdleConnections()
+	return probe(ctx, client, Config{URL: url, RequestTimeout: timeout}.withDefaults())
+}
+
+func newClient() *http.Client {
+	return &http.Client{
+		// The target is a container IP: never go through a proxy from the
+		// environment, never follow redirects (a 3xx passes), and never keep
+		// connections to a container that may be replaced.
+		Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 func probe(ctx context.Context, client *http.Client, c Config) error {

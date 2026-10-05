@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hami9/shipyard/internal/metrics"
+	"github.com/hami9/shipyard/internal/reconcile"
 	"github.com/hami9/shipyard/internal/store"
 )
 
@@ -107,6 +108,35 @@ func TestWorkerMetrics(t *testing.T) {
 	if strings.Contains(got, "shipyard_queue_operations{") || !strings.Contains(got, "shipyard_database_up 0\n") ||
 		!strings.Contains(got, `shipyard_operations_total{kind="deploy",result="failed"} 1`) {
 		t.Errorf("database down:\n%s", got)
+	}
+}
+
+// P5.5b: the reconciler's report replaces the app series; an app that is
+// no longer active drops out.
+func TestWorkerMetricsHealth(t *testing.T) {
+	reg := &metrics.Registry{}
+	m, err := newWorkerMetrics(context.Background(), &fakeMetricsStore{}, reg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.now = func() time.Time { return time.Unix(1_790_000_000, 500e6) }
+	if got := scrape(t, reg); !strings.Contains(got, "shipyard_app_health_checked_timestamp_seconds 0\n") {
+		t.Fatalf("before a check:\n%s", got)
+	}
+	m.ReportHealth([]reconcile.AppHealth{{App: "old", Running: true, Healthy: true}})
+	m.ReportHealth([]reconcile.AppHealth{{App: "web", Running: true, Healthy: false}, {App: "api", Running: false}})
+	got := scrape(t, reg)
+	for _, want := range []string{
+		`shipyard_app_up{app="api"} 0`, `shipyard_app_up{app="web"} 1`,
+		`shipyard_app_healthy{app="api"} 0`, `shipyard_app_healthy{app="web"} 0`,
+		`shipyard_app_health_checked_timestamp_seconds 1.7900000005e+09`,
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `app="old"`) {
+		t.Errorf("an app no longer active is still exposed:\n%s", got)
 	}
 }
 

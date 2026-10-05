@@ -563,7 +563,8 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
       - finished operations by kind and result, with their durations (`shipyard_operations_total`, `shipyard_operation_duration_seconds`), counted once each through a cursor on `finished_at`;
       - the queue (`shipyard_queue_operations`, `shipyard_queue_oldest_wait_seconds`);
       - `shipyard_database_up`.
-    - App health and the API's 429s follow in P5.5b.
+    - App health (P5.5b): after the restore step, each reconcile pass inspects every active container and makes one GET of its health path (`shipyard_app_up`, `shipyard_app_healthy`). This is information only; a failed probe changes nothing.
+  - The API serves its own `GET /metrics` on `SHIPYARD_API_METRICS_LISTEN` (P5.5b): answers by status class, and 429s by reason (ADR-0011).
 
 ## 8. Repository layout
 

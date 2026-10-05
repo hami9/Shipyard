@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"time"
 
 	"github.com/hami9/shipyard/internal/app"
@@ -59,8 +60,22 @@ type Pruner interface {
 	Prune(ctx context.Context) ([]string, error)
 }
 
+// AppHealth is one active app as a pass saw it (ADR-0013).
+type AppHealth struct {
+	App     string // the slug
+	Running bool   // its container is running
+	Healthy bool   // running, and one GET of its health path passed
+}
+
+// HealthReporter receives every active app's health after each pass's
+// restore step (the worker's metrics).
+type HealthReporter interface {
+	ReportHealth(apps []AppHealth)
+}
+
 // Reconciler runs the steps; Router is nil when Caddy is disabled. A nil
-// Images skips image retention.
+// Images skips image retention. A nil Health skips the health check; Probe
+// is then unused (health.Probe otherwise).
 type Reconciler struct {
 	Queue   Queue
 	Store   Store
@@ -69,6 +84,8 @@ type Reconciler struct {
 	Router  Router
 	Janitor Sweeper
 	Images  Pruner
+	Health  HealthReporter
+	Probe   func(ctx context.Context, url string) error
 	Log     *slog.Logger
 }
 
@@ -93,7 +110,8 @@ func Every(ctx context.Context, every time.Duration, fn func(context.Context)) {
 // Pass runs every step once, in order:
 //  1. return operations of crashed workers to the queue, or fail them with
 //     their deployment on the last attempt;
-//  2. restore active deployments whose container is gone or stopped;
+//  2. restore active deployments whose container is gone or stopped, then
+//     report each active app's health (ADR-0013);
 //  3. make Caddy serve the routes table (a switch in progress is kept);
 //  4. drain superseded containers and remove failed ones (app.Janitor),
 //     after the sync, so Caddy no longer points at what it stops;
@@ -112,8 +130,12 @@ func (r *Reconciler) Pass(ctx context.Context) {
 	case requeued+failed > 0:
 		r.Log.Info("expired operations requeued", slog.Int("requeued", requeued), slog.Int("failed", failed))
 	}
-	if err := r.restoreActive(ctx); err != nil {
+	deps, err := r.restoreActive(ctx)
+	if err != nil {
 		warn("restoring active containers incomplete", err)
+	}
+	if r.Health != nil && deps != nil {
+		r.checkHealth(ctx, deps)
 	}
 	if r.Router != nil {
 		changed, err := r.Router.Sync(ctx)
@@ -142,21 +164,60 @@ func (r *Reconciler) Pass(ctx context.Context) {
 // health gate runs: this is the release that already passed one, from the
 // same image and configuration (invariants 5 and 6). When the image is gone
 // as well, the commit is rebuilt by a deploy, health gate included (rebuild).
-func (r *Reconciler) restoreActive(ctx context.Context) error {
+//
+// It returns the active deployments, each with its current container, or
+// nil when they could not be listed.
+func (r *Reconciler) restoreActive(ctx context.Context) ([]store.Deployment, error) {
 	deps, err := r.Store.ActiveDeployments(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if deps == nil {
+		deps = []store.Deployment{} // listed, and none: still reported
 	}
 	var errs []error
-	for _, d := range deps {
-		if err := r.restore(ctx, d); err != nil {
-			errs = append(errs, fmt.Errorf("deployment %s: %w", d.ID, err))
+	for i := range deps {
+		if err := r.restore(ctx, &deps[i]); err != nil {
+			errs = append(errs, fmt.Errorf("deployment %s: %w", deps[i].ID, err))
 		}
 	}
-	return errors.Join(errs...)
+	return deps, errors.Join(errs...)
 }
 
-func (r *Reconciler) restore(ctx context.Context, d store.Deployment) error {
+// checkHealth reports whether each active app's container runs and answers
+// one GET of its health path, as the deploy gate asks it (ADR-0013). It
+// runs after the restore, so a container started or recreated by this pass
+// counts. An app that cannot be read is left out; a cancelled pass reports
+// nothing.
+func (r *Reconciler) checkHealth(ctx context.Context, deps []store.Deployment) {
+	out := make([]AppHealth, 0, len(deps))
+	for _, d := range deps {
+		a, err := r.Store.AppByID(ctx, d.AppID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			r.Log.Warn("health check: read app failed", slog.String("app_id", d.AppID), slog.Any("err", err))
+			continue
+		}
+		h := AppHealth{App: a.Slug}
+		st, err := r.Runtime.Inspect(ctx, d.ContainerID)
+		if ctx.Err() != nil {
+			return
+		}
+		if h.Running = err == nil && st.Running; h.Running && st.IP.IsValid() {
+			url := "http://" + netip.AddrPortFrom(st.IP, uint16(a.InternalPort)).String() + a.HealthPath
+			h.Healthy = r.Probe(ctx, url) == nil
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		out = append(out, h)
+	}
+	r.Health.ReportHealth(out)
+}
+
+func (r *Reconciler) restore(ctx context.Context, d *store.Deployment) error {
 	log := r.Log.With(slog.String("app_id", d.AppID), slog.String("deployment_id", d.ID))
 	st, err := r.Runtime.Inspect(ctx, d.ContainerID)
 	switch {
@@ -175,7 +236,7 @@ func (r *Reconciler) restore(ctx context.Context, d store.Deployment) error {
 	case err != nil:
 		return fmt.Errorf("check image %s: %w", d.ImageID, err)
 	case !ok:
-		return r.rebuild(ctx, d, log)
+		return r.rebuild(ctx, *d, log)
 	}
 
 	a, err := r.Store.AppByID(ctx, d.AppID)
@@ -202,6 +263,7 @@ func (r *Reconciler) restore(ctx context.Context, d store.Deployment) error {
 	}
 	log.Warn("active container was gone; recreated it", slog.String("old_container_id", d.ContainerID),
 		slog.String("container_id", id), slog.String("image_id", d.ImageID))
+	d.ContainerID = id
 	return nil
 }
 

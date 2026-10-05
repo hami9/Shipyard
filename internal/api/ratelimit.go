@@ -62,8 +62,9 @@ type client struct {
 }
 
 type limiter struct {
-	log *slog.Logger
-	now func() time.Time
+	log     *slog.Logger
+	now     func() time.Time
+	metrics *apiMetrics // nil: not counted
 
 	rate, burst         float64
 	authRate, authBurst float64
@@ -128,11 +129,13 @@ func (l *limiter) allow(key string) (time.Duration, string, bool) {
 	c := l.client(key, l.now())
 	if l.authRate > 0 {
 		if d := c.auth.wait(l.authRate); d > 0 {
+			l.metrics.throttle(throttleAuth)
 			return d, "too many failed authentications; retry later", false
 		}
 	}
 	if l.rate > 0 {
 		if d := c.req.wait(l.rate); d > 0 {
+			l.metrics.throttle(throttleRequests)
 			return d, "too many requests; retry later", false
 		}
 		c.req.tokens--

@@ -12,6 +12,8 @@ All notable changes to Shipyard are recorded here.
 ### Added
 
 - **Prometheus metrics** (ADR-0013): set `SHIPYARD_WORKER_METRICS_LISTEN` to a loopback `host:port` and the worker serves `GET /metrics`. It covers finished operations by kind and result with their durations (`shipyard_operations_total`, `shipyard_operation_duration_seconds`), the queue (`shipyard_queue_operations`, `shipyard_queue_oldest_wait_seconds`), and `shipyard_database_up`. Off by default.
+  - **App health:** with the worker's metrics on, each reconcile pass reports whether each app's container runs (`shipyard_app_up`) and answers its health path (`shipyard_app_healthy`).
+  - **API:** `SHIPYARD_API_METRICS_LISTEN` serves answers by status class (`shipyard_api_requests_total`) and 429s by reason (`shipyard_api_throttled_total`).
 - **Database schema v1** (migration `0002`): users and API tokens, apps, encrypted secret values and immutable environment revisions, the operations queue and its events, deployments, routes, webhook deliveries, and audit events. The database itself enforces one running operation and one active deployment per app, unique idempotency keys and hostnames, and same-app references.
 - **API tokens:** `shipyard-api token create|list|revoke` bootstraps and manages `shp_` tokens on the server. Tokens have scopes (`read`, `deploy`, `admin`) and an expiry of 1h to 366d (default 90d). Only a SHA-256 hash is stored, the plaintext is printed once, and every create and revoke is audited.
 - **KEK rotation** (ADR-0012):

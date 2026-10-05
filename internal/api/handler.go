@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/hami9/shipyard/internal/metrics"
 )
 
 const readinessTimeout = 2 * time.Second
@@ -44,6 +46,8 @@ type Deps struct {
 	// Limits caps requests and failed authentications per client; the
 	// zero value turns both off.
 	Limits RateLimits
+	// Metrics, when set, gets the API's counters (ADR-0013).
+	Metrics *metrics.Registry
 }
 
 // NewHandler returns the root handler with middleware applied. Health
@@ -95,7 +99,10 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "POST /v1/apps/{app}/rollbacks", ScopeDeploy, ops.rollback)
 	route(mux, "GET /v1/operations/{id}", ScopeRead, ops.get)
 	route(mux, "GET /v1/operations/{id}/events", ScopeRead, ops.events)
-	return withRequestID(withAccessLog(log, newLimiter(log, d.Limits).limit(mux)))
+	m := newAPIMetrics(d.Metrics)
+	lim := newLimiter(log, d.Limits)
+	lim.metrics = m
+	return withRequestID(withAccessLog(log, m.count(lim.limit(mux))))
 }
 
 // handleWhoami describes the calling token, so the CLI can check its

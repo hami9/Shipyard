@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.5a: worker Prometheus metrics (operations, durations, queue), ADR-0013 |
-| **Next task** | P5.5b: app health metrics from the reconciler, and the API's metrics listener (429s). Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.5: Prometheus metrics: the worker's operations, durations and queue (P5.5a), and app health plus the API's requests and 429s (P5.5b), ADR-0013 |
+| **Next task** | P5.6: disk usage and certificate expiry metrics and alerts. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-05 |
@@ -53,6 +53,34 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-05: P5.5b app health and API metrics
+
+- **Phase / task:** P5.5b: each active app's health, and the API's metrics listener (ADR-0013); P5.5 is done
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Reconciler:** after the restore step, each pass reports every active app: its container running, and one GET of its health path at the container IP (`health.Probe`, the gate's rules, 2 s). A recreated container is checked under its new ID. The step runs only when the worker's metrics are on.
+- **Worker metrics:** `shipyard_app_up{app}`, `shipyard_app_healthy{app}` (replaced as a whole, so deleted apps drop out), and `shipyard_app_health_checked_timestamp_seconds`.
+- **API:** `SHIPYARD_API_METRICS_LISTEN` (loopback, different from the worker's) serves `shipyard_api_requests_total{code}` by status class, `shipyard_api_throttled_total{reason}` (`requests` or `auth`), and `shipyard_build_info`. No label names a client, a token or a path.
+- **`internal/metrics`:** `Gauge.Replace`, `Serve`, `BuildInfo`.
+- **Docs:** ADR-0013 (P5.5b decisions), ARCHITECTURE, ROADMAP (P5.5 ticked), CHANGELOG, env example.
+
+**Decisions**
+- **Health is information only:** a failed probe restarts nothing and changes no route. Probing happens once per reconcile pass, not at scrape time (ADR-0013 alternatives).
+
+**Verification**
+- `make lint` and `go test -race ./...`: exit 0.
+- **New unit tests:**
+  - `TestPassReportsHealth`: running and healthy, running but unhealthy, recreated, stopped; no report when listing fails; an empty list when there are none;
+  - `TestProbe`, `TestGaugeReplace`, `TestWorkerMetricsHealth`;
+  - `TestAPIMetrics` (200, 429 by rate, 401, 429 by auth, healthz) and `TestAPIMetricsOff`;
+  - `TestLoadWorkerMetricsListen`, extended to the API and the same-port check.
+- `go test -tags e2e -run TestPhase1ExitCriteria`: PASS, 404.1 s; no leftovers. It now also waits for `shipyard_app_up` and `shipyard_app_healthy` of the app to be 1, and reads a non-zero API 2xx count.
+- **Not run:** `TestRestoreDrill` and `TestCrashSafety`.
+
+**Next**
+- P5.6: disk usage and certificate expiry metrics and alerts.
 
 ### 2026-10-05: P5.5a worker metrics
 

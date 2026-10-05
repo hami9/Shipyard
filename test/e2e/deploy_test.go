@@ -53,10 +53,24 @@ func TestPhase1ExitCriteria(t *testing.T) {
 		t.Fatalf("replay:\n%s", out)
 	}
 	h.wantOp(op1, "succeeded", "")
-	// P5.5: the worker's metrics count the deploy.
+	// P5.5: the worker's metrics count the deploy, and a reconcile pass
+	// (every second here) finds the app running and healthy; the API's
+	// count the CLI's requests.
 	if m := get(t, "http://"+h.metrics+"/metrics"); !strings.Contains(m, `shipyard_operations_total{kind="deploy",result="succeeded"} 1`+"\n") ||
 		!strings.Contains(m, "shipyard_database_up 1\n") {
 		t.Fatalf("worker metrics:\n%s", m)
+	}
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+		m := get(t, "http://"+h.metrics+"/metrics")
+		if strings.Contains(m, `shipyard_app_up{app="`+slug+`"} 1`+"\n") && strings.Contains(m, `shipyard_app_healthy{app="`+slug+`"} 1`+"\n") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker metrics never showed %s healthy:\n%s", slug, m)
+		}
+	}
+	if m := get(t, "http://"+h.apiMetrics+"/metrics"); !regexp.MustCompile(`(?m)^shipyard_api_requests_total\{code="2xx"\} [1-9]`).MatchString(m) {
+		t.Fatalf("API metrics:\n%s", m)
 	}
 	// ADR-0009: the build ran on a builder that is on its own network only.
 	if net := (&build.Builder{Name: h.builder}).Network(); h.docker("inspect", "--format", "{{.HostConfig.NetworkMode}}", "buildx_buildkit_"+h.builder+"0") != net {
@@ -497,8 +511,8 @@ type harness struct {
 	apiSock, builder    string
 	stopAPI, stopWorker func()
 
-	// metrics is the worker's Prometheus listener (P5.5).
-	metrics string
+	// metrics and apiMetrics are the Prometheus listeners (P5.5).
+	metrics, apiMetrics string
 }
 
 type repo struct{ good, offBranch string }
@@ -575,7 +589,9 @@ func start(t *testing.T) *harness {
 	if err := os.WriteFile(hookFile, append(h.hookSecret, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h.apiEnv, h.apiSock, h.builder = append(common, "SHIPYARD_DNS_PREFLIGHT=false", "SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE="+hookFile), apiSock, builder
+	h.apiMetrics = freePort(t)
+	h.apiEnv, h.apiSock, h.builder = append(common, "SHIPYARD_DNS_PREFLIGHT=false", "SHIPYARD_GITHUB_WEBHOOK_SECRET_FILE="+hookFile,
+		"SHIPYARD_API_METRICS_LISTEN="+h.apiMetrics), apiSock, builder
 	h.stopAPI = h.spawn("api", h.apiEnv, "shipyard-api", "serve").stop
 	waitUnix(t, apiSock)
 	h.kek = kek
