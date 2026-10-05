@@ -23,7 +23,10 @@ Usage: sudo deploy/install.sh [options]
   --api-hostname H    publish the API at https://H (SHIPYARD_API_HOSTNAME)
   --acme-email E      contact address for Let's Encrypt (SHIPYARD_ACME_EMAIL)
   --skip-build-check  do not try a rootless build after the install
-  --dry-run           print what would change, change nothing
+  --for-restore       prepare a host for docs/RESTORE.md: packages, users,
+                      files, shipyard.env and an empty database, but no
+                      KEK, no migrations and no services
+  --dry-run          print what would change, change nothing
   -h, --help          this help
 
 The first three only apply to a new /etc/shipyard/shipyard.env.
@@ -47,6 +50,7 @@ readonly DOCKER_MIN_MAJOR=29
 
 DRY_RUN=0
 BUILD_CHECK=1
+FOR_RESTORE=0
 BIN_DIR=
 PUBLIC_IPS=
 API_HOSTNAME=
@@ -86,6 +90,7 @@ while [ $# -gt 0 ]; do
 	--api-hostname) API_HOSTNAME=${2:?--api-hostname needs a hostname}; shift 2 ;;
 	--acme-email) ACME_EMAIL=${2:?--acme-email needs an address}; shift 2 ;;
 	--skip-build-check) BUILD_CHECK=0; shift ;;
+	--for-restore) FOR_RESTORE=1; shift ;;
 	--dry-run) DRY_RUN=1; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; die "unknown option $1" ;;
@@ -254,6 +259,25 @@ SELECT 'CREATE DATABASE shipyard OWNER shipyard' WHERE NOT EXISTS (SELECT FROM p
 	unset password sql
 else
 	say "keeping $ENV_FILE"
+fi
+
+if [ "$FOR_RESTORE" = 1 ]; then
+	# docs/RESTORE.md: the KEKs come from the backup, the empty database is
+	# filled by `shipyard-worker restore`, and the services start after it.
+	if [ "$DRY_RUN" = 1 ]; then
+		printf '\nDry run finished: nothing was changed.\n'
+		exit 0
+	fi
+	cat <<EOF
+
+The host is ready for a restore; nothing was started. Next (docs/RESTORE.md):
+  1. Put the backup's KEK files in $KEK_DIR and set SHIPYARD_KEK_ACTIVE
+     in $ENV_FILE to one of the manifest's kek_ids.
+  2. Run shipyard-worker restore --from <backup directory> (step 5).
+  3. Point DNS here, then run: sudo deploy/install.sh
+     (it migrates, starts the services, and checks a build).
+EOF
+	exit 0
 fi
 
 if ! compgen -G "$KEK_DIR/*.key" >/dev/null && ! compgen -G "$KEK_DIR/*.hpke" >/dev/null; then

@@ -11,6 +11,7 @@ All notable changes to Shipyard are recorded here.
 
 ### Added
 
+- **Operator guide** ([docs/OPERATIONS.md](docs/OPERATIONS.md)): install, configuration, upgrade (including live-restore's patch-only limit for Docker upgrades), backup and restore, keys and tokens, monitoring, troubleshooting. `install.sh --for-restore` prepares a host for [docs/RESTORE.md](docs/RESTORE.md), which now uses the installer. The release archive ships both guides.
 - **Installer:** `sudo deploy/install.sh` installs or upgrades Shipyard on Ubuntu or Debian from a release archive or a `make build`.
   - **Dependencies:** it installs Docker Engine and PostgreSQL 18 from their official apt repositories when missing.
   - **Setup:** it creates the users, directories, database and an HPKE KEK. It installs the units, sysctl and build firewall, runs the migrations, starts the services, checks that a rootless build works, and prints the first admin token.

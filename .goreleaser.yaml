@@ -81,6 +81,8 @@ archives:
         dst: deploy/install.sh
         info:
           mode: 0755
+      - docs/OPERATIONS.md
+      - docs/RESTORE.md
 
 checksum:
   name_template: checksums.txt

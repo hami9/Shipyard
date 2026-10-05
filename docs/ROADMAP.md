@@ -224,14 +224,14 @@ flowchart LR
   - [x] **P5.5a** `internal/metrics` (text format, no client library), and the worker's listener (`SHIPYARD_WORKER_METRICS_LISTEN`): finished operations by kind and result with durations, the queue, and database reachability.
   - [x] **P5.5b** Each active app's health from the reconciler (container running, one probe of its health path), and the API's listener: requests by status class and 429s by reason (ADR-0011).
 - [x] **P5.6** Disk usage and certificate expiry metrics and alerts (80% threshold) ([ADR-0014](adr/0014-disk-and-certificate-checks.md); alerts: log warnings plus shipped Prometheus rules, the owner's choice).
-- [ ] **P5.7** `deploy/install.sh` and an operator guide covering install, upgrade (including the major-upgrade limit of Docker live-restore), backup, restore, and troubleshooting.
+- [x] **P5.7** `deploy/install.sh` and an operator guide covering install, upgrade (including the major-upgrade limit of Docker live-restore), backup, restore, and troubleshooting.
   - Also (ADR-0009): host firewall rules for the build network's subnet (label `io.shipyard.role=build`): no `169.254.169.254`, no host services.
   - Also (ADR-0010): on Ubuntu 24.04+, install `deploy/sysctl/60-shipyard-buildkit.conf`, and check that a rootless build works before the first deploy.
   - Also (ADR-0012): create the first KEK as an HPKE pair (`shipyard-worker kek generate`), with `<id>.hpke` owned by the worker's user, mode 0600.
   - Split into (owner's choices 2026-10-05: the installer installs Docker and PostgreSQL when missing; the firewall matches a fixed bridge name):
     - [x] **P5.7a** Build network firewall: a fixed bridge name `sybuild-*`, `deploy/firewall/shipyard-firewall.sh` and `shipyard-firewall.service` (ADR-0009, as implemented).
     - [x] **P5.7b** `deploy/install.sh`: Docker Engine and PostgreSQL 18 from their apt repositories when missing, users and directories, binaries and units, the env file, migrations, an HPKE KEK, the sysctl and firewall, a rootless build check, the first token.
-    - [ ] **P5.7c** Operator guide (`docs/OPERATIONS.md`): install, upgrade (Docker live-restore's major-upgrade limit), backup, restore, monitoring, troubleshooting.
+    - [x] **P5.7c** Operator guide (`docs/OPERATIONS.md`): install, upgrade (Docker live-restore's major-upgrade limit), backup, restore, monitoring, troubleshooting.
 - [ ] **P5.8** Security review against the invariants in CLAUDE.md §3, plus `govulncheck` and a dependency audit.
 - [ ] **P5.9** Run the full acceptance demo on a fresh VPS, record it, and tag `v1.0.0`.
 

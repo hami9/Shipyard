@@ -33,7 +33,7 @@ A failed build or health check never touches the release that is currently servi
 - **Container image:** `ghcr.io/hami9/shipyard:<version>` (linux/amd64, linux/arm64), for the CLI and for evaluation. The image has no entrypoint, so name the binary: `docker run --rm ghcr.io/hami9/shipyard:v0.1.0 shipyard version`.
 - **From source:** see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-The supported production setup is the two systemd services in [deploy/](deploy/README.md). A full installer arrives in Phase 5.
+The supported production setup is the two systemd services in [deploy/](deploy/README.md), installed by `sudo deploy/install.sh` from the `shipyard-server` archive. See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Documentation
 
@@ -47,6 +47,7 @@ The supported production setup is the two systemd services in [deploy/](deploy/R
 | [docs/WORKLOG.md](docs/WORKLOG.md) | Session-by-session work log and current status |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, testing, and troubleshooting |
 | [docs/RELEASING.md](docs/RELEASING.md) | Release process, artifacts, and version plan |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Install, configuration, upgrade, backup, monitoring, troubleshooting |
 | [docs/RESTORE.md](docs/RESTORE.md) | Restoring onto a new server from backups |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes per release |
 | [CLAUDE.md](CLAUDE.md) | Instructions for AI coding agents (system prompt) |
