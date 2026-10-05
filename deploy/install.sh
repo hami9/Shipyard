@@ -236,11 +236,14 @@ if [ ! -f "$ENV_FILE" ]; then
 	say "configuration and database (first install)"
 	password=$(head -c 32 /dev/urandom | sha256sum | cut -c1-40) # hex: safe in a URL and in SQL
 	env_new=$(mktemp)
-	sed -e "s|^SHIPYARD_DATABASE_URL=.*|SHIPYARD_DATABASE_URL=postgres://shipyard:$password@127.0.0.1:5432/shipyard?sslmode=disable|" \
-		-e "s|^SHIPYARD_PUBLIC_IPS=.*|SHIPYARD_PUBLIC_IPS=$PUBLIC_IPS|" \
-		-e "s|^SHIPYARD_API_HOSTNAME=.*|SHIPYARD_API_HOSTNAME=$API_HOSTNAME|" \
-		-e "s|^SHIPYARD_KEK_ACTIVE=.*|SHIPYARD_KEK_ACTIVE=$KEK_ID|" \
-		"$DEPLOY/shipyard.env.example" >"$env_new"
+	# The values reach awk through its environment, which only root can read,
+	# never through its arguments, which any local user can (/proc/*/cmdline).
+	SY_PW=$password SY_IPS=$PUBLIC_IPS SY_HOST=$API_HOSTNAME SY_KEK=$KEK_ID awk '
+		/^SHIPYARD_DATABASE_URL=/ { print "SHIPYARD_DATABASE_URL=postgres://shipyard:" ENVIRON["SY_PW"] "@127.0.0.1:5432/shipyard?sslmode=disable"; next }
+		/^SHIPYARD_PUBLIC_IPS=/   { print "SHIPYARD_PUBLIC_IPS=" ENVIRON["SY_IPS"]; next }
+		/^SHIPYARD_API_HOSTNAME=/ { print "SHIPYARD_API_HOSTNAME=" ENVIRON["SY_HOST"]; next }
+		/^SHIPYARD_KEK_ACTIVE=/   { print "SHIPYARD_KEK_ACTIVE=" ENVIRON["SY_KEK"]; next }
+		{ print }' "$DEPLOY/shipyard.env.example" >"$env_new"
 	[ -z "$ACME_EMAIL" ] || printf '\nSHIPYARD_ACME_EMAIL=%s\n' "$ACME_EMAIL" >>"$env_new"
 	# The role and database, created or given this password; the SQL goes
 	# on stdin, so the password is never on a command line.
@@ -331,11 +334,14 @@ if [ "$BUILD_CHECK" = 1 ] && [ "$DRY_RUN" = 0 ]; then
 		worker docker buildx inspect "$builder" >/dev/null 2>&1 && break
 		sleep 5
 	done
+	# A fresh name: root must not write through a link another user planted.
+	check_log=$(mktemp --suffix=.log /tmp/shipyard-build-check.XXXXXX)
 	if printf 'FROM busybox:1.37\nRUN id -u && touch /ok\n' |
-		worker docker buildx build --builder "$builder" --no-cache --progress plain - >/tmp/shipyard-build-check.log 2>&1; then
+		worker docker buildx build --builder "$builder" --no-cache --progress plain - >"$check_log" 2>&1; then
 		say "a rootless build works"
+		rm -f "$check_log"
 	else
-		warn "the build check failed: see /tmp/shipyard-build-check.log and docs/OPERATIONS.md (Troubleshooting)"
+		warn "the build check failed: see $check_log and docs/OPERATIONS.md (Troubleshooting)"
 	fi
 fi
 

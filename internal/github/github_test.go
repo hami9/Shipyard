@@ -181,7 +181,7 @@ func TestLoadKey(t *testing.T) {
 	k := key(t)
 	pkcs8, _ := x509.MarshalPKCS8PrivateKey(k)
 	for name, path := range map[string]string{
-		"pkcs1": writeKey(t, dir, "pkcs1.pem", &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}, 0o640),
+		"pkcs1": writeKey(t, dir, "pkcs1.pem", &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}, 0o400),
 		"pkcs8": writeKey(t, dir, "pkcs8.pem", &pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}, 0o600),
 	} {
 		got, err := LoadKey(path)
@@ -195,6 +195,8 @@ func TestLoadKey(t *testing.T) {
 	ecDER, _ := x509.MarshalPKCS8PrivateKey(ec)
 	for name, path := range map[string]string{
 		"world-readable": writeKey(t, dir, "open.pem", &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}, 0o644),
+		// P5.8: the API shares the worker's group, so group read is refused.
+		"group-readable": writeKey(t, dir, "group.pem", &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}, 0o640),
 		"too small":      writeKey(t, dir, "small.pem", &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(small)}, 0o600),
 		"not rsa":        writeKey(t, dir, "ec.pem", &pem.Block{Type: "PRIVATE KEY", Bytes: ecDER}, 0o600),
 		"public key":     writeKey(t, dir, "pub.pem", &pem.Block{Type: "PUBLIC KEY", Bytes: []byte("x")}, 0o600),

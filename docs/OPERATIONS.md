@@ -197,7 +197,7 @@ Start with the journal of the service involved, and with the events of the opera
 
 | Symptom | Likely cause and fix |
 | --- | --- |
-| The installer's build check fails, or the worker logs "buildx builder" at start | Rootless BuildKit cannot create user namespaces. On Ubuntu 24.04+, check `sysctl kernel.apparmor_restrict_unprivileged_userns` is 0 (`deploy/sysctl/`) `[UB-USERNS]`. See `/tmp/shipyard-build-check.log` |
+| The installer's build check fails, or the worker logs "buildx builder" at start | Rootless BuildKit cannot create user namespaces. On Ubuntu 24.04+, check `sysctl kernel.apparmor_restrict_unprivileged_userns` is 0 (`deploy/sysctl/`) `[UB-USERNS]`. The installer names its log file (`/tmp/shipyard-build-check.*.log`) |
 | `shipyard-firewall.service` fails: "nftables firewall backend" | Docker runs with its experimental nftables backend, which has no DOCKER-USER chain `[DK-NFTABLES]`. Use the default iptables backend (remove `firewall-backend` from `daemon.json`) |
 | `domain add` is refused: preflight | `SHIPYARD_PUBLIC_IPS` is empty or wrong, or the hostname's A/AAAA records do not all point here yet. Fix DNS or the setting; `SHIPYARD_DNS_PREFLIGHT=false` skips the check |
 | A hostname has no certificate | DNS does not point here, or ports 80/443 are blocked upstream (provider firewall). Look at the Caddy container's log: `docker logs shipyard-caddy`. Repeated failures can hit Let's Encrypt's rate limits `[LE-LIMITS]`; test with `SHIPYARD_CADDY_CA=staging` |

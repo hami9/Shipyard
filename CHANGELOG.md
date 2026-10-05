@@ -11,6 +11,11 @@ All notable changes to Shipyard are recorded here.
 
 ### Added
 
+- **Security review** ([docs/security-review.md](docs/security-review.md)): every invariant traced to its code and test. `make vuln` runs govulncheck, also in CI.
+- **Security fixes from the review:**
+  - `golang.org/x/text` upgraded to v0.42.0 (GO-2026-5970, reachable through the database driver).
+  - **Breaking:** the GitHub App key must now be owner-only (`chown shipyard-worker`, mode 0600), since the API shares the worker's group. A group-readable key stops the worker at start with a message saying so.
+  - `install.sh` no longer puts the database password on a command line, and names its build-check log with `mktemp`.
 - **Operator guide** ([docs/OPERATIONS.md](docs/OPERATIONS.md)): install, configuration, upgrade (including live-restore's patch-only limit for Docker upgrades), backup and restore, keys and tokens, monitoring, troubleshooting. `install.sh --for-restore` prepares a host for [docs/RESTORE.md](docs/RESTORE.md), which now uses the installer. The release archive ships both guides.
 - **Installer:** `sudo deploy/install.sh` installs or upgrades Shipyard on Ubuntu or Debian from a release archive or a `make build`.
   - **Dependencies:** it installs Docker Engine and PostgreSQL 18 from their official apt repositories when missing.

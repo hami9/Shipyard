@@ -12,6 +12,8 @@ LDFLAGS := -s -w -X $(PKG)/internal/buildinfo.version=$(VERSION) -X $(PKG)/inter
 
 # staticcheck 2026.2.1. It cannot yet analyze Go 1.27, hence the go1.26 toolchain pin in go.mod.
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+# Reports only vulnerabilities in code the binaries can reach [GO-VULNCHECK].
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 # GoReleaser is installed as a binary, not `go run`, because it needs a newer Go
 # than go.mod pins and `go run` would pass that toolchain on to the release build.
@@ -28,7 +30,7 @@ SHIPYARD_KEK_ACTIVE        ?= dev
 # The worker's log socket, read by the API (ADR-0008).
 SHIPYARD_WORKER_SOCKET     ?= $(CURDIR)/.dev/logs.sock
 
-.PHONY: help build test lint fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot clean
+.PHONY: help build test lint vuln fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -45,6 +47,10 @@ lint: ## gofmt check, go vet, staticcheck (unit, integration, and docker files)
 	$(GO) vet -tags integration,docker,e2e ./...
 	$(GO) run $(STATICCHECK) ./...
 	$(GO) run $(STATICCHECK) -tags integration,docker,e2e ./...
+
+vuln: ## govulncheck: known vulnerabilities in reachable code (Go and modules)
+	$(GO) run $(GOVULNCHECK) ./...
+	$(GO) run $(GOVULNCHECK) -tags integration,docker,e2e ./...
 
 fmt: ## Format all Go files
 	gofmt -w .

@@ -176,9 +176,10 @@ func (a *App) post(ctx context.Context, bearer, path string, body []byte) ([]byt
 }
 
 // LoadKey reads the App's private key: a PEM RSA key (PKCS#1, as GitHub
-// generates it, or PKCS#8) of at least 2048 bits, in a regular file other
-// users cannot read (like the KEK files, ADR-0005). It stays out of the
-// database. Errors never contain the key.
+// generates it, or PKCS#8) of at least 2048 bits, in a regular file only
+// its owner, the worker's user, can read. The API shares the worker's
+// group, so a group bit is refused, as for HPKE private keys (ADR-0012;
+// P5.8). It stays out of the database. Errors never contain the key.
 func LoadKey(path string) (*rsa.PrivateKey, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -187,8 +188,9 @@ func LoadKey(path string) (*rsa.PrivateKey, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("GitHub App key %s is not a regular file", path)
 	}
-	if fi.Mode().Perm()&0o007 != 0 {
-		return nil, fmt.Errorf("GitHub App key %s is accessible to other users (mode %v); chmod 0640", path, fi.Mode().Perm())
+	if fi.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("GitHub App key %s is accessible to others than its owner (mode %v): chown it to the worker's user and chmod 0600",
+			path, fi.Mode().Perm())
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
