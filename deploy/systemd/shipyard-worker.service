@@ -20,12 +20,23 @@ ExecStart=/usr/local/bin/shipyard-worker run
 Restart=on-failure
 RestartSec=2s
 
-# Per-operation git workspaces live under /var/lib/shipyard-worker.
+# The user's home (buildx keeps its builder state in ~/.docker).
 StateDirectory=shipyard-worker
-# The log socket the API reads (ADR-0008): /run/shipyard-worker/logs.sock,
-# mode 0660. The directory lets the shared shipyard group in, nobody else.
-RuntimeDirectory=shipyard-worker
+# Per-operation git checkouts (SHIPYARD_WORK_DIR); install.sh creates it,
+# owned by shipyard-worker, mode 0700. Everything else is read-only. ("-":
+# a missing directory fails the first deploy with a clear error, not the
+# unit's start with an opaque one.)
+ReadWritePaths=-/var/lib/shipyard/work
+# /run/shipyard-worker: the log socket the API reads (ADR-0008), mode 0660.
+# /run/shipyard: the worker creates caddy/ in it, the Caddy admin socket's
+# directory (SHIPYARD_CADDY_ADMIN_DIR, ADR-0003). Both let the shared
+# shipyard group in, nobody else.
+RuntimeDirectory=shipyard-worker shipyard
 RuntimeDirectoryMode=0750
+# Keep them across restarts: the Caddy container bind-mounts the admin
+# directory, and a new one would leave it a stale, empty mount
+# [SYSTEMD-EXEC]. The worker replaces stale sockets at start.
+RuntimeDirectoryPreserve=yes
 NoNewPrivileges=yes
 # No namespaces of any kind: offsets the host-wide userns sysctl that
 # rootless BuildKit needs on Ubuntu 24.04+ (ADR-0010) [SYSTEMD-EXEC].

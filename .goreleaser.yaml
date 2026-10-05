@@ -77,6 +77,10 @@ archives:
           mode: 0755
       - deploy/shipyard.env.example
       - deploy/README.md
+      - src: deploy/install.sh
+        dst: deploy/install.sh
+        info:
+          mode: 0755
 
 checksum:
   name_template: checksums.txt

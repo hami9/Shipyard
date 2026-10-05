@@ -1,9 +1,10 @@
 # deploy/
 
-Host configuration for running Shipyard on a single VPS. **This is a skeleton (P0.5).** The installer and operator guide come in P5.7. Until then, treat these files as reference, not a tested install.
+Host configuration for running Shipyard on a single VPS. `install.sh` puts every file below in place (P5.7b): run `sudo deploy/install.sh --dry-run` to see what it would do. It has been run in dry-run mode only so far; the first real install is on a fresh VPS (P5.9).
 
 | File | Installs to | Purpose |
 | --- | --- | --- |
+| `install.sh` | Run from here, as root | Installs or upgrades Shipyard on Ubuntu or Debian. It installs Docker Engine and PostgreSQL 18 from their apt repositories when missing `[DK-INSTALL][PG-APT]`. It creates the users, directories, database role and an HPKE KEK. It installs the binaries, units, sysctl and firewall, runs the migrations, starts the services, tries a rootless build, and prints the first admin token. Running it again upgrades: it keeps `shipyard.env`, the KEKs and the data |
 | `shipyard.env.example` | `/etc/shipyard/shipyard.env` (root:shipyard, `0640`) | Environment for both services. Contains the DB password |
 | `systemd/shipyard-api.service` | `/etc/systemd/system/` | API as user `shipyard-api`, **not** in the `docker` group, listening on a Unix socket |
 | `systemd/shipyard-worker.service` | `/etc/systemd/system/` | Worker as user `shipyard-worker`, in the `docker` group, which is root-equivalent |

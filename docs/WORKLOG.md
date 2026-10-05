@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b, pushed, no PR yet); `disk-cert` (P5.6, pushed, no PR yet); `install-script` (P5.7a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.7a: build network firewall (fixed bridge name, shipyard-firewall.service), ADR-0009. Before it, P5.6: disk and certificate checks with log warnings and shipped Prometheus alert rules at 80%, ADR-0014 (P5.5 metrics before it, ADR-0013) |
-| **Next task** | P5.7b: `deploy/install.sh`, then P5.7c: the operator guide. Owner: the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b, pushed, no PR yet); `disk-cert` (P5.6, pushed, no PR yet); `install-script` (P5.7a, pushed, no PR yet); `installer` (P5.7b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P5.7b: `deploy/install.sh` (dry-run tested; a real install is the owner's step). Before it, P5.7a: build network firewall, ADR-0009; P5.6: disk and certificate checks with log warnings and shipped Prometheus alert rules at 80%, ADR-0014 (P5.5 metrics before it, ADR-0013) |
+| **Next task** | P5.7c: the operator guide (`docs/OPERATIONS.md`). Owner: a real `install.sh` run on a fresh VPS; the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. The API and the worker share the `shipyard` group, so the API user can also open the Caddy admin socket (mode 0660, worker group); invariant 1 holds only in code there. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-05 |
@@ -53,6 +53,47 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-05: P5.7b installer
+
+- **Phase / task:** P5.7b: `deploy/install.sh`
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`deploy/install.sh [--bin DIR] [--public-ip IP]… [--api-hostname H] [--acme-email E] [--skip-build-check] [--dry-run]`,** for Ubuntu or Debian, amd64 or arm64, as root:
+  - **Shipyard's binaries:** from the release directory or `./bin`; it never downloads Shipyard.
+  - **Dependencies (the owner's choice):** Docker Engine (with buildx) and PostgreSQL 18, from their vendors' deb822 apt sources, when missing `[DK-INSTALL][PG-APT]`. An existing Docker older than 29 gets a warning. `daemon.json` is installed only when absent; a different one is reported, never overwritten.
+  - **Accounts and files:**
+    - users `shipyard-api` and `shipyard-worker` (also in `docker`), with homes under `/var/lib`, and group `shipyard`;
+    - directories with their modes;
+    - binaries, units, the firewall script; on Ubuntu ≥ 24.04, the userns sysctl.
+  - **First install only:**
+    - `shipyard.env` from the example, with a random database password and the flags;
+    - the role and database, with the SQL on stdin, idempotent;
+    - an HPKE KEK `k1` (private key owned by the worker);
+    - after the services start, the first admin token, printed once.
+  - **Every run:** `shipyard-api migrate` as `shipyard-api`, enabling and (re)starting the services, then a rootless build check (busybox `RUN`) as the worker's user.
+- **Worker unit fix:** it was never run on a host, and `ProtectSystem=strict` left `/var/lib/shipyard/work` and `/run/shipyard` read-only. Now:
+  - `ReadWritePaths=-/var/lib/shipyard/work`;
+  - `RuntimeDirectory=shipyard-worker shipyard`;
+  - `RuntimeDirectoryPreserve=yes`, since Caddy bind-mounts the admin directory.
+- **`.gitattributes`:** `*.sh` stays LF. **`.goreleaser.yaml`:** ships `deploy/install.sh` (0755).
+- **Docs:** deploy README (no longer "skeleton"), SOURCES (`DK-INSTALL`, `PG-APT`, `SYSTEMD-EXEC` re-read), ROADMAP, CHANGELOG.
+
+**Decisions**
+- **The KEK ID is `k1`, and the env example's value is kept.**
+- **The admin token is printed once, never stored.**
+- **An upgrade migrates before it restarts the services.** The old binaries run briefly against the new schema; migrations are forward-only and additive. OPERATIONS.md (P5.7c) says to back up first.
+
+**Verification**
+- `bash -n`: ok. `--help`, an unknown option, and a non-root run without `--dry-run` (refused) behave as expected.
+- **`--dry-run` as a normal user on WSL Ubuntu 24.04** (Docker present, no host PostgreSQL): it plans every step in order (daemon.json, PGDG and `postgresql-18`, users, directories, files, the sysctl, the firewall, env and database, KEK, migrate, services) and changes nothing.
+- **The env rewrite on a scratch copy:** exactly the database URL, public IPs and API hostname change. The file loads with `set -a; .`; `shipyard-api` runs with it.
+- **The role and database SQL, twice against the dev PostgreSQL 18** (renamed `sy_install_test`): both runs ok, the database is owned by the role; then dropped.
+- **Not run:** a real install (needs root on a fresh host). That is the owner's step on a VPS or a throwaway VM: `sudo deploy/install.sh --public-ip <IP>`. shellcheck is not installed.
+
+**Next**
+- P5.7c: `docs/OPERATIONS.md`.
 
 ### 2026-10-05: P5.7a build network firewall
 

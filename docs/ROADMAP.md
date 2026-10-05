@@ -230,7 +230,7 @@ flowchart LR
   - Also (ADR-0012): create the first KEK as an HPKE pair (`shipyard-worker kek generate`), with `<id>.hpke` owned by the worker's user, mode 0600.
   - Split into (owner's choices 2026-10-05: the installer installs Docker and PostgreSQL when missing; the firewall matches a fixed bridge name):
     - [x] **P5.7a** Build network firewall: a fixed bridge name `sybuild-*`, `deploy/firewall/shipyard-firewall.sh` and `shipyard-firewall.service` (ADR-0009, as implemented).
-    - [ ] **P5.7b** `deploy/install.sh`: Docker Engine and PostgreSQL 18 from their apt repositories when missing, users and directories, binaries and units, the env file, migrations, an HPKE KEK, the sysctl and firewall, a rootless build check, the first token.
+    - [x] **P5.7b** `deploy/install.sh`: Docker Engine and PostgreSQL 18 from their apt repositories when missing, users and directories, binaries and units, the env file, migrations, an HPKE KEK, the sysctl and firewall, a rootless build check, the first token.
     - [ ] **P5.7c** Operator guide (`docs/OPERATIONS.md`): install, upgrade (Docker live-restore's major-upgrade limit), backup, restore, monitoring, troubleshooting.
 - [ ] **P5.8** Security review against the invariants in CLAUDE.md §3, plus `govulncheck` and a dependency audit.
 - [ ] **P5.9** Run the full acceptance demo on a fresh VPS, record it, and tag `v1.0.0`.

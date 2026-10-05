@@ -11,6 +11,12 @@ All notable changes to Shipyard are recorded here.
 
 ### Added
 
+- **Installer:** `sudo deploy/install.sh` installs or upgrades Shipyard on Ubuntu or Debian from a release archive or a `make build`.
+  - **Dependencies:** it installs Docker Engine and PostgreSQL 18 from their official apt repositories when missing.
+  - **Setup:** it creates the users, directories, database and an HPKE KEK. It installs the units, sysctl and build firewall, runs the migrations, starts the services, checks that a rootless build works, and prints the first admin token.
+  - **Options:** `--public-ip`, `--api-hostname` and `--acme-email` seed a new `shipyard.env`. `--dry-run` shows the plan.
+  - **Packaging:** the release archive now ships `install.sh`.
+- **Worker unit fix:** under `ProtectSystem=strict` the unit could not write to the work directory or create the Caddy admin directory. It now allows `/var/lib/shipyard/work`, creates `/run/shipyard`, and keeps its runtime directories across restarts.
 - **Build network firewall** (ADR-0009): `shipyard-firewall.service` runs `deploy/firewall/shipyard-firewall.sh`, which stops builds from reaching the host's own services or cloud metadata (`169.254.0.0/16`) while keeping internet access. It needs Docker's default iptables firewall backend.
   - The builder's network now has a fixed bridge name (`sybuild-…`). An existing build network and its builder are recreated once at the worker's next start, and the build cache goes with them.
 - **Disk and certificate checks** (ADR-0014): every `SHIPYARD_CHECK_INTERVAL` (default 5m), the worker checks two things. It warns once in its log when either passes 80%, or when Caddy presents no certificate.
