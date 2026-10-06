@@ -251,7 +251,9 @@ The UI is never required for a deploy (ARCHITECTURE §1).
 - [x] **P6.1** An OpenAPI description of `/v1` and a typed TypeScript client ([ADR-0015](adr/0015-openapi-and-typescript-client.md); owner's choices 2026-10-06: hand-written JSON, a generator in Go). Split into:
   - [x] **P6.1a** `api/openapi.json` (OpenAPI 3.1), and Go tests that hold the handlers to it: routes and scopes, every response the tests provoke, and every success response at least once.
   - [x] **P6.1b** The TypeScript types, generated from the spec by a Go program (a Go test fails on stale output), and a `fetch` client in `web/` (bearer token, problem+json errors, SSE), checked by `tsc`.
-- [ ] **P6.2** A React and TypeScript app in `web/`, served as static files by Caddy, with a token login.
+- [ ] **P6.2** A React and TypeScript app in `web/`, served as static files by Caddy, with a token login ([ADR-0016](adr/0016-web-ui-build-and-session.md); owner's choices 2026-10-06: esbuild, `sessionStorage`, the API's hostname). Split into:
+  - [x] **P6.2a** The app: the esbuild build and dev server (proxying `/v1`), the token login and the signed-in shell, and sign-out on any 401.
+  - [ ] **P6.2b** Serving: Caddy serves the built UI at `/` on `SHIPYARD_API_HOSTNAME` from a read-only mount, with a strict CSP and security headers. `install.sh` installs it; the release workflow builds it into the server archive.
 - [ ] **P6.3** App list, app detail, deployment history, and rollback.
 - [ ] **P6.4** Live operation events and logs through `EventSource`.
 - [ ] **P6.5** Environment management (write-only values) and domains.

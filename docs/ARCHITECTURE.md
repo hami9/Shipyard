@@ -602,7 +602,7 @@ internal/config/       process configuration
 migrations/            forward-only SQL migrations
 deploy/                systemd units, daemon.json, Caddy bootstrap config, install script
 test/e2e/              end-to-end tests against real Docker, PostgreSQL, and Caddy
-web/                   optional React UI (Phase 6)
+web/                   optional React UI (Phase 6), built by esbuild; its API client is typed from api/openapi.json (ADR-0015, ADR-0016)
 docs/                  architecture, ADRs, roadmap, work log, operator guide
 ```
 

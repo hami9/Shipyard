@@ -30,7 +30,7 @@ SHIPYARD_KEK_ACTIVE        ?= dev
 # The worker's log socket, read by the API (ADR-0008).
 SHIPYARD_WORKER_SOCKET     ?= $(CURDIR)/.dev/logs.sock
 
-.PHONY: help build test lint vuln fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot web-types web-check clean
+.PHONY: help build test lint vuln fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot web-types web-check web-dev clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -58,8 +58,11 @@ fmt: ## Format all Go files
 web-types: ## Regenerate web/src/api/schema.ts from api/openapi.json (ADR-0015)
 	$(GO) test ./internal/openapits -run TestGenerated -update
 
-web-check: ## The web client: npm ci, tsc, and its tests (Node.js 24+)
-	cd web && npm ci --no-audit --no-fund && npm run check && npm test
+web-check: ## The web UI: npm ci, tsc, its tests, and a production build into web/dist (Node.js 24+)
+	cd web && npm ci --no-audit --no-fund && npm run check && npm test && npm run build
+
+web-dev: ## The web UI on http://127.0.0.1:5173, proxying /v1 to SHIPYARD_API_URL (default the run-api address)
+	cd web && npm run dev
 
 test-integration: ## Integration tests against PostgreSQL (run `make dev-up` first)
 	SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' $(GO) test -race -tags integration ./...

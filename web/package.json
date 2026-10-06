@@ -1,7 +1,7 @@
 {
   "name": "shipyard-web",
   "private": true,
-  "description": "Shipyard's web UI (Phase 6). Today: the typed API client (ADR-0015).",
+  "description": "Shipyard's web UI (Phase 6): React, built with esbuild (ADR-0015, ADR-0016).",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -9,9 +9,18 @@
   },
   "scripts": {
     "check": "tsc -p .",
-    "test": "node --test \"src/**/*.test.ts\""
+    "test": "node --test \"src/**/*.test.ts\"",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --dev"
   },
   "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }

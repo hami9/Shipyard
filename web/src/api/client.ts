@@ -62,6 +62,8 @@ export interface ClientOptions {
   /** An API token (shp_…). */
   token: string;
   fetch?: typeof fetch;
+  /** Called on any 401, before the ApiError is thrown: the token no longer works. */
+  onUnauthorized?: () => void;
 }
 
 export interface StreamOptions {
@@ -83,11 +85,13 @@ export class Client {
   readonly #baseUrl: string;
   readonly #token: string;
   readonly #fetch: typeof fetch;
+  readonly #onUnauthorized: (() => void) | undefined;
 
   constructor(options: ClientOptions) {
     this.#baseUrl = (options.baseUrl ?? "").replace(/\/+$/, "");
     this.#token = options.token;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.#onUnauthorized = options.onUnauthorized;
   }
 
   /** call runs an operation and returns its success body (undefined for 204). Errors throw ApiError. */
@@ -170,6 +174,9 @@ export class Client {
     }
     const res = await this.#fetch(url, init);
     if (!res.ok) {
+      if (res.status === 401) {
+        this.#onUnauthorized?.();
+      }
       throw await ApiError.from(res);
     }
     return res;

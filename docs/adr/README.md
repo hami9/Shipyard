@@ -23,3 +23,4 @@ An ADR records one significant decision: its context, the choice made, and its c
 | [0013](0013-prometheus-metrics.md) | Prometheus metrics without a client library, read from PostgreSQL | Accepted |
 | [0014](0014-disk-and-certificate-checks.md) | Disk and certificate checks, warned in the log and alerted by shipped Prometheus rules | Accepted |
 | [0015](0015-openapi-and-typescript-client.md) | A hand-written OpenAPI description, tested against the handlers, and a TypeScript client generated in Go | Accepted |
+| [0016](0016-web-ui-build-and-session.md) | The web UI is React built by esbuild, served on the API's hostname, with the token in sessionStorage | Accepted |
