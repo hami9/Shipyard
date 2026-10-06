@@ -6,6 +6,8 @@ project_name: shipyard
 before:
   hooks:
     - ./scripts/check-go-version.sh
+    # The web UI the server archive ships (ADR-0016); needs Node.js 24+.
+    - make web-build
 
 builds:
   - id: cli
@@ -86,6 +88,17 @@ archives:
           mode: 0755
       - docs/OPERATIONS.md
       - docs/RESTORE.md
+      # The built web UI; install.sh puts it in /usr/local/share/shipyard/web.
+      # One level per entry: a "**" glob flattened assets/ and missed
+      # index.html (2026-10-06 snapshot).
+      - src: web/dist/index.html
+        dst: web/index.html
+        info:
+          mode: 0644
+      - src: web/dist/assets/*
+        dst: web/assets
+        info:
+          mode: 0644
 
 checksum:
   name_template: checksums.txt

@@ -43,6 +43,7 @@ readonly WORK_DIR=/var/lib/shipyard/work
 readonly BACKUP_DIR=/var/backups/shipyard
 readonly BACKUP_KEK_DIR=/var/backups/shipyard-kek
 readonly LIB=/usr/local/lib/shipyard
+readonly WEB=/usr/local/share/shipyard/web # SHIPYARD_WEB_DIR's default (ADR-0016)
 readonly BIN=/usr/local/bin
 readonly UNITS=/etc/systemd/system
 readonly PG_MAJOR=18
@@ -223,6 +224,38 @@ for u in shipyard-api.service shipyard-worker.service shipyard-firewall.service 
 	put "$DEPLOY/systemd/$u" "$UNITS/$u" 0644 root:root
 done
 run systemctl daemon-reload
+
+# The web UI, served by Caddy on the API hostname (ADR-0016): web/ in a
+# release archive, or web/dist after `make web-build` in a checkout. It is
+# updated in place, never replaced: Caddy bind-mounts the directory itself,
+# and a new one would leave that mount stale. New assets go first (their
+# names are hashed), index.html next, and files the build no longer has
+# last. World-readable: Caddy runs as root without CAP_DAC_OVERRIDE.
+WEB_SRC=
+for d in "$BIN_DIR/web" "$DEPLOY/../web/dist"; do
+	if [ -f "$d/index.html" ]; then
+		WEB_SRC=$(cd "$d" && pwd)
+		break
+	fi
+done
+if [ -n "$WEB_SRC" ]; then
+	say "web UI"
+	# Directories first, with their mode set even under a strict umask.
+	while IFS= read -r d; do
+		run install -d -m 0755 -o root -g root "$WEB/$d"
+	done < <(cd "$WEB_SRC" && find . -type d | sort)
+	while IFS= read -r f; do
+		put "$WEB_SRC/$f" "$WEB/$f" 0644 root:root
+	done < <(cd "$WEB_SRC" && find . -type f ! -path ./index.html | sort)
+	put "$WEB_SRC/index.html" "$WEB/index.html" 0644 root:root
+	if [ -d "$WEB" ]; then
+		while IFS= read -r f; do
+			[ -e "$WEB_SRC/$f" ] || run rm -f "$WEB/$f"
+		done < <(cd "$WEB" && find . -type f | sort)
+	fi
+else
+	warn "no built web UI (web/ in the release archive, or web/dist after make web-build): the API hostname serves no UI"
+fi
 
 # Ubuntu 24.04+ restricts unprivileged user namespaces, which rootless
 # BuildKit needs (ADR-0010) [UB-USERNS].

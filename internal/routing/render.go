@@ -68,8 +68,12 @@ type Settings struct {
 	// renders no API route.
 	APIHostname string
 	APIUpstream string // host:port or unix//absolute/path
-	CA          string // CADefault, CAStaging, or CAInternal
-	ACMEEmail   string
+	// WebDir, with an API hostname, serves the web UI from this directory
+	// (as Caddy sees it, mounted read-only) on every other path of that
+	// hostname (ADR-0016); empty keeps those paths 404.
+	WebDir    string
+	CA        string // CADefault, CAStaging, or CAInternal
+	ACMEEmail string
 	// VerifySocket, when set, adds a plain-HTTP server on this Unix socket
 	// with exactly the same routes and no automatic HTTPS. The worker checks
 	// a route through Caddy there, by Host header, before it commits a
@@ -109,8 +113,13 @@ type (
 		Terminal bool      `json:"terminal,omitempty"`
 	}
 	match struct {
-		Host []string `json:"host,omitempty"`
-		Path []string `json:"path,omitempty"`
+		Host []string   `json:"host,omitempty"`
+		Path []string   `json:"path,omitempty"`
+		File *fileMatch `json:"file,omitempty"`
+	}
+	fileMatch struct {
+		Root     string   `json:"root"`
+		TryFiles []string `json:"try_files"`
 	}
 	handler struct {
 		Handler    string     `json:"handler"`
@@ -118,6 +127,12 @@ type (
 		Routes     []route    `json:"routes,omitempty"`
 		StatusCode int        `json:"status_code,omitempty"`
 		Body       string     `json:"body,omitempty"`
+		Root       string     `json:"root,omitempty"`     // file_server
+		URI        string     `json:"uri,omitempty"`      // rewrite
+		Response   *headerOps `json:"response,omitempty"` // headers
+	}
+	headerOps struct {
+		Set map[string][]string `json:"set"`
 	}
 	upstream struct {
 		Dial string `json:"dial"`
@@ -208,17 +223,54 @@ func Render(s Settings, routes []Route) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// apiRoute sends the API's paths to the API; everything else on its
-// hostname is 404, so nothing else of the host is exposed.
+// WebCSP is the web UI's Content-Security-Policy. The page has no inline
+// script or style (ADR-0016), so only same-origin files run, the only
+// requests are to the API on the same origin, and nothing may frame it.
+const WebCSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
+	"connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+
+// apiRoute sends the API's paths to the API. Everything else on its
+// hostname is the web UI when there is one, and 404 when not, so nothing
+// else of the host is exposed.
 func apiRoute(s Settings) route {
 	proxy := handler{Handler: "reverse_proxy", Upstreams: []upstream{{Dial: s.APIUpstream}}}
+	rest := []route{{Handle: []handler{{Handler: "static_response", StatusCode: 404}}}}
+	if s.WebDir != "" {
+		rest = webRoutes(s.WebDir)
+	}
 	return route{
 		Match: []match{{Host: []string{s.APIHostname}}},
-		Handle: []handler{{Handler: "subroute", Routes: []route{
+		Handle: []handler{{Handler: "subroute", Routes: append([]route{
 			{Match: []match{{Path: []string{"/v1/*", "/hooks/github"}}}, Handle: []handler{proxy}, Terminal: true},
-			{Handle: []handler{{Handler: "static_response", StatusCode: 404}}},
-		}}},
+		}, rest...)}},
 		Terminal: true,
+	}
+}
+
+// webRoutes serve the UI as `caddy adapt` renders `header`, `try_files
+// {path} /index.html` and `file_server` [CADDY-JSON]: a path that is no
+// file gets index.html, so the app's own links work on reload. Hashed
+// assets are cached for good; index.html is revalidated, so a new release
+// is picked up at once.
+func webRoutes(dir string) []route {
+	set := func(h map[string][]string) handler { return handler{Handler: "headers", Response: &headerOps{Set: h}} }
+	return []route{
+		{Handle: []handler{set(map[string][]string{
+			"Content-Security-Policy":    {WebCSP},
+			"X-Content-Type-Options":     {"nosniff"},
+			"X-Frame-Options":            {"DENY"},
+			"Referrer-Policy":            {"no-referrer"},
+			"Cross-Origin-Opener-Policy": {"same-origin"},
+			"Cache-Control":              {"no-cache"},
+		})}},
+		{Match: []match{{Path: []string{"/assets/*"}}}, Handle: []handler{set(map[string][]string{
+			"Cache-Control": {"public, max-age=31536000, immutable"},
+		})}},
+		{
+			Match:  []match{{File: &fileMatch{Root: dir, TryFiles: []string{"{http.request.uri.path}", "/index.html"}}}},
+			Handle: []handler{{Handler: "rewrite", URI: "{http.matchers.file.relative}"}},
+		},
+		{Handle: []handler{{Handler: "file_server", Root: dir}}},
 	}
 }
 
@@ -248,6 +300,11 @@ func (s Settings) validate() error {
 		return bad("API hostname %q", s.APIHostname)
 	case s.APIHostname != "" && s.APIUpstream == "":
 		return bad("API hostname without an API upstream")
+	case s.WebDir != "" && s.APIHostname == "":
+		return bad("a web UI directory without an API hostname to serve it on")
+	case s.WebDir != "" && (!cleanSocket(s.WebDir) || strings.ContainsAny(s.WebDir, "{}")):
+		// Caddy expands {placeholders} in a root.
+		return bad("web UI directory %q must be a clean absolute path", s.WebDir)
 	case s.CA != CADefault && s.CA != CAStaging && s.CA != CAInternal:
 		return bad("CA %q", s.CA)
 	case s.ACMEEmail != "" && !emailRE.MatchString(s.ACMEEmail):

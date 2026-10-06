@@ -17,7 +17,7 @@ The MVP's exit test (ARCHITECTURE §9): six steps on a fresh VPS, then the `v1.0
 
 **The archive.** Before `v1.0.0` exists there are two ways to get one:
 
-- **A snapshot (recommended):** nothing is published. On a Linux machine or WSL with Docker, in the checkout under test:
+- **A snapshot (recommended):** nothing is published. On a Linux machine or WSL with Docker and Node.js 24 (it builds the web UI), in the checkout under test:
 
   ```bash
   make release-snapshot
@@ -70,7 +70,7 @@ Commands marked **(server)** run on the VPS; the rest run on the workstation. Wr
    echo salaam | shipyard env set hello GREETING --plain
    ```
 
-**Pass:** `shipyard whoami` answers over HTTPS with a valid certificate (no `-k`), and the webhook's ping is green.
+**Pass:** `shipyard whoami` answers over HTTPS with a valid certificate (no `-k`), and the webhook's ping is green. Also: `https://shipyard.example.com/` shows the web UI's login, and the same token signs in (ADR-0016).
 
 ### 2. Deploy over HTTPS
 

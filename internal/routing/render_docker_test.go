@@ -32,8 +32,9 @@ func TestRenderedConfigServes(t *testing.T) {
 	}
 	defer rt.Close()
 	id := strings.ToLower(rand.Text()[:8])
+	web := webBuild(t)
 	edge := runtime.EdgeSpec{Name: "shipyard-test-edge-" + id, Image: runtime.DefaultEdgeImage,
-		AdminDir: filepath.Join(t.TempDir(), "admin"), GID: os.Getgid(), BindIP: netip.MustParseAddr("127.0.0.1")}
+		AdminDir: filepath.Join(t.TempDir(), "admin"), GID: os.Getgid(), BindIP: netip.MustParseAddr("127.0.0.1"), WebDir: web}
 	app := "rt-" + id
 	upstream := "shipyard-test-up-" + id
 	t.Cleanup(func() {
@@ -116,6 +117,72 @@ func TestRenderedConfigServes(t *testing.T) {
 	if resp.StatusCode != http.StatusPermanentRedirect || resp.Header.Get("Location") != "https://web.test.example/" {
 		t.Errorf("http:// = %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
+
+	// ADR-0016: with the web UI, the API hostname serves it on every path
+	// but the API's, from the read-only mount, with its headers.
+	cfg, err = Render(Settings{AdminSocket: edge.AdminSocket(), CA: CAInternal,
+		APIHostname: "api.test.example", APIUpstream: upstream + ":3000", WebDir: web}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, body := adminCall(t, edge.AdminSocket(), http.MethodPost, "/load", string(cfg)); code != 200 {
+		t.Fatalf("POST /load (web) = %d %s", code, body)
+	}
+	for _, tc := range []struct {
+		method, path string
+		code         int
+		body         string
+		cache        string // "" for the API: none of the UI's headers
+	}{
+		{"GET", "/", 200, indexHTML, "no-cache"},
+		{"GET", "/apps/web/releases", 200, indexHTML, "no-cache"}, // the app's own links, on reload
+		{"GET", "/assets/app-abc123.js", 200, appJS, "public, max-age=31536000, immutable"},
+		{"GET", "/v1/whoami", 200, "app ok", ""},
+		{"GET", "/hooks/github", 200, "app ok", ""},
+		{"GET", "/%2e%2e/%2e%2e/etc/passwd", 200, indexHTML, "no-cache"}, // never outside the root
+	} {
+		code, h, body := fetch(t, https, tc.method, "api.test.example", tc.path)
+		if code != tc.code || body != tc.body || h.Get("Cache-Control") != tc.cache {
+			t.Errorf("%s %s = %d %q, Cache-Control %q", tc.method, tc.path, code, body, h.Get("Cache-Control"))
+		}
+		csp := h.Get("Content-Security-Policy")
+		if (tc.cache == "") != (csp == "") || (csp != "" && (csp != WebCSP || h.Get("X-Frame-Options") != "DENY" ||
+			h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Referrer-Policy") != "no-referrer")) {
+			t.Errorf("%s: headers %v", tc.path, h)
+		}
+	}
+	// Only reads: the files are served, never changed.
+	for _, m := range []string{"POST", "PUT", "DELETE"} {
+		if code, _, body := fetch(t, https, m, "api.test.example", "/index.html"); code < 400 || strings.Contains(body, "<!doctype") {
+			t.Errorf("%s /index.html = %d", m, code)
+		}
+	}
+}
+
+const (
+	indexHTML = "<!doctype html><title>Shipyard</title>\n"
+	appJS     = "console.log(1)\n"
+)
+
+// webBuild is a built UI as install.sh lays it out: world-readable, since
+// Caddy runs as root without CAP_DAC_OVERRIDE.
+func webBuild(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"index.html": indexHTML, "assets/app-abc123.js": appJS} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range []string{dir, filepath.Join(dir, "assets")} {
+		if err := os.Chmod(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 func adminCall(t *testing.T, socket, method, path, body string) (int, string) {
@@ -154,6 +221,13 @@ func tlsDial(port, sni string) (*tls.Conn, error) {
 // CA's certificate is not trusted here; the test checks routing, not trust.
 func get(t *testing.T, port, host, path string) (int, string) {
 	t.Helper()
+	code, _, body := fetch(t, port, http.MethodGet, host, path)
+	return code, body
+}
+
+// fetch sends the path as written, unnormalized, so a test can try "..".
+func fetch(t *testing.T, port, method, host, path string) (int, http.Header, string) {
+	t.Helper()
 	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -162,15 +236,20 @@ func get(t *testing.T, port, host, path string) (int, string) {
 	var last error
 	// Caddy issues the internal certificates just after the load.
 	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
-		resp, err := hc.Get("https://" + host + path)
+		req, err := http.NewRequest(method, "https://"+host+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.URL.Opaque = "//" + host + path
+		resp, err := hc.Do(req)
 		if err != nil {
 			last = err
 			continue
 		}
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return resp.StatusCode, string(b)
+		return resp.StatusCode, resp.Header, string(b)
 	}
-	t.Fatalf("https://%s%s: %v", host, path, last)
-	return 0, ""
+	t.Fatalf("%s https://%s%s: %v", method, host, path, last)
+	return 0, nil, ""
 }

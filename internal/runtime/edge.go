@@ -78,6 +78,11 @@ type EdgeSpec struct {
 	// APIGID, when set, is a supplementary group of the Caddy container:
 	// the group of the API's socket (shipyard), when it is not GID.
 	APIGID int `json:",omitempty"`
+	// WebDir, when set, is the host directory of the built web UI, mounted
+	// read-only at the same path for Caddy to serve on the API hostname
+	// (ADR-0016). Its files must be world-readable: Caddy runs as root but
+	// without CAP_DAC_OVERRIDE. omitempty keeps the hash of a spec without it.
+	WebDir string `json:",omitempty"`
 	// Host side of the published ports. Port 0 lets Docker choose (tests);
 	// an invalid BindIP means all interfaces.
 	BindIP              netip.Addr
@@ -106,6 +111,9 @@ func (s EdgeSpec) Validate() error {
 	case s.APISocketDir != "" && (!filepath.IsAbs(s.APISocketDir) || filepath.Clean(s.APISocketDir) != s.APISocketDir ||
 		strings.ContainsAny(s.APISocketDir, "|:,") || s.APISocketDir == "/" || s.APISocketDir == s.AdminDir):
 		return bad("API socket directory %q must be a clean absolute path of its own", s.APISocketDir)
+	case s.WebDir != "" && (!filepath.IsAbs(s.WebDir) || filepath.Clean(s.WebDir) != s.WebDir ||
+		strings.ContainsAny(s.WebDir, "|:,{}") || s.WebDir == "/" || s.WebDir == s.AdminDir || s.WebDir == s.APISocketDir):
+		return bad("web UI directory %q must be a clean absolute path of its own", s.WebDir)
 	case s.HTTPPort < 0 || s.HTTPPort > 65535 || s.HTTPSPort < 0 || s.HTTPSPort > 65535:
 		return bad("ports %d/%d", s.HTTPPort, s.HTTPSPort)
 	}
@@ -139,11 +147,15 @@ func (s EdgeSpec) createOptions() client.ContainerCreateOptions {
 		// autosaved config lives in /config.
 		{Type: mount.TypeVolume, Source: s.Name + "-data", Target: "/data"},
 		{Type: mount.TypeVolume, Source: s.Name + "-config", Target: "/config"},
-		// Host bind mounts: the socket directories, nothing else.
+		// Host bind mounts: the socket directories and, read-only, the web
+		// UI; nothing else.
 		{Type: mount.TypeBind, Source: s.AdminDir, Target: s.AdminDir},
 	}
 	if s.APISocketDir != "" {
 		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: s.APISocketDir, Target: s.APISocketDir, ReadOnly: true})
+	}
+	if s.WebDir != "" {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: s.WebDir, Target: s.WebDir, ReadOnly: true})
 	}
 	var groups []string
 	if s.APIGID > 0 && s.APIGID != s.GID {
@@ -207,6 +219,11 @@ func (r *Runtime) EnsureEdge(ctx context.Context, s EdgeSpec) (string, error) {
 	if s.APISocketDir != "" {
 		if st, err := os.Stat(s.APISocketDir); err != nil || !st.IsDir() {
 			return "", fmt.Errorf("API socket directory %s is missing (is shipyard-api running?): %v", s.APISocketDir, err)
+		}
+	}
+	if s.WebDir != "" {
+		if st, err := os.Stat(s.WebDir); err != nil || !st.IsDir() {
+			return "", fmt.Errorf("web UI directory %s is missing: %v", s.WebDir, err)
 		}
 	}
 	if _, err := r.ensureBridge(ctx, s.Name, s.labels()); err != nil {

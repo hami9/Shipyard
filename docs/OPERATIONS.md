@@ -45,6 +45,8 @@ Shipyard is for trusted operators and trusted repositories (ADR-0007). Anyone wh
    - **Packages:** Docker Engine (with buildx) and PostgreSQL 18 from their vendors' apt repositories, if they are missing `[DK-INSTALL][PG-APT]`. Docker's `daemon.json` (local log driver, live-restore) is installed if absent; an existing one is reported, not changed.
    - **Users:** `shipyard-api` (no Docker access) and `shipyard-worker` (in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]`), group `shipyard`.
    - **Files:** the binaries in `/usr/local/bin`, the systemd units, the build firewall (ADR-0009), and on Ubuntu 24.04+ the user-namespace sysctl for rootless BuildKit (ADR-0010).
+   - **Groups:** `shipyard-caddy`, which owns Caddy's admin socket. Only the worker is in it (P5.8b).
+   - **The web UI** in `/usr/local/share/shipyard/web`, updated in place (ADR-0016). With `--api-hostname` it is served at `https://<api hostname>/`.
    - **First install only:** `shipyard.env` with a random database password, the `shipyard` role and database, and an HPKE key pair `k1` in `/etc/shipyard/kek`. With it, the API can seal secrets but not read them (ADR-0012).
    - **Every run:** migrations, then the services and the nightly backup timer, then one rootless test build.
    - **First install only, at the end:** an admin API token, **printed once**.
@@ -66,6 +68,8 @@ Shipyard is for trusted operators and trusted repositories (ADR-0007). Anyone wh
    ```bash
    shipyard whoami
    ```
+
+   Or open `https://shipyard.example.com/` in a browser and paste the token there. The web UI keeps it in that tab only; the CLI does everything the UI does. To turn the UI off, set `SHIPYARD_WEB_DIR=off` and restart the worker.
 
 7. **Deploy an app:**
 
@@ -123,7 +127,7 @@ sudo systemd-run --pipe --wait --collect --uid=shipyard-worker --gid=shipyard -p
    ```
 
 - **Apps keep serving** during an upgrade: their containers are not restarted, only the two Shipyard services. An operation in progress resumes after the worker's restart (ADR-0002).
-  - **Exception:** if the release changes the Caddy container (for example a newly pinned Caddy image, or the admin socket's own `shipyard-caddy` group from P5.8b; the changelog lists these), the worker recreates it at start, keeping its data. Traffic stops for the few seconds that takes.
+  - **Exception:** if the release changes the Caddy container (for example a newly pinned Caddy image, the admin socket's own `shipyard-caddy` group from P5.8b, or the web UI's mount; the changelog lists these), the worker recreates it at start, keeping its data. Traffic stops for the few seconds that takes.
 - **Migrations are forward-only.** To go back to an older release, restore the backup from step 2.
 - **Docker Engine upgrades** come from apt like any package. `live-restore` keeps containers running while the daemon restarts, but **only across patch releases** `[DK-LIVE]`. Across a minor or major Docker upgrade, containers stop with the daemon. The worker's reconciler starts each active release again within a minute, but expect a short outage per app: plan major Docker upgrades for a quiet hour.
 - **PostgreSQL major upgrades** (beyond 18) are not handled by Shipyard. Use your distribution's tools (`pg_upgradecluster` on Debian and Ubuntu), after a backup.

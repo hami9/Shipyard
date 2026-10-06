@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-06
 - **Deciders:** Project owner (bundler, token storage and hostname chosen 2026-10-06), Claude Code
-- **Sources:** `NODE-TS`, `TS-7`, `ESBUILD`, `NPM-SCRIPTS`
+- **Sources:** `NODE-TS`, `TS-7`, `ESBUILD`, `NPM-SCRIPTS`, `CADDY-JSON`, `GORELEASER-ARCHIVE`
 
 ## Context
 
@@ -36,6 +36,22 @@
   - **No component tests yet.** A DOM test library would be one more dependency; P6.6 brings Playwright for the flows.
   - **Without hot reload,** development reloads the page by hand.
   - The JavaScript is about 224 KB minified, mostly React.
+
+## Implementation notes
+
+- **2026-10-06 (P6.2b).** The decision is unchanged. How the UI is served:
+  - **Where.** `routing.Render` keeps `/v1/*` and `/hooks/github` going to the API. Every other path of `SHIPYARD_API_HOSTNAME` is the UI, mirroring what `caddy adapt` makes of `header`, `try_files {path} /index.html` and `file_server` `[CADDY-JSON]`:
+    - a path that is no file gets `index.html`, so the app's own links survive a reload;
+    - `..` cannot leave the root, and anything but GET/HEAD is refused (both checked on a real Caddy).
+  - **Headers on the UI only:**
+    - a CSP that allows only same-origin scripts, styles, images (and `data:`), fonts and connections, with `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'self'`;
+    - `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`;
+    - `Cache-Control: no-cache`, except hashed `/assets/*`, which are `immutable` for a year.
+  - **The mount.** The edge gets one more read-only bind mount, `SHIPYARD_WEB_DIR` (default `/usr/local/share/shipyard/web`), at the same path, like the API's socket directory (ADR-0003, P2.8). Invariant 10 is about app containers; the edge's host mounts stay the socket directories plus this read-only one.
+    - The worker serves the UI only when that directory holds an `index.html` and an API hostname is set. A directory set explicitly must hold one. `off` disables it.
+    - It decides once at start, so the mount and the rendered route always agree. The spec field is omitted when empty, so an edge without a UI keeps its hash.
+  - **Install.** `install.sh` copies the archive's `web/` there in place, never replacing the directory, since a replaced one would leave Caddy's mount stale. New assets go first, then `index.html`, then old files are removed. Files are world-readable, since Caddy runs as root without `CAP_DAC_OVERRIDE`.
+  - **Release.** GoReleaser's `before` hook runs `make web-build`, so release builds need Node 24 (the release workflow sets it up). The archive lists `web/index.html` and `web/assets/*` separately: a `**` glob flattened `assets/` and missed `index.html` `[GORELEASER-ARCHIVE]`.
 
 ## Alternatives considered
 

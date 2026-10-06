@@ -50,6 +50,9 @@ func TestRenderGolden(t *testing.T) {
 		"verify": {Settings{AdminSocket: sock, VerifySocket: "/run/shipyard/caddy/caddy-verify.sock",
 			APIHostname: "shipyard.example.com", APIUpstream: "unix//run/shipyard/api/api.sock"}, apps},
 		"verify-empty": {Settings{AdminSocket: sock, VerifySocket: "/run/shipyard/caddy/caddy-verify.sock"}, nil},
+		// ADR-0016: the web UI on the API hostname.
+		"web": {Settings{AdminSocket: sock, APIHostname: "shipyard.example.com", APIUpstream: "unix//run/shipyard/api/api.sock",
+			WebDir: "/usr/local/share/shipyard/web"}, apps[:1]},
 		// A fresh install: only the admin socket, nothing served.
 		"empty":    {Settings{AdminSocket: sock}, nil},
 		"staging":  {Settings{AdminSocket: sock, CA: CAStaging, ACMEEmail: "ops@example.com"}, apps[:1]},
@@ -131,6 +134,11 @@ func TestRenderRejects(t *testing.T) {
 		"verify on the admin socket": {Settings{AdminSocket: sock, VerifySocket: sock}, nil},
 		"verify socket relative":     {Settings{AdminSocket: sock, VerifySocket: "verify.sock"}, nil},
 		"bad email":                  {Settings{AdminSocket: sock, ACMEEmail: "not-an-email"}, nil},
+		"web without API hostname":   {Settings{AdminSocket: sock, WebDir: "/srv/web"}, nil},
+		"web dir relative": {Settings{AdminSocket: sock, APIHostname: "api.example.com", APIUpstream: "api:80",
+			WebDir: "web"}, nil},
+		"web dir placeholder": {Settings{AdminSocket: sock, APIHostname: "api.example.com", APIUpstream: "api:80",
+			WebDir: "/srv/{env.HOME}"}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if out, err := Render(tc.s, tc.routes); !errors.Is(err, ErrInvalid) || out != nil {

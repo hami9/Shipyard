@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,6 +51,52 @@ func TestAdminGroup(t *testing.T) {
 		return
 	}
 	t.Log("no supplementary group to try")
+}
+
+// ADR-0016: the UI is served when one is installed and there is an API
+// hostname to serve it on; a directory set explicitly must hold one.
+func TestWebUI(t *testing.T) {
+	log := slog.New(slog.DiscardHandler)
+	built := t.TempDir()
+	if err := os.WriteFile(filepath.Join(built, "index.html"), []byte("<!doctype html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	empty := t.TempDir()
+	cfg := config.Worker{Caddy: config.Caddy{Enabled: true}}
+	cfg.APIHostname = "shipyard.example.com"
+	for name, tc := range map[string]struct {
+		dir      string
+		required bool
+		host     string
+		enabled  bool
+		want     string
+		wantErr  bool
+	}{
+		"installed":               {built, false, cfg.APIHostname, true, built, false},
+		"default, none installed": {empty, false, cfg.APIHostname, true, "", false},
+		"explicit, none there":    {empty, true, cfg.APIHostname, true, "", true},
+		"explicit, missing":       {filepath.Join(empty, "nope"), true, cfg.APIHostname, true, "", true},
+		"no API hostname":         {built, true, "", true, "", false},
+		"off":                     {"", false, cfg.APIHostname, true, "", false},
+		"caddy disabled":          {built, true, cfg.APIHostname, false, "", false},
+	} {
+		c := cfg
+		c.Caddy.WebDir, c.Caddy.WebDirRequired, c.Caddy.Enabled, c.APIHostname = tc.dir, tc.required, tc.enabled, tc.host
+		got, err := webUI(c, log)
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Errorf("%s: %q, %v", name, got, err)
+		}
+	}
+	// The edge mounts it only with an API hostname to serve it on.
+	c := cfg
+	c.Listen, c.Caddy.Name, c.Caddy.AdminDir, c.Caddy.WebDir = "unix:/run/shipyard-api/api.sock", "shipyard-caddy", "/run/shipyard/caddy", built
+	if s := edgeSpec(c, os.Getegid()); s.WebDir != built {
+		t.Errorf("edge web dir = %q", s.WebDir)
+	}
+	c.APIHostname = ""
+	if s := edgeSpec(c, os.Getegid()); s.WebDir != "" {
+		t.Errorf("edge web dir without an API hostname = %q", s.WebDir)
+	}
 }
 
 func TestEdgeSpecGroups(t *testing.T) {

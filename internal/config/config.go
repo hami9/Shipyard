@@ -46,6 +46,7 @@ const (
 	EnvCaddyImage         = "SHIPYARD_CADDY_IMAGE"
 	EnvCaddyAdminDir      = "SHIPYARD_CADDY_ADMIN_DIR"
 	EnvCaddyGroup         = "SHIPYARD_CADDY_GROUP"
+	EnvWebDir             = "SHIPYARD_WEB_DIR" // the web UI (ADR-0016); "off" for none
 	EnvCaddyBind          = "SHIPYARD_CADDY_BIND"
 	EnvCaddyHTTPPort      = "SHIPYARD_CADDY_HTTP_PORT"
 	EnvCaddyHTTPSPort     = "SHIPYARD_CADDY_HTTPS_PORT"
@@ -114,6 +115,7 @@ const (
 	DefaultCaddyName         = "shipyard-caddy"
 	DefaultCaddyAdminDir     = "/run/shipyard/caddy"
 	DefaultCaddyGroup        = "shipyard-caddy"
+	DefaultWebDir            = "/usr/local/share/shipyard/web" // where install.sh puts the UI
 	// DefaultWorkerSocket is in the worker's systemd RuntimeDirectory (ADR-0008).
 	DefaultWorkerSocket = "/run/shipyard-worker/logs.sock"
 	// DefaultRetainImages is how many earlier releases per app keep their
@@ -338,6 +340,11 @@ type Caddy struct {
 	// group was set explicitly (GroupRequired).
 	Group         string
 	GroupRequired bool
+	// WebDir holds the built web UI that Caddy serves on the API hostname
+	// (ADR-0016); "" when off. A missing default directory just means no
+	// UI; one set explicitly must exist (WebDirRequired).
+	WebDir         string
+	WebDirRequired bool
 	// BindIP is where the ports are published; invalid means all interfaces.
 	BindIP              netip.Addr
 	HTTPPort, HTTPSPort int // 0 lets Docker choose (tests)
@@ -593,6 +600,16 @@ func (r *reader) caddy() Caddy {
 	c.GroupRequired = r.str(EnvCaddyGroup, "") != ""
 	if !groupRE.MatchString(c.Group) {
 		r.fail(EnvCaddyGroup, fmt.Errorf("%q is not a group name", c.Group))
+	}
+	switch w := r.str(EnvWebDir, ""); w {
+	case "":
+		c.WebDir = DefaultWebDir
+	case "off":
+	default:
+		c.WebDir, c.WebDirRequired = w, true
+		if !filepath.IsAbs(w) || filepath.Clean(w) != w || w == "/" || strings.ContainsAny(w, "|:,{}") {
+			r.fail(EnvWebDir, fmt.Errorf("%q must be a clean absolute path, or off", w))
+		}
 	}
 	if s := r.str(EnvCaddyBind, ""); s != "" {
 		ip, err := netip.ParseAddr(s)

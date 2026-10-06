@@ -495,8 +495,18 @@ func TestLoadWorkerCaddy(t *testing.T) {
 	}
 	c := cfg.Caddy
 	if !c.Enabled || c.Name != "shipyard-caddy" || c.Image != "" || c.AdminDir != "/run/shipyard/caddy" ||
-		c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 || c.Group != "shipyard-caddy" || c.GroupRequired {
+		c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 || c.Group != "shipyard-caddy" || c.GroupRequired ||
+		c.WebDir != "/usr/local/share/shipyard/web" || c.WebDirRequired {
 		t.Errorf("defaults = %+v", c)
+	}
+	// ADR-0016: the web UI directory, explicit (must exist) or off.
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWebDir: "/srv/ui"})); err != nil ||
+		cfg.Caddy.WebDir != "/srv/ui" || !cfg.Caddy.WebDirRequired {
+		t.Errorf("explicit web dir = %+v, %v", cfg.Caddy, err)
+	}
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWebDir: "off"})); err != nil ||
+		cfg.Caddy.WebDir != "" || cfg.Caddy.WebDirRequired {
+		t.Errorf("web dir off = %+v, %v", cfg.Caddy, err)
 	}
 	// P5.8b: a group set explicitly is required to exist.
 	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddyGroup: "edge-admins"})); err != nil ||
@@ -523,6 +533,9 @@ func TestLoadWorkerCaddy(t *testing.T) {
 		"unknown CA":          {EnvCaddyCA, "zerossl"},
 		"bad email":           {EnvACMEEmail, "ops at example.com"},
 		"bad group":           {EnvCaddyGroup, "Shipyard Caddy"},
+		"relative web dir":    {EnvWebDir, "web"},
+		"web dir placeholder": {EnvWebDir, "/srv/{env.X}"},
+		"web dir root":        {EnvWebDir, "/"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))

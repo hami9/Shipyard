@@ -228,7 +228,7 @@ func restoreNow(ctx context.Context, cfg config.Worker, from string, log *slog.L
 			return err
 		}
 		spec := edgeSpec(cfg, gid)
-		spec.APISocketDir, spec.APIGID = "", 0
+		spec.APISocketDir, spec.APIGID, spec.WebDir = "", 0, ""
 		job.Caddy = edgeRestore{rt, spec}
 	}
 	return job.Run(ctx)
@@ -278,6 +278,10 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 			return err
 		}
 		defer srv.Close()
+	}
+	// Resolved once, so the edge's mount and the rendered route agree.
+	if cfg.Caddy.WebDir, err = webUI(cfg, log); err != nil {
+		return err
 	}
 	if err := ensureEdge(ctx, cfg, rt, log); err != nil {
 		return err
@@ -505,11 +509,36 @@ func edgeSpec(cfg config.Worker, gid int) runtime.EdgeSpec {
 		if gid != os.Getegid() {
 			spec.APIGID = os.Getegid()
 		}
+		spec.WebDir = c.WebDir // as webUI resolved it
 	}
 	if spec.Image == "" {
 		spec.Image = runtime.DefaultEdgeImage
 	}
 	return spec
+}
+
+// webUI is the web UI directory Caddy serves on the API hostname
+// (ADR-0016), or "" for none: no API hostname, Caddy off, SHIPYARD_WEB_DIR
+// off, or no build in the default directory (install.sh puts it there). A
+// directory set explicitly must hold one.
+func webUI(cfg config.Worker, log *slog.Logger) (string, error) {
+	c := cfg.Caddy
+	if c.WebDir == "" || !c.Enabled {
+		return "", nil
+	}
+	if cfg.APIHostname == "" {
+		log.Info("no web UI: it is served on the API hostname, and none is set", slog.String("env", config.EnvAPIHostname))
+		return "", nil
+	}
+	if _, err := os.Stat(filepath.Join(c.WebDir, "index.html")); err != nil {
+		if c.WebDirRequired {
+			return "", fmt.Errorf("%s=%s: no built web UI there: %w", config.EnvWebDir, c.WebDir, err)
+		}
+		log.Info("no web UI: none is installed", slog.String("dir", c.WebDir))
+		return "", nil
+	}
+	log.Info("web UI", slog.String("dir", c.WebDir), slog.String("url", "https://"+cfg.APIHostname+"/"))
+	return c.WebDir, nil
 }
 
 // adminGroup is the group that owns Caddy's admin socket (P5.8b): one only
@@ -558,6 +587,7 @@ func syncRoutes(ctx context.Context, cfg config.Worker, s *store.Store, log *slo
 	}
 	if cfg.APIHostname != "" {
 		settings.APIHostname, settings.APIUpstream = cfg.APIHostname, "unix/"+cfg.APISocket() // [CADDY-RP]
+		settings.WebDir = c.WebDir
 	}
 	router, err := routing.NewRouter(s, settings)
 	if err != nil {

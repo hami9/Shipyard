@@ -481,7 +481,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   - **Startup.** At every start, the worker ensures the `shipyard-caddy` container, its `shipyard-caddy` bridge network, and its `-data` and `-config` volumes. It then joins the container to every app network; new app networks are joined as they are created.
   - **Recreation.** A label holding a hash of the spec (image, ports, socket directory, group) makes a changed spec recreate the container. The volumes are kept.
   - **Image.** The official image, pinned by digest. It runs `caddy run --resume`, so a restart serves the last loaded config.
-  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by `shipyard-caddy` (`SHIPYARD_CADDY_GROUP`) with mode `2770`. Only the worker is in that group, so the API's user, which shares the worker's `shipyard` group, cannot reach it (P5.8b). Without the group on the host, the worker's own group is used, with a warning. The directory is bind-mounted at the same path, and is the only host path Caddy sees besides the API socket's directory.
+  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by `shipyard-caddy` (`SHIPYARD_CADDY_GROUP`) with mode `2770`. Only the worker is in that group, so the API's user, which shares the worker's `shipyard` group, cannot reach it (P5.8b). Without the group on the host, the worker's own group is used, with a warning. The directory is bind-mounted at the same path. The only other host paths Caddy sees are the API socket's directory and, read-only, the web UI (ADR-0016).
   - **User.** Caddy runs as `0:<shipyard-caddy gid>`, so it can create the socket there without `CAP_DAC_OVERRIDE`. With an API hostname it also gets the worker's own group, to reach the API's `0660` socket.
   - **Hardening.** `--cap-drop ALL` plus `NET_BIND_SERVICE`, `no-new-privileges`, a read-only root filesystem with a small `/tmp` tmpfs, 512 MiB, 1 CPU, 512 pids, the `local` log driver, and `unless-stopped`.
   - **The capability is required.** The image's binary has `cap_net_bind_service=ep`: without the capability, even its exec fails.
@@ -489,7 +489,9 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   - **Admin address in loaded configs.** A config loaded later must keep the admin address on this socket; P2.2's renderer always includes it.
 - **The rendered config** (`routing.Render`, P2.2) `[CADDY-JSON]` is deterministic: routes are sorted by hostname, and the same rows give the same bytes. Any invalid input renders nothing, so a broken config is never loaded. It contains:
   - `admin.listen` on the socket (`|0660`), and one server `shipyard` on `:443`. Automatic HTTPS adds the `:80` redirect and HTTP challenges.
-  - The API hostname, if set. It proxies only `/v1/*` and `/hooks/github` to the API upstream (`host:port` or `unix//path`); anything else on that host is 404.
+  - The API hostname, if set. It proxies only `/v1/*` and `/hooks/github` to the API upstream (`host:port` or `unix//path`).
+    - Anything else on that host is the web UI when one is installed (ADR-0016): files from `SHIPYARD_WEB_DIR`, mounted read-only, with `index.html` for unknown paths, a strict CSP and anti-framing headers.
+    - Without the UI, everything else is 404.
   - One terminal route per hostname: `reverse_proxy` to the route's `upstream` (`host:port` only, never a socket), or `503 no active deployment` while there is none.
   - An unrouted hostname gets no certificate, so its TLS handshake fails.
   - Issuers: Caddy's defaults, Let's Encrypt with an email, the Let's Encrypt staging CA `[LE-STAGING]`, or Caddy's internal CA (tests).

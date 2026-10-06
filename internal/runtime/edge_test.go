@@ -39,6 +39,11 @@ func TestEdgeSpecValidate(t *testing.T) {
 		"port too high":        func(s *EdgeSpec) { s.HTTPSPort = 70000 },
 		"negative port":        func(s *EdgeSpec) { s.HTTPPort = -1 },
 		"negative API group":   func(s *EdgeSpec) { s.APIGID = -1 },
+		"relative web dir":     func(s *EdgeSpec) { s.WebDir = "web" },
+		"web dir is root":      func(s *EdgeSpec) { s.WebDir = "/" },
+		"web dir is admin dir": func(s *EdgeSpec) { s.WebDir = "/run/shipyard/caddy" },
+		"web dir placeholder":  func(s *EdgeSpec) { s.WebDir = "/srv/{env.HOME}" },
+		"web dir unclean":      func(s *EdgeSpec) { s.WebDir = "/srv/web/../etc" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := validEdge()
@@ -125,6 +130,14 @@ func TestEdgeCreateOptions(t *testing.T) {
 	if g := s.createOptions().HostConfig.GroupAdd; len(g) != 0 {
 		t.Errorf("groups when APIGID is GID = %v", g)
 	}
+
+	// ADR-0016: the web UI, read-only, at the same path.
+	s.WebDir = "/usr/local/share/shipyard/web"
+	ms = s.createOptions().HostConfig.Mounts
+	if last := ms[len(ms)-1]; len(ms) != 5 || last.Type != mount.TypeBind || last.Source != s.WebDir ||
+		last.Target != s.WebDir || !last.ReadOnly {
+		t.Errorf("mounts with the web UI = %+v", ms)
+	}
 }
 
 // Any change of spec changes the label that triggers a recreate.
@@ -138,6 +151,7 @@ func TestEdgeSpecHash(t *testing.T) {
 		"bind":      func(s *EdgeSpec) { s.BindIP = netip.MustParseAddr("10.0.0.1") },
 		"api":       func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
 		"api group": func(s *EdgeSpec) { s.APIGID = 1001 },
+		"web":       func(s *EdgeSpec) { s.WebDir = "/usr/local/share/shipyard/web" },
 	} {
 		b := validEdge()
 		mutate(&b)
@@ -150,7 +164,8 @@ func TestEdgeSpecHash(t *testing.T) {
 	}
 	// An edge without the API keeps the hash it had before P2.8, so an
 	// upgrade does not recreate it: the field is omitted when empty.
-	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") || strings.Contains(string(b), "APIGID") {
+	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") || strings.Contains(string(b), "APIGID") ||
+		strings.Contains(string(b), "WebDir") {
 		t.Errorf("spec JSON = %s", b)
 	}
 }
