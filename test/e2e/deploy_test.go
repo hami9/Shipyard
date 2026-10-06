@@ -206,6 +206,8 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	h.cli("", "env", "unset", slug, "PROBE_FAIL_BY_NAME")
 	// P2.7: --follow streams the events (SSE) to the end, including the one
 	// the worker appends after the operation has finished (the drain plan).
+	firstDeployment := h.docker("inspect", "--format", `{{index .Config.Labels "io.shipyard.deployment"}}`, first)
+	beforeSwitch := time.Now()
 	out := h.cli("", "deploy", slug, "--ref", h.repo.good, "--follow")
 	if m := h.opRE.FindStringSubmatch(out); m != nil {
 		h.ops = append(h.ops, m[1])
@@ -217,10 +219,10 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	}
 	// P2.6: the operation succeeds when the new release is active; the old
 	// one keeps running through the observation window (6s here), then the
-	// reconciler stops it gracefully and removes it.
-	if got := h.docker("inspect", "--format", "{{.State.Running}}", first); got != "true" {
-		t.Fatalf("the superseded container stopped before its observation window: running=%s", got)
-	}
+	// reconciler stops it gracefully and removes it. The window is measured
+	// from the deployment's ended_at against the stop in Docker's event log,
+	// not from when --follow returns: on a slow host the stream can end more
+	// than 6s after the switch, when the stop is already due.
 	gone := false
 	for deadline := time.Now().Add(30 * time.Second); !gone && time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 		gone = exec.Command("docker", "inspect", first).Run() != nil
@@ -228,6 +230,7 @@ func TestPhase1ExitCriteria(t *testing.T) {
 	if !gone {
 		t.Fatal("the superseded container was not removed")
 	}
+	h.wantDrained(first, firstDeployment, beforeSwitch)
 	second := h.onlyRunning()
 	if second == first {
 		t.Fatal("the second release did not replace the first")
@@ -490,6 +493,9 @@ func (h *harness) backup() (one, b, hookOut string) {
 // apiHost is the name Caddy publishes the API on (P2.8).
 const apiHost = "api.e2e.example"
 
+// observationWindow is the worker's SHIPYARD_OBSERVATION_WINDOW (P2.6).
+const observationWindow = 6 * time.Second
+
 type harness struct {
 	t      *testing.T
 	token  string // the CLI's API token
@@ -613,7 +619,7 @@ func start(t *testing.T) *harness {
 		"SHIPYARD_BUILDER="+builder, "SHIPYARD_BUILDER_MEMORY=1g", "SHIPYARD_BUILDER_CPUS=1",
 		"SHIPYARD_CADDY_NAME="+h.caddy, "SHIPYARD_CADDY_ADMIN_DIR="+filepath.Join(tmp, "caddy"),
 		"SHIPYARD_CADDY_BIND=127.0.0.1", "SHIPYARD_CADDY_HTTP_PORT=0", "SHIPYARD_CADDY_HTTPS_PORT=0", "SHIPYARD_CADDY_CA=internal",
-		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW=6s", "SHIPYARD_CHECK_INTERVAL=2s",
+		"SHIPYARD_WORKER_POLL_INTERVAL=200ms", "SHIPYARD_RECONCILE_INTERVAL=1s", "SHIPYARD_OBSERVATION_WINDOW="+observationWindow.String(), "SHIPYARD_CHECK_INTERVAL=2s",
 		"SHIPYARD_RETAIN_IMAGES=1", "SHIPYARD_RETENTION_INTERVAL=3s", "SHIPYARD_RETAIN_OPERATIONS=2",
 		"SHIPYARD_GITHUB_APP_ID="+gh.appID, "SHIPYARD_GITHUB_APP_KEY_FILE="+ghKey, "SHIPYARD_GITHUB_API_URL="+ghURL)
 	h.stopWorker = h.spawn("worker", h.workerEnv, "shipyard-worker", "run").stop
@@ -1012,6 +1018,62 @@ func stoppedSince(id string, since time.Time, out []byte) bool {
 	}
 	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(fin)))
 	return err == nil && !at.Before(since)
+}
+
+// wantDrained checks, once the superseded container is gone, that it was
+// first signalled no earlier than its deployment's ended_at plus the
+// observation window, and with SIGTERM (a graceful stop, not a forced
+// removal). Docker replays a removed container's kill, die, and stop events
+// by ID from its last 256 [DK-EVENTS]; the stop is a moment old here. The
+// database, the daemon, and the worker share the host's clock.
+func (h *harness) wantDrained(id, deploymentID string, since time.Time) {
+	h.t.Helper()
+	pool, err := store.Open(h.t.Context(), h.dbURL)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer pool.Close()
+	d, err := store.New(pool).DeploymentByID(h.t.Context(), deploymentID)
+	if err != nil {
+		h.t.Fatalf("deployment %s of the superseded container: %v", deploymentID, err)
+	}
+	if d.Status != store.DeploySuperseded || d.EndedAt == nil {
+		h.t.Fatalf("deployment %s: status %s, ended_at %v, want superseded with an end", deploymentID, d.Status, d.EndedAt)
+	}
+	due := d.EndedAt.Add(observationWindow)
+	out := h.docker("events", "--since", fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond()),
+		"--until", fmt.Sprintf("%d", time.Now().Unix()+1), "--filter", "container="+id,
+		"--filter", "event=kill", "--filter", "event=die", "--filter", "event=stop",
+		"--format", `{{.Action}} {{.TimeNano}} {{index .Actor.Attributes "signal"}}`)
+	var first time.Time
+	var firstSignal string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		var ns int64
+		if _, err := fmt.Sscan(f[1], &ns); err != nil {
+			h.t.Fatalf("docker event %q: %v", line, err)
+		}
+		at := time.Unix(0, ns)
+		if first.IsZero() || at.Before(first) {
+			first, firstSignal = at, ""
+			if f[0] == "kill" && len(f) > 2 {
+				firstSignal = f[2]
+			}
+		}
+	}
+	switch {
+	case first.IsZero():
+		h.t.Fatalf("no kill, die, or stop of the superseded container %s in Docker's event log since %s", id[:12], since.Format(time.RFC3339Nano))
+	case first.Before(due):
+		h.t.Fatalf("the superseded container stopped %s before its observation window ended (ended_at %s + %s):\n%s",
+			due.Sub(first), d.EndedAt.Format(time.RFC3339Nano), observationWindow, out)
+	case firstSignal != "15":
+		h.t.Fatalf("the superseded container was not stopped with SIGTERM first:\n%s", out)
+	}
+	h.t.Logf("superseded container stopped %s after ended_at (window %s)", first.Sub(*d.EndedAt).Round(time.Millisecond), observationWindow)
 }
 
 func run(t *testing.T, dir string, env []string, name string, args ...string) string {
