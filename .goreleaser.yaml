@@ -56,6 +56,9 @@ archives:
     ids: [api, worker]
     name_template: "shipyard-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
+    # One top-level directory named like the archive, which docs/OPERATIONS.md
+    # runs deploy/install.sh from [GORELEASER-ARCHIVE].
+    wrap_in_directory: true
     files:
       - LICENSE
       - NOTICE

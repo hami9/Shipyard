@@ -2,7 +2,7 @@
 
 How to install, configure, upgrade, back up, monitor, and troubleshoot Shipyard on one server.
 
-**Status.** `deploy/install.sh` has been run in dry-run mode only. The first real install on a fresh VPS is the Phase 5 acceptance demo (P5.9). Report anything here that does not match your server.
+**Status.** `deploy/install.sh` has been run in dry-run mode only. The first real install on a fresh VPS is the Phase 5 acceptance demo (P5.9, [ACCEPTANCE.md](ACCEPTANCE.md)). Report anything here that does not match your server.
 
 ## Requirements
 

@@ -50,6 +50,7 @@ The supported production setup is the two systemd services in [deploy/](deploy/R
 | [docs/RELEASING.md](docs/RELEASING.md) | Release process, artifacts, and version plan |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Install, configuration, upgrade, backup, monitoring, troubleshooting |
 | [docs/RESTORE.md](docs/RESTORE.md) | Restoring onto a new server from backups |
+| [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) | The v1.0 acceptance demo on a fresh VPS: runbook and record, with the sample app in [examples/hello](examples/hello) |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes per release |
 | [CLAUDE.md](CLAUDE.md) | Instructions for AI coding agents (system prompt) |
 

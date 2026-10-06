@@ -236,6 +236,8 @@ flowchart LR
   - [x] **P5.8a** The review, `make vuln` in CI, and its fixes: `golang.org/x/text` (GO-2026-5970), the GitHub App key mode, the installer's password and temp file, an import-graph test for invariant 1.
   - [x] **P5.8b** A group of its own for the Caddy admin socket, so the API's user cannot reach it (finding F2, the owner's choice).
 - [ ] **P5.9** Run the full acceptance demo on a fresh VPS, record it, and tag `v1.0.0`.
+  - [x] **P5.9a** The runbook and record ([ACCEPTANCE.md](ACCEPTANCE.md)), the sample app (`examples/hello`), and a release rehearsal (which found and fixed the server archive's missing top-level directory).
+  - [ ] **P5.9b** (the owner's) The run on two fresh VPSes, recorded in ACCEPTANCE.md; then the stack merged to `main` and the `v1.0.0` tag.
 
 **Exit criteria**
 
