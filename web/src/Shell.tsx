@@ -30,7 +30,9 @@ export function Shell({ session, client, onSignOut }: Props) {
       </header>
       <main>
         {route.page === "apps" && <AppList client={client} />}
-        {route.page === "app" && <AppDetail key={route.slug} client={client} slug={route.slug} />}
+        {route.page === "app" && (
+          <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
+        )}
         {route.page === "missing" && (
           <p>
             There is no page at <code>{route.path}</code>. <Link to={{ page: "apps" }}>Back to the apps</Link>.

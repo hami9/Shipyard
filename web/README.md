@@ -2,13 +2,14 @@
 
 Shipyard's web UI, Phase 6 of the [roadmap](../docs/ROADMAP.md). It is never required for a deploy: the CLI does everything.
 
-React, built by esbuild, served on the API's own hostname, with the API token in the tab's `sessionStorage` ([ADR-0016](../docs/adr/0016-web-ui-build-and-session.md)). Today it has the token login, the app list, and each app's settings and releases; rollback, live events, logs, environment and domains come with P6.3b–P6.5.
+React, built by esbuild, served on the API's own hostname, with the API token in the tab's `sessionStorage` ([ADR-0016](../docs/adr/0016-web-ui-build-and-session.md)). Today it has the token login, the app list, each app's settings and releases, and rollback; live events, logs, environment and domains come with P6.4 and P6.5.
 
 | Path | What |
 | --- | --- |
 | `src/main.tsx`, `src/App.tsx` | The entry point, and the switch between login and the signed-in shell |
 | `src/Login.tsx`, `src/Shell.tsx` | The token form; the header with the token's name, scopes and expiry, sign-out, and the page switch |
 | `src/AppList.tsx`, `src/AppDetail.tsx` | The app list; an app's settings and its releases, a page at a time |
+| `src/Rollback.tsx`, `src/rollbackRules.ts` | Confirming a rollback (one `Idempotency-Key` per confirmation), and the configuration choice after a 409 |
 | `src/routes.ts`, `src/nav.tsx` | Paths to pages and back; navigation over the History API (`navigate`, `useRoute`, `Link`) |
 | `src/useApi.ts`, `src/format.ts` | Loading data into a page; how times, sizes, commits and statuses read |
 | `src/session.ts` | The token in `sessionStorage`, `signIn` (checks it with `whoami`), and the client for a session |

@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
 import type { Client } from "./api/client.ts";
-import type { App, Release } from "./api/schema.ts";
+import type { App, Release, Scope } from "./api/schema.ts";
 import { ago, bytes, shortSHA, statusLabel, tone } from "./format.ts";
 import { Link } from "./nav.tsx";
+import { Rollback } from "./Rollback.tsx";
+import { canRollBack } from "./rollbackRules.ts";
 import { message, useApi } from "./useApi.ts";
 
-export function AppDetail({ client, slug }: { client: Client; slug: string }) {
+interface Props {
+  client: Client;
+  slug: string;
+  /** The token's scopes: rolling back needs deploy. */
+  scopes: Scope[];
+}
+
+export function AppDetail({ client, slug, scopes }: Props) {
   const app = useApi(() => client.call("getApp", { path: { app: slug } }), [client, slug]);
   return (
     <section>
@@ -18,7 +27,7 @@ export function AppDetail({ client, slug }: { client: Client; slug: string }) {
         </p>
       )}
       {app.data && <Settings app={app.data} />}
-      {app.data && <Releases client={client} slug={slug} />}
+      {app.data && <Releases client={client} slug={slug} scopes={scopes} />}
       {app.loading && !app.data && <p className="hint">Loading…</p>}
     </section>
   );
@@ -56,7 +65,7 @@ function Settings({ app }: { app: App }) {
 const pageSize = 20;
 
 /** Releases is the app's deployments, newest first, a page at a time. */
-function Releases({ client, slug }: { client: Client; slug: string }) {
+function Releases({ client, slug, scopes }: Props) {
   const first = useApi(
     () => client.call("listReleases", { path: { app: slug }, query: { limit: pageSize } }),
     [client, slug],
@@ -65,6 +74,8 @@ function Releases({ client, slug }: { client: Client; slug: string }) {
   const [next, setNext] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const [target, setTarget] = useState<Release | undefined>();
+  const [queued, setQueued] = useState<string | undefined>();
 
   // A new first page (a refresh) starts the list over.
   useEffect(() => {
@@ -99,6 +110,32 @@ function Releases({ client, slug }: { client: Client; slug: string }) {
         </button>
       </div>
       {first.error && <p className="error" role="alert">{first.error}</p>}
+      {queued && (
+        <p className="notice" role="status">
+          {queued}
+        </p>
+      )}
+      {target && (
+        <Rollback
+          client={client}
+          slug={slug}
+          target={target}
+          onCancel={() => setTarget(undefined)}
+          onDone={(a) => {
+            setTarget(undefined);
+            const replaced =
+              a.superseded.length > 0
+                ? ` It replaced ${a.superseded.length === 1 ? "an operation" : `${a.superseded.length} operations`} still waiting in the queue.`
+                : "";
+            setQueued(
+              a.created
+                ? `Rollback queued: operation ${a.operation.id.slice(0, 8)} (${a.operation.status}).${replaced} The new release appears here once the worker starts it.`
+                : `That rollback was already queued: operation ${a.operation.id.slice(0, 8)} (${a.operation.status}).`,
+            );
+            first.reload();
+          }}
+        />
+      )}
       {first.data && releases.length === 0 && (
         <p className="hint">
           Nothing deployed yet. Deploy with <code>shipyard deploy {slug}</code>.
@@ -113,6 +150,9 @@ function Releases({ client, slug }: { client: Client; slug: string }) {
               <th>Release</th>
               <th>Config</th>
               <th>Created</th>
+              <th>
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -133,6 +173,20 @@ function Releases({ client, slug }: { client: Client; slug: string }) {
                 </td>
                 <td>{r.env_revision === 0 ? "none" : `revision ${r.env_revision}`}</td>
                 <td title={r.created_at}>{ago(r.created_at)}</td>
+                <td>
+                  {canRollBack(r, scopes) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQueued(undefined);
+                        setTarget(r);
+                      }}
+                      disabled={target !== undefined}
+                    >
+                      Roll back
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -254,9 +254,9 @@ The UI is never required for a deploy (ARCHITECTURE §1).
 - [x] **P6.2** A React and TypeScript app in `web/`, served as static files by Caddy, with a token login ([ADR-0016](adr/0016-web-ui-build-and-session.md); owner's choices 2026-10-06: esbuild, `sessionStorage`, the API's hostname). Split into:
   - [x] **P6.2a** The app: the esbuild build and dev server (proxying `/v1`), the token login and the signed-in shell, and sign-out on any 401.
   - [x] **P6.2b** Serving: Caddy serves the built UI at `/` on `SHIPYARD_API_HOSTNAME` from a read-only mount, with a strict CSP and security headers. `install.sh` installs it; the release workflow builds it into the server archive.
-- [ ] **P6.3** App list, app detail, deployment history, and rollback. Split into:
+- [x] **P6.3** App list, app detail, deployment history, and rollback. Split into:
   - [x] **P6.3a** Pages over the History API (no router library): the app list, an app's settings, and its releases a page at a time.
-  - [ ] **P6.3b** Rollback from a release (deploy scope), with the choice of configuration when secrets changed since (409), and the operation it queued.
+  - [x] **P6.3b** Rollback from a release (deploy scope), with the choice of configuration when secrets changed since (409), and the operation it queued.
 - [ ] **P6.4** Live operation events and logs through `EventSource`.
 - [ ] **P6.5** Environment management (write-only values) and domains.
 - [ ] **P6.6** Accessibility pass and Playwright e2e tests.

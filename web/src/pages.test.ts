@@ -2,6 +2,35 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ago, bytes, shortSHA, statusLabel, tone } from "./format.ts";
 import { href, parseRoute } from "./routes.ts";
+import { ApiError } from "./api/client.ts";
+import type { Release } from "./api/schema.ts";
+import { canRollBack, needsConfigChoice, rollbackBody } from "./rollbackRules.ts";
+
+test("rollback: which releases, which tokens", () => {
+  const r = (status: Release["status"]): Release => ({
+    id: "d", operation_id: "o", kind: "build", status, commit: "c", env_revision: 0, created_at: "2026-10-06T12:00:00Z",
+  });
+  assert.equal(canRollBack(r("superseded"), ["deploy"]), true);
+  assert.equal(canRollBack(r("superseded"), ["admin"]), true);
+  assert.equal(canRollBack(r("superseded"), ["read"]), false);
+  for (const s of ["active", "failed", "cancelled", "building", "queued"] as const) {
+    assert.equal(canRollBack(r(s), ["admin"]), false, s);
+  }
+});
+
+test("rollback: the secrets-changed 409 and the choice it asks for", () => {
+  const problem = (status: number, detail: string) =>
+    new ApiError(status, { type: "about:blank", title: "", status, detail }, undefined, detail);
+  // The API's message (internal/api/rollbacks.go) names both fields.
+  const changed = "secrets changed since this deployment: DB_PASSWORD. Retry with with_current_config (today's values) or with_old_config (the values it ran with)";
+  assert.equal(needsConfigChoice(problem(409, changed)), true);
+  assert.equal(needsConfigChoice(problem(409, "deployment x is already active")), false);
+  assert.equal(needsConfigChoice(problem(422, changed)), false);
+  assert.equal(needsConfigChoice(new Error(changed)), false);
+  assert.deepEqual(rollbackBody("d1"), { to: "d1" });
+  assert.deepEqual(rollbackBody("d1", "current"), { to: "d1", with_current_config: true });
+  assert.deepEqual(rollbackBody("d1", "old"), { to: "d1", with_old_config: true });
+});
 
 test("routes: paths to pages and back", () => {
   assert.deepEqual(parseRoute("/"), { page: "apps" });
