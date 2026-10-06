@@ -70,6 +70,8 @@ export interface StreamOptions {
   signal?: AbortSignal;
   /** Resume after this event ID (Last-Event-ID). */
   lastEventId?: string;
+  /** Called each time the stream is (re)connected and the server has answered. */
+  onOpen?: () => void;
 }
 
 interface SendOptions {
@@ -114,10 +116,24 @@ export class Client {
     let retry: number | undefined;
     let failures = 0;
     for (;;) {
-      const res = await this.#send(op, request, { accept: "text/event-stream", signal: options.signal, lastEventId });
+      let res: Response;
+      try {
+        res = await this.#send(op, request, { accept: "text/event-stream", signal: options.signal, lastEventId });
+      } catch (err) {
+        // A reconnection rides out a server that is briefly away (a restart:
+        // the network fails, or a proxy answers 5xx); a 4xx is final, and so
+        // is any error on the first connection.
+        const transient = !(err instanceof ApiError) || err.status >= 500;
+        if (retry === undefined || !transient || options.signal?.aborted || ++failures > maxReconnects) {
+          throw err;
+        }
+        await sleep(retry, options.signal);
+        continue;
+      }
       if (!res.body) {
         return;
       }
+      options.onOpen?.();
       try {
         for await (const e of parseEvents(res.body, (ms) => (retry = ms))) {
           failures = 0;

@@ -54,6 +54,7 @@
   - **Checks:** `tsc` with `strict`, `exactOptionalPropertyTypes` and `erasableSyntaxOnly`. The tests run on Node 24's own TypeScript stripping and test runner `[NODE-TS]`. `@ts-expect-error` lines in the tests prove that wrong calls fail to compile.
   - **Dependencies:** `typescript` 7.0.2, exact and dev-only, with its per-platform binary packages in the lockfile `[TS-7]`. A local declaration file types `node:test`, so `@types/node` is not needed.
   - **CI:** a `web` job runs `make web-check` on Node 24.
+- **2026-10-06 (P6.4).** `stream` reconnects through a server that is briefly away. A network error or a 5xx on a reconnection is retried at the server's `retry` interval, up to the same limit; a 4xx, or any error on the first connection, is final. Before, a reconnection that met the API mid-restart (the proxy's 502) ended the stream. `onOpen` reports each (re)connection.
 
 ## Alternatives considered
 

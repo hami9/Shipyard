@@ -1,7 +1,9 @@
 import type { Client } from "./api/client.ts";
 import { AppDetail } from "./AppDetail.tsx";
 import { AppList } from "./AppList.tsx";
+import { Logs } from "./Logs.tsx";
 import { Link, useRoute } from "./nav.tsx";
+import { OperationView } from "./OperationView.tsx";
 import { expiresIn, type Session } from "./session.ts";
 
 interface Props {
@@ -10,8 +12,7 @@ interface Props {
   onSignOut: () => void;
 }
 
-// The signed-in frame and its pages. Logs, environment, and domains come
-// with P6.4 and P6.5.
+// The signed-in frame and its pages. Environment and domains come with P6.5.
 export function Shell({ session, client, onSignOut }: Props) {
   const { whoami } = session;
   const route = useRoute();
@@ -33,6 +34,8 @@ export function Shell({ session, client, onSignOut }: Props) {
         {route.page === "app" && (
           <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
         )}
+        {route.page === "logs" && <Logs key={route.slug} client={client} slug={route.slug} />}
+        {route.page === "operation" && <OperationView key={route.id} client={client} id={route.id} />}
         {route.page === "missing" && (
           <p>
             There is no page at <code>{route.path}</code>. <Link to={{ page: "apps" }}>Back to the apps</Link>.

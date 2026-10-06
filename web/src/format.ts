@@ -1,6 +1,29 @@
 // How values read on the page.
 
-import type { Release } from "./api/schema.ts";
+import type { Operation, Release } from "./api/schema.ts";
+
+/** clock is a timestamp's local time of day, to the second: events of one operation share a day. */
+export function clock(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) {
+    return ts;
+  }
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+/** opTone colors an operation status like a release's. */
+export function opTone(status: Operation["status"]): Tone {
+  switch (status) {
+    case "succeeded":
+      return "ok";
+    case "failed":
+      return "bad";
+    case "cancelled":
+      return "idle";
+    default:
+      return "busy";
+  }
+}
 
 /** ago is a timestamp relative to now, coarse on purpose: "3 min ago". */
 export function ago(ts: string, now: Date = new Date()): string {

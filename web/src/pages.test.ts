@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ago, bytes, shortSHA, statusLabel, tone } from "./format.ts";
+import { ago, bytes, clock, opTone, shortSHA, statusLabel, tone } from "./format.ts";
+import { appendCapped } from "./useStream.ts";
 import { href, parseRoute } from "./routes.ts";
 import { ApiError } from "./api/client.ts";
 import type { Release } from "./api/schema.ts";
@@ -44,6 +45,36 @@ test("routes: paths to pages and back", () => {
   assert.equal(href({ page: "apps" }), "/");
   assert.equal(href({ page: "app", slug: "web-1" }), "/apps/web-1");
   assert.equal(href(parseRoute("/apps/api")), "/apps/api");
+});
+
+test("routes: operations and logs", () => {
+  const id = "5e21d7f1-0000-4000-8000-000000000001";
+  assert.deepEqual(parseRoute(`/operations/${id}`), { page: "operation", id });
+  assert.deepEqual(parseRoute("/apps/web/logs"), { page: "logs", slug: "web" });
+  for (const p of ["/operations/42", "/operations/", `/operations/${id.toUpperCase()}`, "/apps/web/log", "/apps/Web/logs", "/apps/web/logs/x"]) {
+    assert.equal(parseRoute(p).page, "missing", p);
+  }
+  assert.equal(href({ page: "operation", id }), `/operations/${id}`);
+  assert.equal(href({ page: "logs", slug: "web" }), "/apps/web/logs");
+});
+
+test("appendCapped keeps the newest", () => {
+  assert.deepEqual(appendCapped([1, 2], [3], 5), [1, 2, 3]);
+  assert.deepEqual(appendCapped([1, 2, 3, 4], [5, 6, 7], 5), [3, 4, 5, 6, 7]);
+  assert.deepEqual(appendCapped([], [1, 2, 3], 2), [2, 3]);
+});
+
+test("clock and operation tones", () => {
+  // Local time: offsets are not always whole hours (Iran is +03:30).
+  const t = "2026-10-06T12:03:04Z";
+  const d = new Date(t);
+  const two = (n: number) => String(n).padStart(2, "0");
+  assert.equal(clock(t), `${two(d.getHours())}:${two(d.getMinutes())}:04`);
+  assert.equal(clock("never"), "never");
+  assert.equal(opTone("succeeded"), "ok");
+  assert.equal(opTone("failed"), "bad");
+  assert.equal(opTone("cancelled"), "idle");
+  assert.equal(opTone("running"), "busy");
 });
 
 test("ago", () => {

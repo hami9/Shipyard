@@ -96,13 +96,45 @@ test("an operation's events, resumed with Last-Event-ID, until end", async () =>
     sse(`retry: 1\n\n${event(3)}event: end\ndata: ${JSON.stringify(op)}\n\n`),
   );
   const got: StreamEvent<"streamEvents">[] = [];
-  for await (const e of client.stream("streamEvents", { path: { id: "o" } })) {
+  let opened = 0;
+  for await (const e of client.stream("streamEvents", { path: { id: "o" } }, { onOpen: () => opened++ })) {
     got.push(e);
   }
+  assert.equal(opened, 2); // the first connection and the resumed one
   assert.deepEqual(got.map((e) => (e.event === "message" ? e.data.seq : e.data.status)), [1, 2, 3, "succeeded"]);
   assert.equal(seen[0]!.headers.get("Accept"), "text/event-stream");
   assert.equal(seen[0]!.headers.get("Last-Event-ID"), null);
   assert.equal(seen[1]!.headers.get("Last-Event-ID"), "2");
+});
+
+test("a reconnection rides out a restarting server, but not a 4xx", async () => {
+  const event = (seq: number) => `id: ${seq}\ndata: ${JSON.stringify({ seq, ts: "2026-10-06T10:00:00Z", level: "info", message: "m" })}\n\n`;
+  const op = { id: "o", app_id: "a", kind: "deploy", status: "succeeded", payload: {}, idempotency_key: "k", attempt: 1, max_attempts: 3, created_at: "2026-10-06T10:00:00Z" };
+  const down = () => new Response("bad gateway", { status: 502 });
+  const { client, seen } = fake(
+    sse(`retry: 1\n\n${event(1)}`), // dropped
+    down(), // the API restarting
+    down(),
+    sse(`retry: 1\n\n${event(2)}event: end\ndata: ${JSON.stringify(op)}\n\n`),
+  );
+  const seqs: number[] = [];
+  for await (const e of client.stream("streamEvents", { path: { id: "o" } })) {
+    if (e.event === "message") {
+      seqs.push(e.data.seq);
+    }
+  }
+  assert.deepEqual(seqs, [1, 2]);
+  assert.equal(seen.length, 4);
+  assert.equal(seen[3]!.headers.get("Last-Event-ID"), "1");
+
+  // The operation is gone (a finished delete): no retrying a 404.
+  const gone = fake(sse(`retry: 1\n\n${event(1)}`), new Response("{}", { status: 404, headers: { "Content-Type": "application/problem+json" } }));
+  await assert.rejects(async () => {
+    for await (const _ of gone.client.stream("streamEvents", { path: { id: "o" } })) {
+      // drain
+    }
+  }, ApiError);
+  assert.equal(gone.seen.length, 2);
 });
 
 test("a stream without retry, such as logs, ends with its connection", async () => {

@@ -257,7 +257,7 @@ The UI is never required for a deploy (ARCHITECTURE §1).
 - [x] **P6.3** App list, app detail, deployment history, and rollback. Split into:
   - [x] **P6.3a** Pages over the History API (no router library): the app list, an app's settings, and its releases a page at a time.
   - [x] **P6.3b** Rollback from a release (deploy scope), with the choice of configuration when secrets changed since (409), and the operation it queued.
-- [ ] **P6.4** Live operation events and logs through `EventSource`.
+- [x] **P6.4** Live operation events and logs through `EventSource`. As built: over `fetch` (`client.stream`), since `EventSource` cannot send the bearer token (ADR-0015). It has an operation page that resumes with `Last-Event-ID` and rides out an API restart, and a logs page with tail, follow and stop.
 - [ ] **P6.5** Environment management (write-only values) and domains.
 - [ ] **P6.6** Accessibility pass and Playwright e2e tests.
 

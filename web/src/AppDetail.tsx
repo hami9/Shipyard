@@ -49,6 +49,7 @@ function Settings({ app }: { app: App }) {
     <>
       <div className="title">
         <h1>{app.slug}</h1>
+        <Link to={{ page: "logs", slug: app.slug }}>Logs</Link>
       </div>
       <dl className="settings">
         {rows.map(([k, v]) => (
@@ -75,7 +76,7 @@ function Releases({ client, slug, scopes }: Props) {
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [target, setTarget] = useState<Release | undefined>();
-  const [queued, setQueued] = useState<string | undefined>();
+  const [queued, setQueued] = useState<{ text: string; op: string } | undefined>();
 
   // A new first page (a refresh) starts the list over.
   useEffect(() => {
@@ -112,7 +113,7 @@ function Releases({ client, slug, scopes }: Props) {
       {first.error && <p className="error" role="alert">{first.error}</p>}
       {queued && (
         <p className="notice" role="status">
-          {queued}
+          {queued.text} <Link to={{ page: "operation", id: queued.op }}>Follow it</Link>
         </p>
       )}
       {target && (
@@ -127,11 +128,12 @@ function Releases({ client, slug, scopes }: Props) {
               a.superseded.length > 0
                 ? ` It replaced ${a.superseded.length === 1 ? "an operation" : `${a.superseded.length} operations`} still waiting in the queue.`
                 : "";
-            setQueued(
-              a.created
+            setQueued({
+              op: a.operation.id,
+              text: a.created
                 ? `Rollback queued: operation ${a.operation.id.slice(0, 8)} (${a.operation.status}).${replaced} The new release appears here once the worker starts it.`
                 : `That rollback was already queued: operation ${a.operation.id.slice(0, 8)} (${a.operation.status}).`,
-            );
+            });
             first.reload();
           }}
         />
@@ -166,7 +168,10 @@ function Releases({ client, slug, scopes }: Props) {
                   <code title={r.commit}>{shortSHA(r.commit)}</code>
                 </td>
                 <td>
-                  <code title={r.id}>{r.id.slice(0, 8)}</code>
+                  <code title={r.id}>{r.id.slice(0, 8)}</code>{" "}
+                  <Link to={{ page: "operation", id: r.operation_id }} className="small">
+                    events
+                  </Link>
                   {r.kind === "rollback" && r.rollback_of && (
                     <div className="hint">rollback to {r.rollback_of.slice(0, 8)}</div>
                   )}
