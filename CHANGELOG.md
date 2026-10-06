@@ -13,6 +13,7 @@ All notable changes to Shipyard are recorded here.
 
 - **OpenAPI description of the API** ([api/openapi.json](api/openapi.json), OpenAPI 3.1, ADR-0015): every `/v1` route with its scope, request and response schemas, and the event streams' data. The API's tests check every response they produce against it.
 - **Web UI** (`web/`, ADR-0016): a React app built by esbuild, with a token login (the token stays in the tab's `sessionStorage`) and sign-out. `make web-dev` serves it locally against the API.
+  - **Pages:** the app list, and each app's settings and releases (newest first, with failure reasons and rollbacks, older ones on demand). Links are real paths (`/apps/web`), so a reload or a bookmark returns to the same page.
   - **Served by Caddy** at `https://<SHIPYARD_API_HOSTNAME>/`, next to the API, from a read-only mount of `SHIPYARD_WEB_DIR` (default `/usr/local/share/shipyard/web`), with a strict Content-Security-Policy and anti-framing headers. `off` turns it off.
   - **Packaging:** `install.sh` installs it from the server archive, which now ships `web/`. Release builds need Node.js 24.
   - **Upgrade:** with an API hostname and the UI installed, the Caddy container is recreated once to mount it (a few seconds without traffic; certificates are kept).

@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b, pushed, no PR yet); `disk-cert` (P5.6, pushed, no PR yet); `install-script` (P5.7a, pushed, no PR yet); `installer` (P5.7b, pushed, no PR yet); `ops-guide` (P5.7c, pushed, no PR yet); `security-review` (P5.8a, pushed, no PR yet); `caddy-group` (P5.8b, pushed, no PR yet); `acceptance-demo` (P5.9a, pushed, no PR yet); `openapi` (P6.1a, pushed, no PR yet); `ts-client` (P6.1b, pushed, no PR yet, CI green); `web-app` (P6.2a, pushed, no PR yet, CI green); `web-serve` (P6.2b). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P6.2: the React app with the token login (P6.2a), served by Caddy on the API hostname with a strict CSP and shipped in the server archive (P6.2b, ADR-0016). Before it, P6.1: `api/openapi.json`, held to the handlers by tests (P6.1a), and the TypeScript client generated from it (P6.1b, ADR-0015). Before it, P5.9a: the acceptance runbook (docs/ACCEPTANCE.md), the sample app (examples/hello), and the server archive's directory fix. Before it, P5.8b: the `shipyard-caddy` group for Caddy's admin socket, so P5.8 is done; P5.8a: security review (docs/security-review.md), govulncheck, fixes; P5.7: installer, build firewall, operator guide; P5.6: disk and certificate checks with log warnings and shipped Prometheus alert rules at 80%, ADR-0014 (P5.5 metrics before it, ADR-0013) |
-| **Next task** | P6.3: app list, app detail, deployment history, and rollback in the UI. In parallel, P5.9b (the owner's): run docs/ACCEPTANCE.md on two fresh VPSes and record it there; then merge the stack and tag `v1.0.0`. It also covers: a real `install.sh` run on a fresh VPS; the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b, pushed, no PR yet); `disk-cert` (P5.6, pushed, no PR yet); `install-script` (P5.7a, pushed, no PR yet); `installer` (P5.7b, pushed, no PR yet); `ops-guide` (P5.7c, pushed, no PR yet); `security-review` (P5.8a, pushed, no PR yet); `caddy-group` (P5.8b, pushed, no PR yet); `acceptance-demo` (P5.9a, pushed, no PR yet); `openapi` (P6.1a, pushed, no PR yet); `ts-client` (P6.1b, pushed, no PR yet, CI green); `web-app` (P6.2a, pushed, no PR yet, CI green); `web-serve` (P6.2b, pushed, no PR yet); `app-pages` (P6.3a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P6.3a: the app list, app detail, and release history pages. Before it, P6.2: the React app with the token login (P6.2a), served by Caddy on the API hostname with a strict CSP and shipped in the server archive (P6.2b, ADR-0016). Before it, P6.1: `api/openapi.json`, held to the handlers by tests (P6.1a), and the TypeScript client generated from it (P6.1b, ADR-0015). Before it, P5.9a: the acceptance runbook (docs/ACCEPTANCE.md), the sample app (examples/hello), and the server archive's directory fix. Before it, P5.8b: the `shipyard-caddy` group for Caddy's admin socket, so P5.8 is done; P5.8a: security review (docs/security-review.md), govulncheck, fixes; P5.7: installer, build firewall, operator guide; P5.6: disk and certificate checks with log warnings and shipped Prometheus alert rules at 80%, ADR-0014 (P5.5 metrics before it, ADR-0013) |
+| **Next task** | P6.3b: rollback from a release in the UI. In parallel, P5.9b (the owner's): run docs/ACCEPTANCE.md on two fresh VPSes and record it there; then merge the stack and tag `v1.0.0`. It also covers: a real `install.sh` run on a fresh VPS; the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-06 |
@@ -53,6 +53,45 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-06: P6.3a app pages
+
+- **Phase / task:** P6.3a: the app list, app detail, and release history in the UI (P6.3 split: P6.3b is rollback)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Routing without a library:**
+  - `routes.ts` turns `/`, `/apps`, and `/apps/<slug>` (the API's slug rule) into pages and back.
+  - `nav.tsx` has `navigate`, `useRoute` (links and the back button) and `Link` (a modified click is left to the browser).
+  - Caddy's `index.html` fallback (P6.2b) makes these paths survive a reload.
+- **`useApi`:** loads into a page and drops answers older than the newest request. Its messages turn a 404 into "Not found.", and an unreachable API into its own message.
+- **Pages:**
+  - `AppList`: slug, repository, branch, push deploys, age; an empty state that points to the CLI.
+  - `AppDetail`: the settings, then the releases, 20 at a time with "Older releases" (the API's `before` cursor):
+    - a status badge colored by tone, with the failure reason;
+    - the commit (12 characters), the release ID, "rollback to …", the configuration revision, and the age.
+  - An unknown app and an unknown path each get a message.
+- **`format.ts`:** `ago`, `bytes`, `shortSHA`, `tone`, `statusLabel`.
+- **Styles:** tables, badges, a settings grid. Wide tables scroll inside themselves at phone width, never the page.
+
+**Decisions**
+- **No router dependency:** three routes do not need one. **No new dependency** at all.
+
+**Verification**
+- `tsc` exit 0. `node --test`: 21 of 21 pass (routes, including rejected slugs and broken escapes; `ago`; `bytes`; statuses).
+- **In the browser pane, against the real dev API** (127.0.0.1:18080). The data: two apps created through the API (201), and 25 deployments of one seeded by SQL on the dev database (1 active, 1 failed, 1 rollback, 22 superseded).
+  - The list shows both apps; the link opens `/apps/web` without a reload.
+  - The settings read correctly (`512 MiB`, `GET /healthz, 1m0s`).
+  - The first page has 20 releases, newest first: the active one on top, the failed one with its reason, the rollback with its source.
+  - "Older releases" brings 25, and the button goes.
+  - Back returns to the list; a reload of `/apps/web` returns to it.
+  - `/apps/nope` says there is no such app, and `/settings/x` says there is no page.
+  - At 375 px the page does not scroll sideways; the table scrolls inside itself.
+  - The browser pane was hidden, so it was driven through the DOM, not screenshots.
+- **Not run:** Go checks (no Go changed).
+
+**Next**
+- P6.3b: rollback from a release.
 
 ### 2026-10-06: P6.2b web UI through Caddy
 

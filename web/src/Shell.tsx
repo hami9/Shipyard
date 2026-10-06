@@ -1,4 +1,7 @@
 import type { Client } from "./api/client.ts";
+import { AppDetail } from "./AppDetail.tsx";
+import { AppList } from "./AppList.tsx";
+import { Link, useRoute } from "./nav.tsx";
 import { expiresIn, type Session } from "./session.ts";
 
 interface Props {
@@ -7,14 +10,17 @@ interface Props {
   onSignOut: () => void;
 }
 
-// The signed-in frame. The pages inside it (apps, releases, logs,
-// environment, domains) arrive with P6.3–P6.5 and use client.
-export function Shell({ session, onSignOut }: Props) {
+// The signed-in frame and its pages. Logs, environment, and domains come
+// with P6.4 and P6.5.
+export function Shell({ session, client, onSignOut }: Props) {
   const { whoami } = session;
+  const route = useRoute();
   return (
     <div className="shell">
       <header>
-        <strong>Shipyard</strong>
+        <Link to={{ page: "apps" }} className="brand">
+          Shipyard
+        </Link>
         <span className="who" title={`token ${whoami.token}`}>
           {whoami.name} · {whoami.scopes.join(", ")} · {expiresIn(whoami.expires_at)}
         </span>
@@ -23,7 +29,13 @@ export function Shell({ session, onSignOut }: Props) {
         </button>
       </header>
       <main>
-        <p>Signed in. Apps, releases, and logs come next (roadmap P6.3).</p>
+        {route.page === "apps" && <AppList client={client} />}
+        {route.page === "app" && <AppDetail key={route.slug} client={client} slug={route.slug} />}
+        {route.page === "missing" && (
+          <p>
+            There is no page at <code>{route.path}</code>. <Link to={{ page: "apps" }}>Back to the apps</Link>.
+          </p>
+        )}
       </main>
     </div>
   );
