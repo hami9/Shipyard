@@ -92,7 +92,7 @@ Shipyard runs on one host. The pieces interact as follows:
 | --- | --- | --- | --- |
 | Caddy | Container attached to every app network. It alone publishes 80/tcp, 443/tcp, and 443/udp. | App containers, the API listener | Docker socket |
 | `shipyard-api` | systemd service, dedicated unprivileged user, **not** in the `docker` group | PostgreSQL, the active KEK to seal secrets: with an HPKE KEK only its public key (ADR-0012) | Docker socket, Caddy admin socket |
-| `shipyard-worker` | systemd service in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]` | Docker socket, Caddy admin socket, PostgreSQL, GitHub, key file | — |
+| `shipyard-worker` | systemd service in the `docker` group, which is root-equivalent `[DK-POSTINSTALL]`, and the `shipyard-caddy` group, which only it has (P5.8b) | Docker socket, Caddy admin socket, PostgreSQL, GitHub, key file | — |
 | PostgreSQL | Host service on localhost or a Unix socket, or a container with **no** published port | — | Public network |
 | BuildKit | Rootless BuildKit (uid 1000) in a container managed by `buildx` (`docker-container` driver), with CPU and memory limits (ADR-0010) | Internet, for dependency downloads | Shipyard credentials, Docker socket |
 | App containers | One user-defined bridge network per app, with hardened flags (§7) | Their own network, Caddy, outbound internet | Docker socket, host network, other apps' networks |
@@ -480,8 +480,8 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
   - **Startup.** At every start, the worker ensures the `shipyard-caddy` container, its `shipyard-caddy` bridge network, and its `-data` and `-config` volumes. It then joins the container to every app network; new app networks are joined as they are created.
   - **Recreation.** A label holding a hash of the spec (image, ports, socket directory, group) makes a changed spec recreate the container. The volumes are kept.
   - **Image.** The official image, pinned by digest. It runs `caddy run --resume`, so a restart serves the last loaded config.
-  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by the worker's group with mode `2770`. It is bind-mounted at the same path, and is the only host path Caddy sees.
-  - **User.** Caddy runs as `0:<worker gid>`, so it can create the socket there without `CAP_DAC_OVERRIDE`.
+  - **Admin socket.** `CADDY_ADMIN=unix/<dir>/caddy-admin.sock|0660`, with no TCP listener. The directory (default `/run/shipyard/caddy`) is group-owned by `shipyard-caddy` (`SHIPYARD_CADDY_GROUP`) with mode `2770`. Only the worker is in that group, so the API's user, which shares the worker's `shipyard` group, cannot reach it (P5.8b). Without the group on the host, the worker's own group is used, with a warning. The directory is bind-mounted at the same path, and is the only host path Caddy sees besides the API socket's directory.
+  - **User.** Caddy runs as `0:<shipyard-caddy gid>`, so it can create the socket there without `CAP_DAC_OVERRIDE`. With an API hostname it also gets the worker's own group, to reach the API's `0660` socket.
   - **Hardening.** `--cap-drop ALL` plus `NET_BIND_SERVICE`, `no-new-privileges`, a read-only root filesystem with a small `/tmp` tmpfs, 512 MiB, 1 CPU, 512 pids, the `local` log driver, and `unless-stopped`.
   - **The capability is required.** The image's binary has `cap_net_bind_service=ep`: without the capability, even its exec fails.
   - **Ports.** 80/tcp, 443/tcp, and 443/udp are published on all interfaces by default. The bind address and ports are configurable for development and tests.

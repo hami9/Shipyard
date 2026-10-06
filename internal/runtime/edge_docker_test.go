@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,52 @@ func publishedPort(t *testing.T, r *Runtime, name, port string) string {
 		t.Fatalf("%s bindings = %v", port, b)
 	}
 	return b[0].HostPort
+}
+
+// P5.8b: the admin socket's group is one of the caller's supplementary
+// groups (shipyard-caddy in production), not its primary group (shipyard,
+// shared with the API); Caddy also gets the primary group, for the API's
+// socket.
+func TestEdgeAdminGroup(t *testing.T) {
+	r := newRuntime(t)
+	ctx := t.Context()
+	groups, _ := os.Getgroups()
+	admin := -1
+	for _, g := range groups {
+		if g != os.Getegid() && g != 0 {
+			admin = g
+			break
+		}
+	}
+	if admin < 0 {
+		t.Skip("needs a supplementary group (e.g. docker)")
+	}
+	s := newEdge(t, r)
+	s.GID, s.APIGID = admin, os.Getegid()
+	s.APISocketDir = t.TempDir()
+	id, err := r.EnsureEdge(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.Stat(s.AdminDir)
+	if err != nil || groupOf(dir) != admin || dir.Mode()&(fs.ModeSetgid|0o777) != fs.ModeSetgid|0o770 {
+		t.Fatalf("admin dir group %d mode %v, %v; want group %d, 2770", groupOf(dir), dir.Mode(), err, admin)
+	}
+	sock, err := os.Stat(s.AdminSocket())
+	if err != nil || groupOf(sock) != admin || sock.Mode().Perm() != 0o660 {
+		t.Fatalf("admin socket group %d mode %v, %v", groupOf(sock), sock.Mode(), err)
+	}
+	got, _ := r.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	c := got.Container
+	if c.Config.User != "0:"+strconv.Itoa(admin) || !slices.Equal(c.HostConfig.GroupAdd, []string{strconv.Itoa(os.Getegid())}) {
+		t.Fatalf("user %q, group-add %v", c.Config.User, c.HostConfig.GroupAdd)
+	}
+	// Inside, Caddy's process has both groups.
+	out, err := exec.Command("docker", "exec", s.Name, "id", "-G").CombinedOutput()
+	ids := strings.Fields(string(out))
+	if err != nil || !slices.Contains(ids, strconv.Itoa(admin)) || !slices.Contains(ids, strconv.Itoa(os.Getegid())) {
+		t.Fatalf("groups in the container: %q, %v", out, err)
+	}
 }
 
 func TestEdgeBootstrap(t *testing.T) {

@@ -123,7 +123,7 @@ sudo systemd-run --pipe --wait --collect --uid=shipyard-worker --gid=shipyard -p
    ```
 
 - **Apps keep serving** during an upgrade: their containers are not restarted, only the two Shipyard services. An operation in progress resumes after the worker's restart (ADR-0002).
-  - **Exception:** if the release changes the Caddy container (for example a newly pinned Caddy image, listed in the changelog), the worker recreates it at start, keeping its data. Traffic stops for the few seconds that takes.
+  - **Exception:** if the release changes the Caddy container (for example a newly pinned Caddy image, or the admin socket's own `shipyard-caddy` group from P5.8b; the changelog lists these), the worker recreates it at start, keeping its data. Traffic stops for the few seconds that takes.
 - **Migrations are forward-only.** To go back to an older release, restore the backup from step 2.
 - **Docker Engine upgrades** come from apt like any package. `live-restore` keeps containers running while the daemon restarts, but **only across patch releases** `[DK-LIVE]`. Across a minor or major Docker upgrade, containers stop with the daemon. The worker's reconciler starts each active release again within a minute, but expect a short outage per app: plan major Docker upgrades for a quiet hour.
 - **PostgreSQL major upgrades** (beyond 18) are not handled by Shipyard. Use your distribution's tools (`pg_upgradecluster` on Debian and Ubuntu), after a backup.

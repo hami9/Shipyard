@@ -16,6 +16,7 @@ All notable changes to Shipyard are recorded here.
   - `golang.org/x/text` upgraded to v0.42.0 (GO-2026-5970, reachable through the database driver).
   - **Breaking:** the GitHub App key must now be owner-only (`chown shipyard-worker`, mode 0600), since the API shares the worker's group. A group-readable key stops the worker at start with a message saying so.
   - `install.sh` no longer puts the database password on a command line, and names its build-check log with `mktemp`.
+  - **Caddy's admin socket has a group of its own,** `shipyard-caddy` (`SHIPYARD_CADDY_GROUP`), which only the worker is in, so the API's user can no longer reach it. `install.sh` creates the group and adds the worker. On upgrade, the Caddy container is recreated once (a few seconds without traffic; certificates are kept). Without the group, the worker keeps the old behavior and warns.
 - **Operator guide** ([docs/OPERATIONS.md](docs/OPERATIONS.md)): install, configuration, upgrade (including live-restore's patch-only limit for Docker upgrades), backup and restore, keys and tokens, monitoring, troubleshooting. `install.sh --for-restore` prepares a host for [docs/RESTORE.md](docs/RESTORE.md), which now uses the installer. The release archive ships both guides.
 - **Installer:** `sudo deploy/install.sh` installs or upgrades Shipyard on Ubuntu or Debian from a release archive or a `make build`.
   - **Dependencies:** it installs Docker Engine and PostgreSQL 18 from their official apt repositories when missing.

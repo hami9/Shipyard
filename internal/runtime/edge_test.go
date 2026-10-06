@@ -38,6 +38,7 @@ func TestEdgeSpecValidate(t *testing.T) {
 		"API dir with colon":   func(s *EdgeSpec) { s.APISocketDir = "/run/api:rw" },
 		"port too high":        func(s *EdgeSpec) { s.HTTPSPort = 70000 },
 		"negative port":        func(s *EdgeSpec) { s.HTTPPort = -1 },
+		"negative API group":   func(s *EdgeSpec) { s.APIGID = -1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := validEdge()
@@ -110,18 +111,33 @@ func TestEdgeCreateOptions(t *testing.T) {
 		last.Target != "/run/shipyard-api" || !last.ReadOnly {
 		t.Errorf("mounts with the API = %+v", ms)
 	}
+
+	// P5.8b: the admin group is Caddy's own; the API's group is added only
+	// to reach its socket, and never twice.
+	if g := s.createOptions().HostConfig.GroupAdd; len(g) != 0 {
+		t.Errorf("groups without APIGID = %v", g)
+	}
+	s.APIGID = 1001
+	if o := s.createOptions(); !slices.Equal(o.HostConfig.GroupAdd, []string{"1001"}) || o.Config.User != "0:990" {
+		t.Errorf("user %s, groups %v", o.Config.User, o.HostConfig.GroupAdd)
+	}
+	s.APIGID = s.GID
+	if g := s.createOptions().HostConfig.GroupAdd; len(g) != 0 {
+		t.Errorf("groups when APIGID is GID = %v", g)
+	}
 }
 
 // Any change of spec changes the label that triggers a recreate.
 func TestEdgeSpecHash(t *testing.T) {
 	a := validEdge()
 	for name, mutate := range map[string]func(*EdgeSpec){
-		"image": func(s *EdgeSpec) { s.Image = "caddy:2" },
-		"port":  func(s *EdgeSpec) { s.HTTPSPort = 8443 },
-		"dir":   func(s *EdgeSpec) { s.AdminDir = "/run/other" },
-		"group": func(s *EdgeSpec) { s.GID = 991 },
-		"bind":  func(s *EdgeSpec) { s.BindIP = netip.MustParseAddr("10.0.0.1") },
-		"api":   func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
+		"image":     func(s *EdgeSpec) { s.Image = "caddy:2" },
+		"port":      func(s *EdgeSpec) { s.HTTPSPort = 8443 },
+		"dir":       func(s *EdgeSpec) { s.AdminDir = "/run/other" },
+		"group":     func(s *EdgeSpec) { s.GID = 991 },
+		"bind":      func(s *EdgeSpec) { s.BindIP = netip.MustParseAddr("10.0.0.1") },
+		"api":       func(s *EdgeSpec) { s.APISocketDir = "/run/shipyard-api" },
+		"api group": func(s *EdgeSpec) { s.APIGID = 1001 },
 	} {
 		b := validEdge()
 		mutate(&b)
@@ -134,7 +150,7 @@ func TestEdgeSpecHash(t *testing.T) {
 	}
 	// An edge without the API keeps the hash it had before P2.8, so an
 	// upgrade does not recreate it: the field is omitted when empty.
-	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") {
+	if b, _ := json.Marshal(a); strings.Contains(string(b), "APISocketDir") || strings.Contains(string(b), "APIGID") {
 		t.Errorf("spec JSON = %s", b)
 	}
 }

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-05
 - **Scope:** the code on branch `security-review` (after P5.7), checked against the invariants in [CLAUDE.md §3](../CLAUDE.md), the surfaces Phase 5 added, the installer, and the dependencies.
-- **Reviewer:** Claude Code. Each finding below is fixed, scheduled (P5.8b, the owner's choice), or accepted with a reason.
+- **Reviewer:** Claude Code. Each finding below is fixed or accepted with a reason. F2 was fixed separately, in P5.8b (2026-10-06).
 - **Method:** each invariant is traced to the code that enforces it and the test that proves it. Where only code enforces it, the gap is called out. Tools: `govulncheck` v1.8.0 `[GO-VULNCHECK]`, `go mod verify`, `go version -m` on the built binaries.
 
 ## Findings
@@ -10,7 +10,7 @@
 | # | Severity | Finding | Status |
 | --- | --- | --- | --- |
 | F1 | Medium | **Known vulnerability.** `golang.org/x/text` v0.29.0 has GO-2026-5970, an infinite loop on invalid input. It is reachable through pgx's connection setup (`norm.Form.*`). | **Fixed:** upgraded to v0.42.0, which also moved `golang.org/x/sync` to v0.23.0. `make vuln` reports nothing for either build-tag set |
-| F2 | Medium | **The Caddy admin socket is reachable by the API's user.** Its directory belongs to group `shipyard`, which the API's user shares to read the worker's log socket. A compromised API process could rewrite Caddy's configuration, so invariant 1 and invariant 12 held only in code. This was already in the WORKLOG's open risks. | **P5.8b** (the owner's choice): a group of its own for the admin socket |
+| F2 | Medium | **The Caddy admin socket is reachable by the API's user.** Its directory belongs to group `shipyard`, which the API's user shares to read the worker's log socket. A compromised API process could rewrite Caddy's configuration, so invariant 1 and invariant 12 held only in code. This was already in the WORKLOG's open risks. | **Fixed in P5.8b** (the owner's choice): the admin directory belongs to `shipyard-caddy`, which only the worker is in. Caddy keeps the worker's group as a supplementary group to reach the API socket. `TestEdgeAdminGroup` checks the modes and groups on a real container (ADR-0003 note) |
 | F3 | Medium | **The GitHub App private key was readable by the API.** `LoadKey` accepted mode 0640, and the documented setup (root:shipyard) let the API's user read it. | **Fixed:** owner-only keys are required (no group bits), as for HPKE private keys (ADR-0012). Docs say `chown shipyard-worker`, mode 0600. Negative test added |
 | F4 | Low | **`install.sh` put the new database password on `sed`'s command line,** which any local user can read in `/proc/*/cmdline` while it runs. | **Fixed:** the values reach `awk` through its environment, which only root can read. The SQL already went through stdin |
 | F5 | Low | **`install.sh` wrote its build-check log, as root, to a fixed path in `/tmp`.** A planted symlink there could redirect the write. | **Fixed:** the log path comes from `mktemp` and is removed after a passing check |
@@ -22,7 +22,7 @@
 
 | # | Invariant | Enforced by | Proven by | Verdict |
 | --- | --- | --- | --- | --- |
-| 1 | The API never touches Docker, Caddy, or repository code | `shipyard-api`'s import graph has no `github.com/moby/*`, no `os/exec`, and no `runtime`, `build`, `source`, `routing`, `reconcile`, `github`, `backup`, `health` or `monitor` package | `TestAPIDependencies` (new) | **Holds** in the binary. In permissions, it holds only after P5.8b (F2) |
+| 1 | The API never touches Docker, Caddy, or repository code | `shipyard-api`'s import graph has no `github.com/moby/*`, no `os/exec`, and no `runtime`, `build`, `source`, `routing`, `reconcile`, `github`, `backup`, `health` or `monitor` package | `TestAPIDependencies` (new) | **Holds** in the binary, and in permissions since P5.8b (F2) |
 | 2 | PostgreSQL is the source of truth; Caddy's config is a function of `routes` | `routing.Render` from the routes table. The reconciler restores containers and resyncs Caddy every pass | Routing render tests; `TestPhase1ExitCriteria`; `TestRestoreDrill` | Holds |
 | 3 | Persist the phase before each side effect; idempotent side effects | Operation phases in `app.Deployer`; deterministic names and `io.shipyard.*` labels | The crash-safety suite (`TestCrashSafety`, P3.7), killing the worker at every fault point | Holds |
 | 4 | At most one running operation per app; no long-held advisory locks | Partial unique index `operations_one_running_per_app`; leases | Queue integration tests | Holds. The only advisory lock is `pg_advisory_xact_lock` around migrations, held for one transaction |
@@ -33,7 +33,7 @@
 | 9 | Webhooks: raw body ≤ 25 MB, HMAC verified in constant time before parsing, deduplicated on `X-GitHub-Delivery`, answered within 10 s | `http.MaxBytesReader` with `webhook.MaxPayload`, `hmac.Equal` before any parse, a delivery table, read and sink deadlines | Webhook tests (P4.1–P4.3) | Holds |
 | 10 | App containers: no privileged mode, host network, Docker socket, host mounts or published ports; `cap-drop ALL`, `no-new-privileges`, CPU, memory and pids limits, `local` logs, a per-app network | `runtime.Create` sets exactly these and no mounts or port bindings | The e2e hardening assertion on the running container | Holds |
 | 11 | Only Caddy publishes host ports | App containers publish none. The builder publishes none. The metrics listeners (P5.5) are loopback-only, refused otherwise | e2e `docker port` check; config tests | Holds |
-| 12 | Caddy's admin API only on a permissioned Unix socket | `deploy/caddy/caddy.json` listens on `unix//run/caddy-admin/admin.sock\|0220`; no TCP admin | Edge tests (P2.1, P2.3) | **Holds for TCP. The socket's group is too wide (F2), fixed in P5.8b** |
+| 12 | Caddy's admin API only on a permissioned Unix socket | `deploy/caddy/caddy.json` listens on `unix//run/caddy-admin/admin.sock\|0220`; no TCP admin | Edge tests (P2.1, P2.3); `TestEdgeAdminGroup` (P5.8b) | Holds. The socket's group was too wide (F2), fixed in P5.8b |
 
 ## Phase 5 surfaces
 

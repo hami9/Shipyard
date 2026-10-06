@@ -201,6 +201,12 @@ getent passwd shipyard-api >/dev/null ||
 getent passwd shipyard-worker >/dev/null ||
 	run useradd --system --gid shipyard --groups docker --home-dir /var/lib/shipyard-worker --no-create-home --shell /usr/sbin/nologin shipyard-worker
 id -nG shipyard-worker 2>/dev/null | grep -qw docker || run usermod -aG docker shipyard-worker
+# Caddy's admin socket belongs to a group only the worker is in, so the
+# API's user, which shares the shipyard group, cannot reach it (P5.8b,
+# invariant 12). User= takes the groups from this database [SYSTEMD-EXEC];
+# the worker picks the membership up when it restarts below.
+getent group shipyard-caddy >/dev/null || run groupadd --system shipyard-caddy
+id -nG shipyard-worker 2>/dev/null | grep -qw shipyard-caddy || run usermod -aG shipyard-caddy shipyard-worker
 
 run install -d -m 0750 -o root -g shipyard "$ETC" "$KEK_DIR"
 run install -d -m 0755 -o root -g root /var/lib/shipyard "$LIB"

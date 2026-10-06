@@ -13,8 +13,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -221,8 +223,12 @@ func restoreNow(ctx context.Context, cfg config.Worker, from string, log *slog.L
 		// Without the API's socket directory, which exists only once the API
 		// has run: the worker recreates the edge with it at its next start,
 		// keeping the volumes.
-		spec := edgeSpec(cfg)
-		spec.APISocketDir = ""
+		gid, err := adminGroup(cfg.Caddy, log)
+		if err != nil {
+			return err
+		}
+		spec := edgeSpec(cfg, gid)
+		spec.APISocketDir, spec.APIGID = "", 0
 		job.Caddy = edgeRestore{rt, spec}
 	}
 	return job.Run(ctx)
@@ -462,8 +468,8 @@ func serveLogs(path string, h http.Handler, log *slog.Logger) (*http.Server, err
 }
 
 // ensureEdge keeps the Caddy container running and joined to every app
-// network, with its admin API on a socket only the worker's group can use
-// (ADR-0003). Routes are loaded from Phase 2 on (P2.2–P2.4). With an API
+// network, with its admin API on a socket only the worker and Caddy can use
+// (ADR-0003, P5.8b). Routes are loaded from Phase 2 on (P2.2–P2.4). With an API
 // hostname, the API's socket directory is mounted in too (P2.8).
 func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log *slog.Logger) error {
 	c := cfg.Caddy
@@ -471,7 +477,11 @@ func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log
 		log.Warn("caddy is disabled; apps get no routes", slog.String("env", config.EnvCaddy))
 		return nil
 	}
-	spec := edgeSpec(cfg)
+	gid, err := adminGroup(c, log)
+	if err != nil {
+		return fmt.Errorf("caddy: %w", err)
+	}
+	spec := edgeSpec(cfg, gid)
 	id, err := rt.EnsureEdge(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("caddy: %w", err)
@@ -482,18 +492,52 @@ func ensureEdge(ctx context.Context, cfg config.Worker, rt *runtime.Runtime, log
 	return nil
 }
 
-// edgeSpec is the Caddy container this configuration asks for.
-func edgeSpec(cfg config.Worker) runtime.EdgeSpec {
+// edgeSpec is the Caddy container this configuration asks for, its admin
+// socket owned by group gid (adminGroup).
+func edgeSpec(cfg config.Worker, gid int) runtime.EdgeSpec {
 	c := cfg.Caddy
-	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: os.Getegid(),
+	spec := runtime.EdgeSpec{Name: c.Name, Image: c.Image, AdminDir: c.AdminDir, GID: gid,
 		BindIP: c.BindIP, HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort}
 	if cfg.APIHostname != "" {
 		spec.APISocketDir = filepath.Dir(cfg.APISocket())
+		// The API's socket is its group's (shipyard, the worker's own
+		// group too); Caddy gets it besides the admin group.
+		if gid != os.Getegid() {
+			spec.APIGID = os.Getegid()
+		}
 	}
 	if spec.Image == "" {
 		spec.Image = runtime.DefaultEdgeImage
 	}
 	return spec
+}
+
+// adminGroup is the group that owns Caddy's admin socket (P5.8b): one only
+// the worker and Caddy have, so the API's user, which shares the worker's
+// own group, cannot reconfigure Caddy (invariants 1 and 12). Without that
+// group on the host (development, tests), it is the worker's own group,
+// with a warning; a group set explicitly must exist.
+func adminGroup(c config.Caddy, log *slog.Logger) (int, error) {
+	g, err := user.LookupGroup(c.Group)
+	if err != nil {
+		if c.GroupRequired {
+			return 0, fmt.Errorf("%s=%s: %w", config.EnvCaddyGroup, c.Group, err)
+		}
+		log.Warn("group "+c.Group+" does not exist: Caddy's admin socket uses the worker's own group, which the API's user shares; "+
+			"install.sh creates it", slog.String("env", config.EnvCaddyGroup))
+		return os.Getegid(), nil
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return 0, fmt.Errorf("group %s: gid %q", c.Group, g.Gid)
+	}
+	if gid == os.Getegid() {
+		return gid, nil
+	}
+	if groups, err := os.Getgroups(); err != nil || !slices.Contains(groups, gid) {
+		return 0, fmt.Errorf("the worker is not in group %s, which owns Caddy's admin socket: usermod -aG %s shipyard-worker, then restart it (install.sh does both)", c.Group, c.Group)
+	}
+	return gid, nil
 }
 
 // syncRoutes makes Caddy serve exactly what the routes table says

@@ -84,6 +84,13 @@
   - **systemd.** The API's `RuntimeDirectory` is kept across stops (`RuntimeDirectoryPreserve=yes`), because a recreated directory would leave Caddy's mount stale `[SYSTEMD-EXEC]`. The worker starts after the API, so the directory exists when the edge is created. A missing directory is reported clearly, and the worker retries on restart.
   - **Upgrades.** The new spec field is omitted when empty, so an edge without the API keeps its hash and is not recreated on upgrade.
 
+- **2026-10-06 (P5.8b, security review F2).** The admin directory gets a **group of its own**, `shipyard-caddy` (`SHIPYARD_CADDY_GROUP`), instead of the worker's `shipyard` group:
+  - **Why.** The API's user is in `shipyard` to read the worker's log socket (ADR-0008), so it could open the admin socket and rewrite Caddy's config. Invariants 1 and 12 held only in code.
+  - **Who is in it.** Only the worker, through the user database (`install.sh` runs `usermod -aG`); `User=` takes supplementary groups from there `[SYSTEMD-EXEC]`. Caddy runs as `0:<shipyard-caddy gid>`.
+  - **The API socket.** With an API hostname, Caddy also gets the worker's own group as a supplementary group (`GroupAdd`, spec field `APIGID`), so it still reaches the API's `0660` socket. The API's user still cannot reach Caddy.
+  - **Fallback.** If the group is missing and was not set explicitly (development, tests, a host where `install.sh` was not rerun), the worker uses its own group, as before, and warns. If the group exists but the worker is not in it, the worker refuses to start the edge.
+  - **Upgrade.** The spec's group changes, so the edge container is recreated once (a few seconds without traffic). The volumes, and so the certificates, are kept.
+
 ## Alternatives considered
 
 - **Caddy on the host (systemd):** workable, since the host can reach bridge IPs, but it loses name-based upstreams and couples Caddy to host networking. Kept as a fallback.

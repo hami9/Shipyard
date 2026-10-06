@@ -15,6 +15,9 @@ Type=simple
 User=shipyard-worker
 Group=shipyard
 SupplementaryGroups=docker
+# The shipyard-caddy group (Caddy's admin socket, P5.8b) comes from the
+# user database: install.sh adds the worker to it. Not listed here, so a
+# host without the group still starts the worker, which then warns.
 EnvironmentFile=/etc/shipyard/shipyard.env
 ExecStart=/usr/local/bin/shipyard-worker run
 Restart=on-failure

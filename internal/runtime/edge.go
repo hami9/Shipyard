@@ -63,17 +63,21 @@ type EdgeSpec struct {
 	Image string
 	// AdminDir is a host directory, mounted at the same path, that holds the
 	// admin socket. It is made group-owned by GID with mode 2770, and the
-	// socket is 0660, so only that group (the worker's) can use it.
+	// socket is 0660, so only that group can use it: shipyard-caddy, which
+	// only the worker and Caddy have, never the API's user (P5.8b).
 	AdminDir string
 	GID      int
 	// APISocketDir, when set, is the host directory of the API's Unix
 	// socket, mounted read-only at the same path so Caddy can proxy the API
-	// (P2.8). The socket must be connectable by group GID. A read-only mount
-	// still allows connecting to a socket: Linux refuses writes on a
-	// read-only mount only for regular files, directories, and symlinks.
-	// omitempty keeps the hash of a spec without it, so an upgrade does not
-	// recreate an edge that publishes no API.
+	// (P2.8). The socket must be connectable by group GID or APIGID. A
+	// read-only mount still allows connecting to a socket: Linux refuses
+	// writes on a read-only mount only for regular files, directories, and
+	// symlinks. omitempty keeps the hash of a spec without it, so an upgrade
+	// does not recreate an edge that publishes no API.
 	APISocketDir string `json:",omitempty"`
+	// APIGID, when set, is a supplementary group of the Caddy container:
+	// the group of the API's socket (shipyard), when it is not GID.
+	APIGID int `json:",omitempty"`
 	// Host side of the published ports. Port 0 lets Docker choose (tests);
 	// an invalid BindIP means all interfaces.
 	BindIP              netip.Addr
@@ -97,6 +101,8 @@ func (s EdgeSpec) Validate() error {
 		return bad("admin directory %q must be a clean absolute path", s.AdminDir)
 	case s.GID <= 0:
 		return bad("admin group %d must be a non-root group", s.GID)
+	case s.APIGID < 0: // 0 means none: the root group is never added
+		return bad("API socket group %d", s.APIGID)
 	case s.APISocketDir != "" && (!filepath.IsAbs(s.APISocketDir) || filepath.Clean(s.APISocketDir) != s.APISocketDir ||
 		strings.ContainsAny(s.APISocketDir, "|:,") || s.APISocketDir == "/" || s.APISocketDir == s.AdminDir):
 		return bad("API socket directory %q must be a clean absolute path of its own", s.APISocketDir)
@@ -139,6 +145,10 @@ func (s EdgeSpec) createOptions() client.ContainerCreateOptions {
 	if s.APISocketDir != "" {
 		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: s.APISocketDir, Target: s.APISocketDir, ReadOnly: true})
 	}
+	var groups []string
+	if s.APIGID > 0 && s.APIGID != s.GID {
+		groups = []string{strconv.Itoa(s.APIGID)} // --group-add
+	}
 	return client.ContainerCreateOptions{
 		Name: s.Name,
 		Config: &container.Config{
@@ -151,7 +161,7 @@ func (s EdgeSpec) createOptions() client.ContainerCreateOptions {
 			Env:    []string{"CADDY_ADMIN=unix/" + s.AdminSocket() + "|0660"},
 			Labels: labels,
 			// Root, so Caddy can bind 80/443 with only NET_BIND_SERVICE, but
-			// with the worker's group, so the admin socket is created in a
+			// with the admin group, so the admin socket is created in a
 			// directory it may write without CAP_DAC_OVERRIDE.
 			User: "0:" + strconv.Itoa(s.GID),
 			ExposedPorts: network.PortSet{
@@ -176,6 +186,7 @@ func (s EdgeSpec) createOptions() client.ContainerCreateOptions {
 			Tmpfs:          map[string]string{"/tmp": "rw,noexec,nosuid,size=16m"},
 			Resources:      container.Resources{Memory: edgeMemory, NanoCPUs: edgeCPUs * 1e9, PidsLimit: &pids},
 			Mounts:         mounts,
+			GroupAdd:       groups,
 		},
 	}
 }

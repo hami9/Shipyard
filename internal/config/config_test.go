@@ -495,8 +495,13 @@ func TestLoadWorkerCaddy(t *testing.T) {
 	}
 	c := cfg.Caddy
 	if !c.Enabled || c.Name != "shipyard-caddy" || c.Image != "" || c.AdminDir != "/run/shipyard/caddy" ||
-		c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 {
+		c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 || c.Group != "shipyard-caddy" || c.GroupRequired {
 		t.Errorf("defaults = %+v", c)
+	}
+	// P5.8b: a group set explicitly is required to exist.
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddyGroup: "edge-admins"})); err != nil ||
+		cfg.Caddy.Group != "edge-admins" || !cfg.Caddy.GroupRequired {
+		t.Errorf("explicit group = %+v, %v", cfg.Caddy, err)
 	}
 	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddy: "false", EnvCaddyName: "edge-2",
 		EnvCaddyImage: "caddy:2", EnvCaddyAdminDir: "/srv/caddy", EnvCaddyBind: "127.0.0.1", EnvCaddyHTTPPort: "0", EnvCaddyHTTPSPort: "8443",
@@ -517,6 +522,7 @@ func TestLoadWorkerCaddy(t *testing.T) {
 		"enabled not boolean": {EnvCaddy, "maybe"},
 		"unknown CA":          {EnvCaddyCA, "zerossl"},
 		"bad email":           {EnvACMEEmail, "ops at example.com"},
+		"bad group":           {EnvCaddyGroup, "Shipyard Caddy"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
