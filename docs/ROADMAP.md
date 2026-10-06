@@ -248,9 +248,9 @@ flowchart LR
 
 The UI is never required for a deploy (ARCHITECTURE §1).
 
-- [ ] **P6.1** An OpenAPI description of `/v1` and a typed TypeScript client ([ADR-0015](adr/0015-openapi-and-typescript-client.md); owner's choices 2026-10-06: hand-written JSON, a generator in Go). Split into:
+- [x] **P6.1** An OpenAPI description of `/v1` and a typed TypeScript client ([ADR-0015](adr/0015-openapi-and-typescript-client.md); owner's choices 2026-10-06: hand-written JSON, a generator in Go). Split into:
   - [x] **P6.1a** `api/openapi.json` (OpenAPI 3.1), and Go tests that hold the handlers to it: routes and scopes, every response the tests provoke, and every success response at least once.
-  - [ ] **P6.1b** The TypeScript types, generated from the spec by a Go program (a Go test fails on stale output), and a `fetch` client in `web/` (bearer token, problem+json errors, SSE), checked by `tsc`.
+  - [x] **P6.1b** The TypeScript types, generated from the spec by a Go program (a Go test fails on stale output), and a `fetch` client in `web/` (bearer token, problem+json errors, SSE), checked by `tsc`.
 - [ ] **P6.2** A React and TypeScript app in `web/`, served as static files by Caddy, with a token login.
 - [ ] **P6.3** App list, app detail, deployment history, and rollback.
 - [ ] **P6.4** Live operation events and logs through `EventSource`.

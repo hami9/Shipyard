@@ -1,0 +1,17 @@
+{
+  "name": "shipyard-web",
+  "private": true,
+  "description": "Shipyard's web UI (Phase 6). Today: the typed API client (ADR-0015).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "tsc -p .",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-06
 - **Deciders:** Project owner (spec format and client approach chosen 2026-10-06), Claude Code
-- **Sources:** `OAS-31`, `WHATWG-SSE`
+- **Sources:** `OAS-31`, `WHATWG-SSE`, `NODE-TS`, `TS-7`
 
 ## Context
 
@@ -43,6 +43,17 @@
   - **JSON is verbose to edit by hand,** with no comments; descriptions carry the explanations.
   - **The checks are only as wide as the tests.** A response the tests never provoke is unchecked, except that every success status must be provoked once. Error bodies are checked against the generic problem schema.
   - The validator is a subset: a spec keyword outside it (`oneOf`, `allOf`…) would be silently ignored. Add it to the validator first.
+
+## Implementation notes
+
+- **2026-10-06 (P6.1b).** The decision is unchanged. As built:
+  - **Generator:** `internal/openapits`. It refuses a schema keyword outside the validated subset instead of dropping it. `TestGenerated` compares its output with the committed `web/src/api/schema.ts`; `make web-types` rewrites the file.
+  - **Client** (`web/src/api/client.ts`): `call(op, request)` for JSON, and `stream(op, request)`, an async generator of typed events that ends at `end`.
+    - A stream resumes with `Last-Event-ID` only when the server sent a `retry` field. Operation events do; logs, whose frames have no id, do not, since a reconnect would repeat their tail.
+    - The parser (`sse.ts`) runs over `fetch`, because `EventSource` cannot send an Authorization header.
+  - **Checks:** `tsc` with `strict`, `exactOptionalPropertyTypes` and `erasableSyntaxOnly`. The tests run on Node 24's own TypeScript stripping and test runner `[NODE-TS]`. `@ts-expect-error` lines in the tests prove that wrong calls fail to compile.
+  - **Dependencies:** `typescript` 7.0.2, exact and dev-only, with its per-platform binary packages in the lockfile `[TS-7]`. A local declaration file types `node:test`, so `@types/node` is not needed.
+  - **CI:** a `web` job runs `make web-check` on Node 24.
 
 ## Alternatives considered
 
