@@ -27,7 +27,7 @@ func newTestHandler(t *testing.T, db Pinger) (http.Handler, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	deps := Deps{DB: db, Tokens: newFakeTokens(), Audit: &fakeAudit{}}
-	return NewHandler(logging.New(&buf, slog.LevelDebug, logging.FormatJSON), deps), &buf
+	return conform(t, NewHandler(logging.New(&buf, slog.LevelDebug, logging.FormatJSON), deps)), &buf
 }
 
 func do(h http.Handler, method, target string, header http.Header) *httptest.ResponseRecorder {

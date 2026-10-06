@@ -11,6 +11,7 @@ All notable changes to Shipyard are recorded here.
 
 ### Added
 
+- **OpenAPI description of the API** ([api/openapi.json](api/openapi.json), OpenAPI 3.1, ADR-0015): every `/v1` route with its scope, request and response schemas, and the event streams' data. The API's tests check every response they produce against it.
 - **Acceptance demo runbook** ([docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)) for v1.0 on a fresh VPS, with a sample app ([examples/hello](examples/hello)) and a record template.
 - **The server archive now extracts into one directory,** `shipyard-server_<version>_linux_<arch>/`, as the operator guide's commands assume. Before, its files landed in the current directory.
 - **Security review** ([docs/security-review.md](docs/security-review.md)): every invariant traced to its code and test. `make vuln` runs govulncheck, also in CI.

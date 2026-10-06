@@ -63,8 +63,8 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		t.Fatal(err)
 	}
 	f.env = secrets.NewEnv(keys, s)
-	f.srv = httptest.NewServer(NewHandler(log, Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: f.env, Ops: s,
-		StreamPoll: 20 * time.Millisecond, StreamKeepalive: 200 * time.Millisecond}))
+	f.srv = httptest.NewServer(conform(t, NewHandler(log, Deps{DB: pool, Tokens: s, Audit: s, Apps: s, Env: f.env, Ops: s,
+		StreamPoll: 20 * time.Millisecond, StreamKeepalive: 200 * time.Millisecond})))
 	t.Cleanup(f.srv.Close)
 	return f
 }

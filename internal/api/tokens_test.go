@@ -46,7 +46,8 @@ func (f *fakeTokenAdmin) RotateToken(_ context.Context, oldID string, n store.Ne
 		return store.Token{}, store.Token{}, f.rotErr
 	}
 	f.rotated, f.graces = append(f.rotated, n), append(f.graces, grace)
-	old := store.Token{ID: oldID, Prefix: "shp_oldtoken"}
+	// Like the store: the whole row, whose scopes are never empty (CHECK).
+	old := store.Token{ID: oldID, Prefix: "shp_oldtoken", Name: n.Name, Scopes: n.Scopes}
 	return old, store.Token{Prefix: n.Prefix, Name: n.Name, Scopes: n.Scopes, ExpiresAt: n.ExpiresAt}, nil
 }
 
@@ -55,7 +56,7 @@ func tokenHandler(t *testing.T) (http.Handler, *fakeTokens, *fakeTokenAdmin) {
 	tokens := newFakeTokens()
 	admin := &fakeTokenAdmin{byPrefix: map[string]store.Token{"shp_listed01": {Prefix: "shp_listed01", Name: "ci", Scopes: []string{ScopeDeploy}}}}
 	h := NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), Deps{Tokens: tokens, TokenAdmin: admin, Audit: &fakeAudit{}})
-	return h, tokens, admin
+	return conform(t, h), tokens, admin
 }
 
 func call(h http.Handler, method, target, token, body string) *httptest.ResponseRecorder {

@@ -98,7 +98,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})))
-	f.h = withRequestID(withAccessLog(log, mux))
+	f.h = conform(t, withRequestID(withAccessLog(log, mux)))
 	return f
 }
 

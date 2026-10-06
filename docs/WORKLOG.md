@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b, pushed, no PR yet); `disk-cert` (P5.6, pushed, no PR yet); `install-script` (P5.7a, pushed, no PR yet); `installer` (P5.7b, pushed, no PR yet); `ops-guide` (P5.7c, pushed, no PR yet); `security-review` (P5.8a, pushed, no PR yet); `caddy-group` (P5.8b, pushed, no PR yet); `acceptance-demo` (P5.9a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
-| **Last completed** | P5.9a: the acceptance runbook (docs/ACCEPTANCE.md), the sample app (examples/hello), and the server archive's directory fix. Before it, P5.8b: the `shipyard-caddy` group for Caddy's admin socket, so P5.8 is done; P5.8a: security review (docs/security-review.md), govulncheck, fixes; P5.7: installer, build firewall, operator guide; P5.6: disk and certificate checks with log warnings and shipped Prometheus alert rules at 80%, ADR-0014 (P5.5 metrics before it, ADR-0013) |
-| **Next task** | P5.9b (the owner's): run docs/ACCEPTANCE.md on two fresh VPSes and record it there; then merge the stack and tag `v1.0.0`. It also covers: a real `install.sh` run on a fresh VPS; the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
+| **Active phase** | Phase 5: Hardening, install, and v1.0. Phase 4 is done in code; its exit criteria need a real GitHub App and VPS (the owner's). Phase 3 is done except its exit criterion on a real VPS (the owner's restore drill). Phase 2 is done except two exit criteria that need the owner (a real certificate on a VPS; whether the logs-resume criterion means `events`). Stacked PRs, merge in order: #1 `schema-v1` (P1.1–P1.3) → `main`; #2 `env-secrets` (P1.4); #3 `op-queue` (P1.5); #4 `app-api` (P1.6); #5 `cli` (P1.7); #6 `source-fetch` (P1.8); #7 `image-build` (P1.9); #8 `container-runtime` (P1.10); #9 `deploy-worker` (P1.11); #10 `caddy-edge` (P2.1); #11 `route-render` (P2.2); #12 `caddy-admin` (P2.3); #13 `traffic-switch` (P2.4); #14 `domain-api` (P2.5); #15 `drain-window` (P2.6); #16 `event-stream` (P2.7a); #17 `app-logs` (P2.7b); #18 `api-edge` (P2.8); #19 `exit-checks` (Phase 2 exit checks and review fixes; opened against `main`); #20 `releases` (P3.1); #21 `reconcile` (P3.2); #22 `rollback` (P3.3); #23 `retention` (P3.4a, opened against `main`); `retention-caps` (P3.4b, pushed, no PR yet); `backup` (P3.5, pushed, no PR yet); `rebuild` (P3.6a, pushed, no PR yet); `restore` (P3.6b, pushed, no PR yet); `crash-suite` (P3.7, pushed, no PR yet); `app-delete` (P3.8, pushed, no PR yet); `webhook-verify` (P4.1, pushed, no PR yet); `push-deploy` (P4.2, P4.3, pushed, no PR yet); `github-app` (P4.4, pushed, no PR yet); `catch-up` (P4.5, pushed, no PR yet); `deploy-status` (P4.6, pushed, no PR yet); #24 `build-network` (P5.1, opened against `main` at the owner's request 2026-10-04, so it carries the whole stack); `rootless-build` (P5.2, pushed, no PR yet); `rate-limit` (P5.3a, pushed, no PR yet); `token-rotate` (P5.3b, pushed, no PR yet); `kek-rotate` (P5.4a, pushed, no PR yet); `hpke-seal` (P5.4b, pushed, no PR yet); `metrics` (P5.5a, pushed, no PR yet); `app-health` (P5.5b, pushed, no PR yet); `disk-cert` (P5.6, pushed, no PR yet); `install-script` (P5.7a, pushed, no PR yet); `installer` (P5.7b, pushed, no PR yet); `ops-guide` (P5.7c, pushed, no PR yet); `security-review` (P5.8a, pushed, no PR yet); `caddy-group` (P5.8b, pushed, no PR yet); `acceptance-demo` (P5.9a, pushed, no PR yet); `openapi` (P6.1a). Merging the stack is the owner's step: an agent-run merge was blocked by the permission classifier on 2026-09-28 |
+| **Last completed** | P6.1a: `api/openapi.json` and the tests that hold the handlers to it (ADR-0015). Before it, P5.9a: the acceptance runbook (docs/ACCEPTANCE.md), the sample app (examples/hello), and the server archive's directory fix. Before it, P5.8b: the `shipyard-caddy` group for Caddy's admin socket, so P5.8 is done; P5.8a: security review (docs/security-review.md), govulncheck, fixes; P5.7: installer, build firewall, operator guide; P5.6: disk and certificate checks with log warnings and shipped Prometheus alert rules at 80%, ADR-0014 (P5.5 metrics before it, ADR-0013) |
+| **Next task** | P6.1b: the TypeScript client (a Go generator, a `fetch` wrapper in `web/`). In parallel, P5.9b (the owner's): run docs/ACCEPTANCE.md on two fresh VPSes and record it there; then merge the stack and tag `v1.0.0`. It also covers: a real `install.sh` run on a fresh VPS; the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill, on a real VPS |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-06 |
@@ -53,6 +53,40 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-06: P6.1a OpenAPI description
+
+- **Phase / task:** P6.1a: the OpenAPI description of `/v1` and its tests (P6.1 split: P6.1b is the TypeScript client)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`api/openapi.json`** (OpenAPI 3.1, hand-written): the 21 routes but `/hooks/github`, with:
+  - scopes as security-requirement role names;
+  - request and response schemas, `additionalProperties: false` throughout;
+  - the specific errors per route, and `default` for problem+json;
+  - each event stream's data schemas (`x-events`).
+- **`newMux`** now returns the registered routes and their scopes; `NewHandler` wraps it as before.
+- **`internal/api/openapi_test.go`:**
+  - `TestOpenAPIRoutes`: the same routes and scopes as `newMux`.
+  - `TestOpenAPIWellFormed`: every `$ref` resolves, and operation IDs are unique.
+  - `TestSchemaValidator`: the small validator's refusals.
+  - **`conform`** wraps the handlers in the unit and integration fixtures. It checks each status, each response body (each SSE event's data), and each request body that succeeded.
+- **`main_integration_test.go`:** a full integration run fails if a success response in the spec was never provoked.
+- **Test fake fixed:** `fakeTokenAdmin.RotateToken` returned the old token without scopes, which the store cannot (CHECK). `conform` caught it as `"scopes": null`.
+- ADR-0015; ARCHITECTURE (contract, layout); SOURCES `OAS-31`; README, CHANGELOG, ROADMAP.
+
+**Decisions**
+- **Owner's choices (2026-10-06):** hand-written JSON, checked by Go tests with no new dependency; for P6.1b, a TypeScript generator written in Go. The alternatives and why are in ADR-0015.
+- **`/hooks/github` stays out of the spec:** GitHub's contract, authenticated by signature.
+
+**Verification**
+- `make lint` and `go test -race ./...`: exit 0. `TestOpenAPIRoutes`, `TestOpenAPIWellFormed`, `TestSchemaValidator`: pass.
+- `go test -tags integration ./internal/api/` (PostgreSQL 18): ok (54.0 s). Every success response in the spec was provoked and conformed.
+- **Drift check** (on a scratch copy): adding a required `owner` field to `App` in the spec failed `TestAppsCRUD` with `POST /v1/apps → 201: $: missing "owner"`.
+- **Coverage:** the first integration run named the one success response no wrapped test provoked (`GET /v1/whoami 200`); wrapping the auth fixture covered it.
+
+**Next**
+- P6.1b: the Go generator for the TypeScript types and the `fetch` client in `web/`.
 
 ### 2026-10-06: P5.9a acceptance runbook
 

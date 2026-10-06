@@ -42,6 +42,7 @@ The supported production setup is the two systemd services in [deploy/](deploy/R
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design (v2, source-verified) |
 | [docs/architecture-review.md](docs/architecture-review.md) | What changed from the v1 proposal, and why |
 | [docs/SOURCES.md](docs/SOURCES.md) | Primary sources behind every external claim |
+| [api/openapi.json](api/openapi.json) | The `/v1` API contract (OpenAPI 3.1), checked against the handlers by the API's tests |
 | [docs/security-review.md](docs/security-review.md) | The invariants traced to code and tests, findings, dependency audit |
 | [docs/adr/](docs/adr/) | Architecture decision records |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan with exit criteria |

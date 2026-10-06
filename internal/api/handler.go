@@ -55,9 +55,23 @@ type Deps struct {
 // /v1 route goes through auth.protect. Everything but the health endpoints
 // is rate limited per client (d.Limits).
 func NewHandler(log *slog.Logger, d Deps) http.Handler {
+	mux, _ := newMux(log, d)
+	m := newAPIMetrics(d.Metrics)
+	lim := newLimiter(log, d.Limits)
+	lim.metrics = m
+	return withRequestID(withAccessLog(log, m.count(lim.limit(mux))))
+}
+
+// routeInfo is a registered route and the scope it requires ("" for the
+// public ones); api/openapi.json must list the same (TestOpenAPIRoutes).
+type routeInfo struct{ pattern, scope string }
+
+func newMux(log *slog.Logger, d Deps) (*http.ServeMux, []routeInfo) {
 	auth := &authenticator{log: log, tokens: d.Tokens, audit: d.Audit}
+	var routes []routeInfo
 	route := func(mux *http.ServeMux, pattern, scope string, h http.HandlerFunc) {
 		mux.Handle(pattern, auth.protect(scope, h))
+		routes = append(routes, routeInfo{pattern, scope})
 	}
 	apps := &appHandlers{log: log, apps: d.Apps}
 	env := &envHandlers{appHandlers: apps, env: d.Env}
@@ -77,6 +91,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	mux.HandleFunc("GET /readyz", handleReadyz(log, d.DB))
 	// Authenticated by its HMAC signature, not a token.
 	mux.HandleFunc("POST /hooks/github", hooks.github)
+	routes = append(routes, routeInfo{"GET /healthz", ""}, routeInfo{"GET /readyz", ""}, routeInfo{"POST /hooks/github", ""})
 	route(mux, "GET /v1/whoami", ScopeRead, handleWhoami)
 	tokens := &tokenHandlers{log: log, tokens: d.TokenAdmin, now: time.Now}
 	route(mux, "GET /v1/tokens", ScopeAdmin, tokens.list)
@@ -99,10 +114,7 @@ func NewHandler(log *slog.Logger, d Deps) http.Handler {
 	route(mux, "POST /v1/apps/{app}/rollbacks", ScopeDeploy, ops.rollback)
 	route(mux, "GET /v1/operations/{id}", ScopeRead, ops.get)
 	route(mux, "GET /v1/operations/{id}/events", ScopeRead, ops.events)
-	m := newAPIMetrics(d.Metrics)
-	lim := newLimiter(log, d.Limits)
-	lim.metrics = m
-	return withRequestID(withAccessLog(log, m.count(lim.limit(mux))))
+	return mux, routes
 }
 
 // handleWhoami describes the calling token, so the CLI can check its

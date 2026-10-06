@@ -1,0 +1,799 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Shipyard API",
+    "version": "1",
+    "summary": "Deploy GitHub repositories with a Dockerfile to one server.",
+    "description": "The API validates requests and records intent in PostgreSQL; the worker does the rest (ARCHITECTURE §3). Errors are RFC 9457 problem details. Every /v1 route needs a bearer token with the scope its security requirement names: read < deploy < admin, and each includes those before it. Every route but /healthz and /readyz is rate limited per client (429 with Retry-After). Keep this file in step with internal/api: TestOpenAPI* in internal/api checks it.",
+    "license": { "name": "Apache-2.0", "identifier": "Apache-2.0" }
+  },
+  "servers": [{ "url": "https://shipyard.example.com", "description": "SHIPYARD_API_HOSTNAME, served by Caddy" }],
+  "security": [{ "bearer": ["read"] }],
+  "tags": [
+    { "name": "health" },
+    { "name": "tokens" },
+    { "name": "apps" },
+    { "name": "env" },
+    { "name": "domains" },
+    { "name": "deploys" },
+    { "name": "logs" }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": ["health"],
+        "summary": "Liveness: the process serves HTTP",
+        "security": [],
+        "responses": {
+          "200": { "description": "Alive", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } } }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReady",
+        "tags": ["health"],
+        "summary": "Readiness: PostgreSQL answers",
+        "security": [],
+        "responses": {
+          "200": { "description": "Ready", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ready" } } } },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "operationId": "whoami",
+        "tags": ["tokens"],
+        "summary": "Describe the calling token",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "description": "The token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Whoami" } } } },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/tokens": {
+      "get": {
+        "operationId": "listTokens",
+        "tags": ["tokens"],
+        "summary": "List every token, newest first",
+        "security": [{ "bearer": ["admin"] }],
+        "responses": {
+          "200": { "description": "Tokens", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenList" } } } },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/tokens/{prefix}": {
+      "delete": {
+        "operationId": "revokeToken",
+        "tags": ["tokens"],
+        "summary": "Revoke a token",
+        "description": "Revoking a revoked token changes nothing. Revoking the calling token is allowed.",
+        "security": [{ "bearer": ["admin"] }],
+        "parameters": [
+          { "name": "prefix", "in": "path", "required": true, "description": "The token's display prefix", "schema": { "type": "string", "pattern": "^shp_[A-Za-z0-9_-]{4,16}$" } }
+        ],
+        "responses": {
+          "200": { "description": "The revoked token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Token" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/tokens/self/rotate": {
+      "post": {
+        "operationId": "rotateToken",
+        "tags": ["tokens"],
+        "summary": "Replace the calling token",
+        "description": "The new token has the same user, name, scopes, and lifetime. The old one ends now, or after grace_seconds (ADR-0011). The response is the only time the new token is shown.",
+        "security": [{ "bearer": ["read"] }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RotateRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "The new token",
+            "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RotateResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps": {
+      "get": {
+        "operationId": "listApps",
+        "tags": ["apps"],
+        "summary": "List apps",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "description": "Apps", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AppList" } } } },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "post": {
+        "operationId": "createApp",
+        "tags": ["apps"],
+        "summary": "Create an app",
+        "security": [{ "bearer": ["admin"] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AppCreate" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "The app",
+            "headers": { "Location": { "$ref": "#/components/headers/Location" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/App" } } }
+          },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}": {
+      "parameters": [{ "$ref": "#/components/parameters/App" }],
+      "get": {
+        "operationId": "getApp",
+        "tags": ["apps"],
+        "summary": "Show an app",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "description": "The app", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/App" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "patch": {
+        "operationId": "updateApp",
+        "tags": ["apps"],
+        "summary": "Change an app's settings",
+        "description": "Absent fields keep their values. The slug and repository cannot change.",
+        "security": [{ "bearer": ["admin"] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AppSettings" } } }
+        },
+        "responses": {
+          "200": { "description": "The app", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/App" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteApp",
+        "tags": ["apps"],
+        "summary": "Queue the app's deletion",
+        "description": "The worker takes the app offline and removes its containers, network, images, domains, configuration, and history. When it finishes, the app and the operation are gone (404). Not undoable.",
+        "security": [{ "bearer": ["admin"] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/AdmittedAgain" },
+          "202": { "$ref": "#/components/responses/Admitted" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/env": {
+      "parameters": [{ "$ref": "#/components/parameters/App" }],
+      "get": {
+        "operationId": "listEnv",
+        "tags": ["env"],
+        "summary": "List environment keys, never values",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Env" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/env/{key}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/App" },
+        { "name": "key", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/EnvKey" } }
+      ],
+      "put": {
+        "operationId": "setEnv",
+        "tags": ["env"],
+        "summary": "Set a variable",
+        "description": "Makes a new environment revision; the next deploy uses it. The value is sealed and never returned (ADR-0005).",
+        "security": [{ "bearer": ["admin"] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnvSet" } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Env" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "delete": {
+        "operationId": "unsetEnv",
+        "tags": ["env"],
+        "summary": "Remove a variable",
+        "security": [{ "bearer": ["admin"] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Env" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/domains": {
+      "parameters": [{ "$ref": "#/components/parameters/App" }],
+      "get": {
+        "operationId": "listDomains",
+        "tags": ["domains"],
+        "summary": "List an app's hostnames",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "description": "Hostnames", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DomainList" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "post": {
+        "operationId": "addDomain",
+        "tags": ["domains"],
+        "summary": "Add a hostname",
+        "description": "With the DNS preflight on, every A/AAAA record must point at the server's public IPs. Caddy serves the hostname from its next reload, within a minute.",
+        "security": [{ "bearer": ["admin"] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DomainAdd" } } }
+        },
+        "responses": {
+          "201": { "description": "The hostname", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Domain" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "503": { "$ref": "#/components/responses/Unavailable" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/domains/{hostname}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/App" },
+        { "name": "hostname", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "delete": {
+        "operationId": "removeDomain",
+        "tags": ["domains"],
+        "summary": "Remove a hostname",
+        "security": [{ "bearer": ["admin"] }],
+        "responses": {
+          "204": { "description": "Removed" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/logs": {
+      "parameters": [{ "$ref": "#/components/parameters/App" }],
+      "get": {
+        "operationId": "streamLogs",
+        "tags": ["logs"],
+        "summary": "Stream the running release's output",
+        "description": "Server-sent events: the last tail lines, then, with follow, new ones until the container stops. Frames have no id: a reconnect starts from a fresh tail (ADR-0008). Known secret values are redacted.",
+        "security": [{ "bearer": ["read"] }],
+        "parameters": [
+          { "name": "tail", "in": "query", "schema": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 100 } },
+          { "name": "follow", "in": "query", "schema": { "type": "boolean", "default": false } }
+        ],
+        "responses": {
+          "200": {
+            "description": "An event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string" },
+                "x-events": {
+                  "message": { "$ref": "#/components/schemas/LogLine" },
+                  "end": { "$ref": "#/components/schemas/LogEnd" }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "502": { "$ref": "#/components/responses/Problem" },
+          "503": { "$ref": "#/components/responses/Unavailable" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/deployments": {
+      "parameters": [{ "$ref": "#/components/parameters/App" }],
+      "get": {
+        "operationId": "listReleases",
+        "tags": ["deploys"],
+        "summary": "List an app's deployments, newest first",
+        "security": [{ "bearer": ["read"] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } },
+          { "name": "before", "in": "query", "description": "A deployment ID: the next page starts after it (the previous page's next)", "schema": { "$ref": "#/components/schemas/ID" } }
+        ],
+        "responses": {
+          "200": { "description": "A page of deployments", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReleaseList" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      },
+      "post": {
+        "operationId": "deploy",
+        "tags": ["deploys"],
+        "summary": "Queue a deploy",
+        "description": "Deploys the branch head, or ref, which must be on the branch (invariant 7). 202 for a new operation; 200 with the original one for a repeated Idempotency-Key.",
+        "security": [{ "bearer": ["deploy"] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeployRequest" } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/AdmittedAgain" },
+          "202": { "$ref": "#/components/responses/Admitted" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/apps/{app}/rollbacks": {
+      "parameters": [{ "$ref": "#/components/parameters/App" }],
+      "post": {
+        "operationId": "rollback",
+        "tags": ["deploys"],
+        "summary": "Queue a rollback to an earlier release",
+        "description": "Runs a superseded deployment's retained image again; nothing is rebuilt (invariant 6). If secrets changed since it ran, choose with_current_config or with_old_config (409 otherwise).",
+        "security": [{ "bearer": ["deploy"] }],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RollbackRequest" } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/AdmittedAgain" },
+          "202": { "$ref": "#/components/responses/Admitted" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/operations/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/OperationID" }],
+      "get": {
+        "operationId": "getOperation",
+        "tags": ["deploys"],
+        "summary": "Show an operation",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "description": "The operation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Operation" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    },
+    "/v1/operations/{id}/events": {
+      "parameters": [{ "$ref": "#/components/parameters/OperationID" }],
+      "get": {
+        "operationId": "streamEvents",
+        "tags": ["deploys"],
+        "summary": "Stream an operation's events",
+        "description": "Server-sent events. Each event's id is its seq: reconnect with Last-Event-ID to resume without gaps. When the operation has finished and every event was sent, an end event carries the operation and the stream closes.",
+        "security": [{ "bearer": ["read"] }],
+        "parameters": [
+          { "name": "Last-Event-ID", "in": "header", "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "An event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string" },
+                "x-events": {
+                  "message": { "$ref": "#/components/schemas/OperationEvent" },
+                  "end": { "$ref": "#/components/schemas/Operation" }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "422": { "$ref": "#/components/responses/Invalid" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API token (shp_…), made by `shipyard-api token create`. Scopes: read, deploy, admin."
+      }
+    },
+    "parameters": {
+      "App": { "name": "app", "in": "path", "required": true, "description": "The app's slug or ID", "schema": { "type": "string" } },
+      "OperationID": { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/ID" } },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "description": "Repeating a request with the same key returns the first operation (200) instead of queuing another. A different request with a used key is a 409.",
+        "schema": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[!-~]+$" }
+      }
+    },
+    "headers": {
+      "Location": { "schema": { "type": "string" } },
+      "RetryAfter": { "description": "Seconds", "schema": { "type": "integer", "minimum": 1 } }
+    },
+    "responses": {
+      "Problem": {
+        "description": "Problem details (RFC 9457). A 401 carries WWW-Authenticate; a 429 carries Retry-After.",
+        "headers": { "Retry-After": { "$ref": "#/components/headers/RetryAfter" } },
+        "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } }
+      },
+      "NotFound": {
+        "description": "No such resource",
+        "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } }
+      },
+      "Conflict": {
+        "description": "The request conflicts with the current state",
+        "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } }
+      },
+      "Invalid": {
+        "description": "Invalid fields, listed in errors",
+        "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } }
+      },
+      "Unavailable": {
+        "description": "A dependency is unavailable; try again",
+        "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } }
+      },
+      "Env": {
+        "description": "The app's current environment keys",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Env" } } }
+      },
+      "Admitted": {
+        "description": "A new operation was queued",
+        "headers": { "Location": { "$ref": "#/components/headers/Location" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Admitted" } } }
+      },
+      "AdmittedAgain": {
+        "description": "The operation an earlier request with this Idempotency-Key queued, or the delete already queued",
+        "headers": { "Location": { "$ref": "#/components/headers/Location" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Admitted" } } }
+      }
+    },
+    "schemas": {
+      "ID": { "type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+      "Duration": { "type": "string", "description": "A Go duration, e.g. \"90s\" or \"1m30s\"", "examples": ["60s"] },
+      "Timestamp": { "type": "string", "format": "date-time" },
+      "Scope": { "type": "string", "enum": ["read", "deploy", "admin"] },
+      "Problem": {
+        "type": "object",
+        "required": ["type", "title", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" },
+          "detail": { "type": "string" },
+          "errors": { "type": "array", "items": { "$ref": "#/components/schemas/FieldError" } }
+        }
+      },
+      "FieldError": {
+        "type": "object",
+        "required": ["field", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "field": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": ["status"],
+        "additionalProperties": false,
+        "properties": { "status": { "type": "string", "const": "ok" } }
+      },
+      "Ready": {
+        "type": "object",
+        "required": ["status"],
+        "additionalProperties": false,
+        "properties": { "status": { "type": "string", "const": "ready" } }
+      },
+      "Whoami": {
+        "type": "object",
+        "required": ["token", "name", "scopes", "expires_at"],
+        "additionalProperties": false,
+        "properties": {
+          "token": { "type": "string", "description": "The display prefix" },
+          "name": { "type": "string" },
+          "scopes": { "type": "array", "items": { "$ref": "#/components/schemas/Scope" } },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "Token": {
+        "type": "object",
+        "required": ["prefix", "name", "scopes", "status", "expires_at", "last_used_at", "revoked_at", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "prefix": { "type": "string" },
+          "name": { "type": "string" },
+          "scopes": { "type": "array", "items": { "$ref": "#/components/schemas/Scope" } },
+          "status": { "type": "string", "enum": ["active", "expired", "revoked"] },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "last_used_at": { "type": ["string", "null"], "format": "date-time" },
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "TokenList": {
+        "type": "object",
+        "required": ["tokens"],
+        "additionalProperties": false,
+        "properties": { "tokens": { "type": "array", "items": { "$ref": "#/components/schemas/Token" } } }
+      },
+      "RotateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "grace_seconds": { "type": "integer", "minimum": 0, "maximum": 604800, "default": 0, "description": "How long the old token keeps working" }
+        }
+      },
+      "RotateResponse": {
+        "type": "object",
+        "required": ["token", "new", "old"],
+        "additionalProperties": false,
+        "properties": {
+          "token": { "type": "string", "description": "The new token: shown only here" },
+          "new": { "$ref": "#/components/schemas/Token" },
+          "old": { "$ref": "#/components/schemas/Token" }
+        }
+      },
+      "App": {
+        "type": "object",
+        "required": ["id", "slug", "repo", "branch", "dockerfile_path", "build_context", "port", "health_path", "health_timeout",
+          "cpu_limit", "memory_limit", "stop_timeout", "auto_deploy", "github_installation_id", "created_at", "updated_at"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ID" },
+          "slug": { "$ref": "#/components/schemas/Slug" },
+          "repo": { "$ref": "#/components/schemas/Repo" },
+          "branch": { "type": "string" },
+          "dockerfile_path": { "type": "string" },
+          "build_context": { "type": "string" },
+          "port": { "type": "integer" },
+          "health_path": { "type": "string" },
+          "health_timeout": { "$ref": "#/components/schemas/Duration" },
+          "cpu_limit": { "type": "number" },
+          "memory_limit": { "type": "integer", "description": "Bytes" },
+          "stop_timeout": { "$ref": "#/components/schemas/Duration" },
+          "auto_deploy": { "type": "boolean" },
+          "github_installation_id": { "type": ["integer", "null"] },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "updated_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "AppList": {
+        "type": "object",
+        "required": ["apps"],
+        "additionalProperties": false,
+        "properties": { "apps": { "type": "array", "items": { "$ref": "#/components/schemas/App" } } }
+      },
+      "Slug": { "type": "string", "pattern": "^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$" },
+      "Repo": { "type": "string", "description": "A GitHub repository as owner/name", "pattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" },
+      "AppSettings": {
+        "type": "object",
+        "description": "The settings that can change. In a PATCH, absent fields keep their values.",
+        "additionalProperties": false,
+        "properties": {
+          "branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "dockerfile_path": { "type": "string", "description": "Relative to the checkout", "default": "Dockerfile" },
+          "build_context": { "type": "string", "description": "Relative to the checkout", "default": "." },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "The port the app listens on inside its container" },
+          "health_path": { "type": "string", "pattern": "^/", "maxLength": 1024, "default": "/" },
+          "health_timeout": { "$ref": "#/components/schemas/Duration", "description": "1s to 30m; default 60s" },
+          "cpu_limit": { "type": "number", "exclusiveMinimum": 0, "maximum": 512, "default": 1 },
+          "memory_limit": { "type": "integer", "minimum": 6291456, "default": 536870912, "description": "Bytes" },
+          "stop_timeout": { "$ref": "#/components/schemas/Duration", "description": "0s to 10m; default 10s" },
+          "auto_deploy": { "type": "boolean", "default": false, "description": "Deploy on a GitHub push to the branch" },
+          "github_installation_id": { "type": "integer", "minimum": 1, "description": "Fetch through this GitHub App installation (private repositories)" }
+        }
+      },
+      "AppCreate": {
+        "type": "object",
+        "required": ["slug", "repo", "branch", "port"],
+        "additionalProperties": false,
+        "properties": {
+          "slug": { "$ref": "#/components/schemas/Slug" },
+          "repo": { "$ref": "#/components/schemas/Repo" },
+          "branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "dockerfile_path": { "type": "string", "default": "Dockerfile" },
+          "build_context": { "type": "string", "default": "." },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "health_path": { "type": "string", "pattern": "^/", "maxLength": 1024, "default": "/" },
+          "health_timeout": { "$ref": "#/components/schemas/Duration" },
+          "cpu_limit": { "type": "number", "exclusiveMinimum": 0, "maximum": 512, "default": 1 },
+          "memory_limit": { "type": "integer", "minimum": 6291456, "default": 536870912 },
+          "stop_timeout": { "$ref": "#/components/schemas/Duration" },
+          "auto_deploy": { "type": "boolean", "default": false },
+          "github_installation_id": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "EnvKey": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$" },
+      "Env": {
+        "type": "object",
+        "required": ["revision", "vars"],
+        "additionalProperties": false,
+        "properties": {
+          "revision": { "type": "integer", "description": "0: no environment yet" },
+          "vars": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["key", "secret"],
+              "additionalProperties": false,
+              "properties": {
+                "key": { "$ref": "#/components/schemas/EnvKey" },
+                "secret": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "EnvSet": {
+        "type": "object",
+        "required": ["value"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "type": "string", "description": "At most 64 KiB, no NUL character" },
+          "secret": { "type": "boolean", "default": true }
+        }
+      },
+      "Domain": {
+        "type": "object",
+        "required": ["hostname", "deployment_id", "dns_checked_at", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "hostname": { "type": "string" },
+          "deployment_id": { "type": ["string", "null"], "description": "null: no release serves it yet" },
+          "dns_checked_at": { "type": ["string", "null"], "format": "date-time" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "DomainList": {
+        "type": "object",
+        "required": ["domains"],
+        "additionalProperties": false,
+        "properties": { "domains": { "type": "array", "items": { "$ref": "#/components/schemas/Domain" } } }
+      },
+      "DomainAdd": {
+        "type": "object",
+        "required": ["hostname"],
+        "additionalProperties": false,
+        "properties": { "hostname": { "type": "string" } }
+      },
+      "DeployRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ref": { "type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$", "description": "A full commit SHA on the branch; absent: the branch head" }
+        }
+      },
+      "RollbackRequest": {
+        "type": "object",
+        "required": ["to"],
+        "additionalProperties": false,
+        "properties": {
+          "to": { "$ref": "#/components/schemas/ID" },
+          "with_current_config": { "type": "boolean", "default": false, "description": "Run it with today's environment" },
+          "with_old_config": { "type": "boolean", "default": false, "description": "Run it with the environment it ran with" }
+        }
+      },
+      "Operation": {
+        "type": "object",
+        "required": ["id", "app_id", "kind", "status", "payload", "idempotency_key", "attempt", "max_attempts", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ID" },
+          "app_id": { "$ref": "#/components/schemas/ID" },
+          "kind": { "type": "string", "enum": ["deploy", "rollback", "delete"] },
+          "status": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"] },
+          "phase": { "type": "string", "description": "The step reached, e.g. build or health" },
+          "payload": { "type": "object" },
+          "idempotency_key": { "type": "string" },
+          "attempt": { "type": "integer" },
+          "max_attempts": { "type": "integer" },
+          "last_error": { "type": "string" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "finished_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "Admitted": {
+        "type": "object",
+        "required": ["operation", "created", "superseded"],
+        "additionalProperties": false,
+        "properties": {
+          "operation": { "$ref": "#/components/schemas/Operation" },
+          "created": { "type": "boolean" },
+          "superseded": { "type": "array", "items": { "$ref": "#/components/schemas/ID" }, "description": "Queued operations this one replaced" }
+        }
+      },
+      "Release": {
+        "type": "object",
+        "required": ["id", "operation_id", "kind", "status", "commit", "env_revision", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ID" },
+          "operation_id": { "$ref": "#/components/schemas/ID" },
+          "kind": { "type": "string", "enum": ["build", "rollback"] },
+          "rollback_of": { "$ref": "#/components/schemas/ID", "description": "A rollback's source deployment" },
+          "status": { "type": "string", "enum": ["queued", "building", "starting", "health_checking", "switching", "active", "superseded", "failed", "cancelled"] },
+          "commit": { "type": "string" },
+          "image_id": { "type": "string" },
+          "env_revision": { "type": "integer", "description": "0: no environment" },
+          "failure_reason": { "type": "string" },
+          "created_at": { "$ref": "#/components/schemas/Timestamp" },
+          "active_at": { "$ref": "#/components/schemas/Timestamp" },
+          "ended_at": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "ReleaseList": {
+        "type": "object",
+        "required": ["deployments"],
+        "additionalProperties": false,
+        "properties": {
+          "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Release" } },
+          "next": { "$ref": "#/components/schemas/ID", "description": "The cursor for the next page (?before=); absent on a short page" }
+        }
+      },
+      "OperationEvent": {
+        "type": "object",
+        "required": ["seq", "ts", "level", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "seq": { "type": "integer", "description": "Gapless per operation; also the SSE id" },
+          "ts": { "$ref": "#/components/schemas/Timestamp" },
+          "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+          "message": { "type": "string" }
+        }
+      },
+      "LogLine": {
+        "type": "object",
+        "required": ["ts", "stream", "line"],
+        "additionalProperties": false,
+        "properties": {
+          "ts": { "$ref": "#/components/schemas/Timestamp" },
+          "stream": { "type": "string", "description": "stdout or stderr" },
+          "line": { "type": "string" }
+        }
+      },
+      "LogEnd": {
+        "type": "object",
+        "required": ["reason"],
+        "additionalProperties": false,
+        "properties": { "reason": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -341,6 +341,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 | — | `POST /hooks/github` (public, HMAC-verified; see §7 GitHub). 200 for `ping`, 202 with `{"delivery", "outcome", "reason", "operations"}` for any other verified delivery, 401 for a bad signature, 404 when no secret is configured |
 
 - **Routing and errors.** Standard-library routing (`GET /v1/apps/{id}`) is sufficient, so no router framework is needed `[GO-ROUTING]`. Errors use `application/problem+json` `[RFC9457]`.
+- **Contract.** [`api/openapi.json`](../api/openapi.json) (OpenAPI 3.1, hand-written) describes every route but `/hooks/github`, with its scope. The package's tests check every response they provoke against it, so a change to a route, a field, or a scope must change the spec too (ADR-0015).
 - **Environment changes.** A changed environment creates a new revision, which takes effect on the next deploy. Use `--redeploy` to apply it now.
 - **Streaming.** Use SSE for one-way live logs and events `[WHATWG-SSE]`:
   - Every event carries an `id`, so clients can resume with `Last-Event-ID`.
@@ -582,6 +583,7 @@ cmd/shipyard/          CLI
 internal/client/       typed HTTP client for the API (used by the CLI)
 cmd/shipyard-api/      HTTP server and webhook receiver
 cmd/shipyard-worker/   deployment worker and reconciler
+api/openapi.json       the /v1 contract (ADR-0015)
 internal/api/          handlers, authn/authz, problem+json errors, SSE
 internal/webhook/      GitHub signature verification and event mapping
 internal/app/          deployment use cases and state transitions, behind ports it declares

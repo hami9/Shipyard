@@ -62,8 +62,8 @@ var serverIP = netip.MustParseAddr("203.0.113.10")
 
 // domainsServer serves the API with a domain policy and fake DNS on f's store.
 func (f *apiFixture) domainsServer(policy DomainPolicy, dns *fakeDNS) *httptest.Server {
-	srv := httptest.NewServer(NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Deps{DB: nil, Tokens: f.s, Audit: f.s, Apps: f.s, Env: f.env, Ops: f.s, Domains: f.s, Resolver: dns, DomainPolicy: policy}))
+	srv := httptest.NewServer(conform(f.t, NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Deps{DB: nil, Tokens: f.s, Audit: f.s, Apps: f.s, Env: f.env, Ops: f.s, Domains: f.s, Resolver: dns, DomainPolicy: policy})))
 	f.t.Cleanup(srv.Close)
 	return srv
 }

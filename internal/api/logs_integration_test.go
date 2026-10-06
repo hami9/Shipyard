@@ -79,8 +79,8 @@ func TestAppLogs(t *testing.T) {
 		{TS: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), Stream: "stderr", Text: "boom [REDACTED]"},
 	}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(NewHandler(log, Deps{Tokens: f.s, Audit: f.s, Apps: f.s, Ops: f.s, Logs: src,
-		StreamKeepalive: 100 * time.Millisecond}))
+	srv := httptest.NewServer(conform(t, NewHandler(log, Deps{Tokens: f.s, Audit: f.s, Apps: f.s, Ops: f.s, Logs: src,
+		StreamKeepalive: 100 * time.Millisecond})))
 	defer srv.Close()
 	get := func(path, token string) (int, string, http.Header) {
 		t.Helper()
@@ -136,7 +136,7 @@ func TestAppLogs(t *testing.T) {
 	}
 
 	// Without a worker socket configured, logs are unavailable.
-	bare := httptest.NewServer(NewHandler(log, Deps{Tokens: f.s, Audit: f.s, Apps: f.s, Ops: f.s}))
+	bare := httptest.NewServer(conform(t, NewHandler(log, Deps{Tokens: f.s, Audit: f.s, Apps: f.s, Ops: f.s})))
 	defer bare.Close()
 	req, _ := http.NewRequest("GET", bare.URL+"/v1/apps/web/logs", nil)
 	req.Header.Set("Authorization", "Bearer "+f.reader)
