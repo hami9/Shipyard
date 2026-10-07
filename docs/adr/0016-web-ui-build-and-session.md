@@ -52,6 +52,10 @@
     - It decides once at start, so the mount and the rendered route always agree. The spec field is omitted when empty, so an edge without a UI keeps its hash.
   - **Install.** `install.sh` copies the archive's `web/` there in place, never replacing the directory, since a replaced one would leave Caddy's mount stale. New assets go first, then `index.html`, then old files are removed. Files are world-readable, since Caddy runs as root without `CAP_DAC_OVERRIDE`.
   - **Release.** GoReleaser's `before` hook runs `make web-build`, so release builds need Node 24 (the release workflow sets it up). The archive lists `web/index.html` and `web/assets/*` separately: a `**` glob flattened `assets/` and missed `index.html` `[GORELEASER-ARCHIVE]`.
+- **2026-10-07 (P6.7a).** The decision is unchanged. Images:
+  - The logo is a PNG the code imports. esbuild's `file` loader copies it into `assets/` under a content hash, since `/assets/*` is cached as immutable.
+  - `build.mjs` copies the favicon and touch icon the same way, hashed, and links them from `index.html`.
+  - All of them are same-origin images, which the CSP's `img-src 'self'` already allows. They ship inside `web/assets/*`, so the archive needs no new entry.
 
 ## Alternatives considered
 

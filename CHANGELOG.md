@@ -9,6 +9,15 @@ All notable changes to Shipyard are recorded here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Web UI look:**
+  - Shipyard's logo is in the header and on the sign-in page, and serves as the favicon.
+  - Colors come from the logo, in a light and a dark scheme that both meet WCAG AA contrast.
+  - Main actions (Deploy, New app, Save) are styled as primary buttons, and destructive ones in red.
+  - Statuses show as colored badges.
+  - Type and spacing are stronger, and the header stays visible while scrolling.
+
 ## [1.0.0-rc.1] - 2026-10-07
 
 A release candidate for 1.0.0: every phase through 6 is in, but the acceptance demo on a fresh VPS (docs/ACCEPTANCE.md) has not run yet.

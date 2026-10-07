@@ -4,6 +4,7 @@ import { title } from "./routes.ts";
 import { AppDetail } from "./AppDetail.tsx";
 import { AppSettingsPage, NewApp } from "./AppEditor.tsx";
 import { AppList } from "./AppList.tsx";
+import { LogoTile } from "./Brand.tsx";
 import { DomainsPage } from "./DomainsPage.tsx";
 import { EnvPage } from "./EnvPage.tsx";
 import { Logs } from "./Logs.tsx";
@@ -52,13 +53,21 @@ export function Shell({ session, client, onSignOut, onSession }: Props) {
       </p>
       <header>
         <Link to={{ page: "apps" }} className="brand">
+          <LogoTile />
           Shipyard
         </Link>
+        <nav className="topnav" aria-label="Main">
+          <Link to={{ page: "apps" }} current={route.page !== "tokens"}>
+            Apps
+          </Link>
+          <Link to={{ page: "tokens" }} current={route.page === "tokens"}>
+            Tokens
+          </Link>
+        </nav>
         <span className="who" title={`token ${whoami.token}`}>
-          {whoami.name} · {whoami.scopes.join(", ")} · {expiresIn(whoami.expires_at)}
+          <strong>{whoami.name}</strong> · {whoami.scopes.join(", ")} · {expiresIn(whoami.expires_at)}
         </span>
-        <Link to={{ page: "tokens" }}>Tokens</Link>
-        <button type="button" onClick={() => onSignOut()}>
+        <button type="button" className="small" onClick={() => onSignOut()}>
           Sign out
         </button>
       </header>

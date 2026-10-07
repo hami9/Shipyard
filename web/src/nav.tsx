@@ -25,8 +25,12 @@ export function useRoute(): Route {
   return route;
 }
 
-/** Link is an ordinary link that navigates in place; a modified click (new tab) is left to the browser. */
-export function Link({ to, children, className }: { to: Route; children: ReactNode; className?: string }) {
+/**
+ * Link is an ordinary link that navigates in place; a modified click (new
+ * tab) is left to the browser. current marks the link to the page (or the
+ * section) being shown, for screen readers and styles (aria-current).
+ */
+export function Link({ to, children, className, current }: { to: Route; children: ReactNode; className?: string; current?: boolean }) {
   function click(e: MouseEvent<HTMLAnchorElement>) {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
@@ -35,7 +39,7 @@ export function Link({ to, children, className }: { to: Route; children: ReactNo
     navigate(to);
   }
   return (
-    <a href={href(to)} onClick={click} className={className}>
+    <a href={href(to)} onClick={click} className={className} aria-current={current ? "page" : undefined}>
       {children}
     </a>
   );

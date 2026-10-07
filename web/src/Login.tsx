@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { LogoTile } from "./Brand.tsx";
 import { newClient, signIn, type Session } from "./session.ts";
 
 interface Props {
@@ -50,7 +51,13 @@ export function Login({ resume, notice, onSignedIn, onRejected }: Props) {
 
   return (
     <main className="login">
-      <h1>Shipyard</h1>
+      <div className="brand-mark">
+        <LogoTile />
+        <div>
+          <h1>Shipyard</h1>
+          <p>Deploys for your own server</p>
+        </div>
+      </div>
       <form onSubmit={submit}>
         <label htmlFor="token">API token</label>
         <input

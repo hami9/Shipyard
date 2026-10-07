@@ -8,7 +8,8 @@
 // Plain JavaScript, so it needs no @types/node; tsc checks src/ only.
 
 import * as esbuild from "esbuild";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 
 const dev = process.argv.includes("--dev");
@@ -28,13 +29,17 @@ const options = {
   sourcemap: dev ? "inline" : "linked",
   legalComments: dev ? "none" : "linked",
   metafile: true,
+  // Images the code imports (the logo) become files beside the bundle, named
+  // by their hash in production: Caddy caches /assets/* for good.
+  loader: { ".png": "file" },
+  publicPath: "/assets",
   define: { "process.env.NODE_ENV": JSON.stringify(dev ? "development" : "production") },
   logLevel: "info",
 };
 
 // The page has no inline script or style, so the CSP that serves it can
 // forbid both (ADR-0016).
-function html(js, css) {
+function html(js, css, icons) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -42,6 +47,8 @@ function html(js, css) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>Shipyard</title>
+<link rel="icon" type="image/png" sizes="64x64" href="/${icons.favicon}">
+<link rel="apple-touch-icon" href="/${icons.touch}">
 <link rel="stylesheet" href="/${css}">
 </head>
 <body>
@@ -68,17 +75,31 @@ function assets(metafile) {
   return { js, css };
 }
 
+// copyIcons puts the icons index.html links into assets/, hashed like the
+// bundle in production (nothing imports them, so esbuild does not).
+async function copyIcons() {
+  const icons = {};
+  for (const [name, src] of [["favicon", "src/brand/favicon.png"], ["touch", "src/brand/touch-icon.png"]]) {
+    const data = await readFile(src);
+    const file = dev ? `${name}.png` : `${name}-${createHash("sha256").update(data).digest("hex").slice(0, 8)}.png`;
+    await writeFile(`${out}/assets/${file}`, data);
+    icons[name] = `assets/${file}`;
+  }
+  return icons;
+}
+
 await rm(out, { recursive: true, force: true });
 await mkdir(`${out}/assets`, { recursive: true });
+const icons = await copyIcons();
 
 if (!dev) {
   const result = await esbuild.build(options);
   const { js, css } = assets(result.metafile);
-  await writeFile(`${out}/index.html`, html(js, css));
+  await writeFile(`${out}/index.html`, html(js, css, icons));
   console.log(`dist/index.html → ${js}, ${css}`);
 } else {
   const ctx = await esbuild.context(options);
-  await writeFile(`${out}/index.html`, html("assets/app.js", "assets/app.css"));
+  await writeFile(`${out}/index.html`, html("assets/app.js", "assets/app.css", icons));
   await ctx.watch();
   const { port } = await ctx.serve({ host: "127.0.0.1", servedir: out, fallback: `${out}/index.html` });
   const api = new URL(process.env.SHIPYARD_API_URL ?? "http://127.0.0.1:8080");

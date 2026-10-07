@@ -12,10 +12,14 @@ export function AppList({ client, scopes }: { client: Client; scopes: Scope[] })
       <div className="title">
         <h1>Apps</h1>
         <div className="actions">
-          {canChange(scopes) && <Link to={{ page: "new" }}>New app</Link>}
           <button type="button" onClick={reload} disabled={loading}>
             Refresh
           </button>
+          {canChange(scopes) && (
+            <Link to={{ page: "new" }} className="button primary">
+              New app
+            </Link>
+          )}
         </div>
       </div>
       {error && <p className="error" role="alert">{error}</p>}

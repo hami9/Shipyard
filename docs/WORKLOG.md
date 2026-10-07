@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | Phases 1–6 are done in code. Phase 5's exit criterion (the acceptance demo, P5.9b) and the real-VPS exit criteria of Phases 2–4 are the owner's. On 2026-10-07, at the owner's request, the whole stack (through `ui-ci`) and `window-flake` go to `main` in one PR from `release-rc` with a merge commit, and `main` is tagged `v1.0.0-rc.1`. Branches are kept |
-| **Last completed** | `v1.0.0-rc.1`: the release candidate (CHANGELOG section, stack merged). Before it, P6.6d: the UI tests in CI, so Phase 6 is done; P6.6c: the manual accessibility pass and its fixes (19 Playwright tests); P6.6b: the UI's flows end to end; P6.6a: the harness and axe on every page; P6.5: environment, domains, app forms, and tokens in the UI; P6.4: live operation events and logs; P6.3: the app list, app detail, release history, and rollback in the UI; P6.2: the React app served by Caddy (ADR-0016); P6.1: `api/openapi.json` and the TypeScript client (ADR-0015); P5.9a: the acceptance runbook (docs/ACCEPTANCE.md) |
-| **Next task** | The owner's: P5.9b, run docs/ACCEPTANCE.md on two fresh VPSes from the `v1.0.0-rc.1` archives and record it there (it also covers a real `install.sh` run, the Phase 4 exit criteria with a real GitHub App, and the Phase 3 restore drill); then `v1.0.0`. The first release's one-time steps in docs/RELEASING.md (GHCR package visibility, private vulnerability reporting). Then P7 (unscheduled) |
+| **Active phase** | P6.7: UI and UX overhaul (the owner's request, 2026-10-07: the logo and a design critique). Stacked branches from `main`: `ui-brand` (P6.7a). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
+| **Last completed** | P6.7a: the logo, color tokens from it, one button hierarchy, stronger type and spacing. Before it, `v1.0.0-rc.1`: the release candidate (stack merged, PR #25; README synced, PR #26). Before it, P6.6: the accessibility pass and the Playwright suite in CI, so Phase 6 is done |
+| **Next task** | P6.7b: app tabs, the status summary, and the release history. Then P6.7c and P6.7d (`GET /v1/status`). The owner's: P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0` |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-07 |
@@ -53,6 +53,37 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-07: P6.7a UI brand
+
+- **Phase / task:** P6.7a: the logo, color tokens, the button hierarchy, type and spacing (P6.7 is new: the owner's request, with their logo and a design critique of the UI)
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **The logo.** It is in `web/src/brand/`, made once from the owner's image with Pillow:
+  - `logo.png`: 256 px, transparent, cropped to the drawing;
+  - `favicon.png` (64 px) and `touch-icon.png` (180 px): the logo on a white rounded tile.
+  - In the UI, the logo always sits on a white tile (`LogoTile`), because its navy disappears on the dark scheme. It is decorative (`alt=""`): the name stands beside it.
+- **The build.** esbuild's `file` loader copies the imported logo into `assets/` under a hash. `build.mjs` copies the two icons the same way and links them from `index.html` (ADR-0016 note: `/assets/*` is cached as immutable).
+- **`styles.css` rewritten around tokens:**
+  - colors from the logo, in light and dark;
+  - spacing and radius scales;
+  - one button hierarchy: a submit or `.primary` button is the main action, `.destructive` is red, everything else is secondary; a link that acts as a button takes `.button`;
+  - tinted status badges with a dot;
+  - cards for tables, settings and panels;
+  - a sticky header with the logo, a main nav (`aria-current`), and who is signed in.
+- **Contrast.** Every text pair was computed at 4.5:1 or more in both schemes; the lowest is 4.81 (ok on its tint, light). Field borders are 3.4:1, for WCAG 1.4.11.
+- Deploy and New app are primary buttons now. `Link` takes `current`.
+
+**Verification**
+- `npx tsc -p .` and `-p tsconfig.e2e.json`: exit 0.
+- `npm test`: 36 pass.
+- `node scripts/build.mjs`: `dist/assets` has `favicon-576ec5ab.png`, `touch-ed7fa6b7.png` and `logo-BNNBF7SD.png`, and `index.html` links both icons.
+- The sign-in page was checked in the browser pane, dark scheme.
+- Not run locally: Playwright. Its Chromium was removed from C: at the owner's request (disk space); the CI `ui` job runs it.
+
+**Next**
+- P6.7b: app tabs, the status summary, the release history.
 
 ### 2026-10-07: v1.0.0-rc.1
 

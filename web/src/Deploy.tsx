@@ -15,7 +15,7 @@ export function Deploy({ client, slug, branch }: { client: Client; slug: string;
   const trigger = useRef<HTMLButtonElement>(null);
   if (!open) {
     return (
-      <button type="button" ref={trigger} onClick={() => setOpen(true)}>
+      <button type="button" className="primary" ref={trigger} onClick={() => setOpen(true)}>
         Deploy
       </button>
     );
