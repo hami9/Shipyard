@@ -6,7 +6,7 @@
 
 A self-hosted deployment platform for a single VPS. Point it at a GitHub repository that has a Dockerfile, and it builds, health-checks, and serves the app over HTTPS. You also get deployment history and one-command rollback.
 
-> **Status:** Phase 0 (bootstrap) in progress. The binaries build, the migrations run, and `/healthz` and `/readyz` work. See the [roadmap](docs/ROADMAP.md) and [local development](docs/DEVELOPMENT.md).
+> **Status:** `v1.0.0-rc.1`, the release candidate for 1.0. Phases 1–6 are done: deploys from a push or the CLI, HTTPS and atomic traffic switching, rollback, backup and restore, GitHub App integration, hardening and the installer, and a web UI. `v1.0.0` follows once the [acceptance demo](docs/ACCEPTANCE.md) passes on a fresh VPS. See the [roadmap](docs/ROADMAP.md) and [local development](docs/DEVELOPMENT.md).
 >
 > **Trust model:** Shipyard is for trusted operators and trusted repositories. It is **not** a sandbox for untrusted tenants ([ADR-0007](docs/adr/0007-mvp-trust-model.md)).
 
@@ -27,13 +27,13 @@ A failed build or health check never touches the release that is currently servi
 
 ## Install
 
-> The latest release is [`v0.1.0`](https://github.com/hami9/Shipyard/releases/tag/v0.1.0), the Phase 0 bootstrap. It does not deploy apps yet ([version plan](docs/RELEASING.md#version-plan)).
+> The latest release is [`v1.0.0-rc.1`](https://github.com/hami9/Shipyard/releases/tag/v1.0.0-rc.1), a release candidate. `v1.0.0` ships from the same code once the acceptance demo passes ([version plan](docs/RELEASING.md#version-plan)).
 
 - **Binaries:** download from [Releases](https://github.com/hami9/Shipyard/releases). The CLI is available for Linux, macOS, and Windows. `shipyard-server` (API and worker, with systemd units) is available for Linux amd64 and arm64. Verify downloads with `checksums.txt` and `gh attestation verify`.
-- **Container image:** `ghcr.io/hami9/shipyard:<version>` (linux/amd64, linux/arm64), for the CLI and for evaluation. The image has no entrypoint, so name the binary: `docker run --rm ghcr.io/hami9/shipyard:v0.1.0 shipyard version`.
+- **Container image:** `ghcr.io/hami9/shipyard:<version>` (linux/amd64, linux/arm64), for the CLI and for evaluation. The image has no entrypoint, so name the binary: `docker run --rm ghcr.io/hami9/shipyard:v1.0.0-rc.1 shipyard version`.
 - **From source:** see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-The supported production setup is the two systemd services in [deploy/](deploy/README.md), installed by `sudo deploy/install.sh` from the `shipyard-server` archive. See [docs/OPERATIONS.md](docs/OPERATIONS.md).
+The supported production setup is the two systemd services in [deploy/](deploy/README.md), installed by `sudo deploy/install.sh` from the `shipyard-server` archive. The archive also carries the web UI, which Caddy serves on the API hostname. See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 # Contributing to Shipyard
 
-Thanks for your interest. Shipyard is early, in Phase 0/1 of the [roadmap](docs/ROADMAP.md). The design is settled, and changes should follow it.
+Thanks for your interest. Shipyard is at its 1.0 release candidate (`v1.0.0-rc.1`, Phases 1–6 of the [roadmap](docs/ROADMAP.md)). The design is settled, and changes should follow it.
 
 ## Before you start
 

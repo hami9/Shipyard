@@ -6,7 +6,7 @@ How to build and test Shipyard on your own computer.
 
 ## 1. Choose a platform
 
-| Your OS | Phase 0 (now) | Phase 1+ (containers, health checks, Caddy) |
+| Your OS | Build, unit and PostgreSQL tests | Containers, health checks, Caddy (Docker and e2e tests) |
 | --- | --- | --- |
 | **Linux** (Ubuntu 24.04 recommended), with Docker Engine | ✅ | ✅ Best match for the production VPS |
 | **Windows**, via WSL2 with Ubuntu and Docker Engine installed **inside** WSL (**owner setup**, §2) | ✅ | ✅ Run every command inside the WSL shell |
