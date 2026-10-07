@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | P6.7: UI and UX overhaul (the owner's request, 2026-10-07: the logo and a design critique). Stacked branches from `main`: `ui-brand` (P6.7a, CI green), `app-tabs` (P6.7b). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
-| **Last completed** | P6.7b: app tabs, the status summary, a filterable release history. Before it, P6.7a: the logo, color tokens, the button hierarchy. Before it, `v1.0.0-rc.1`: the release candidate (stack merged, PR #25; README synced, PR #26) |
-| **Next task** | P6.7c: recovery and setup. Then P6.7d (`GET /v1/status`). The owner's: P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0` |
+| **Active phase** | P6.7: UI and UX overhaul (the owner's request, 2026-10-07: the logo and a design critique). Stacked branches from `main`: `ui-brand` (P6.7a, CI green), `app-tabs` (P6.7b, CI green), `ui-recovery` (P6.7c). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
+| **Last completed** | P6.7c: failure details and steps on operation pages, logs recovery, DNS records, the apps list's latest deploy, explained form defaults. Before it, P6.7b: app tabs, the status summary, a filterable release history; P6.7a: the logo, color tokens, the button hierarchy. Before it, `v1.0.0-rc.1` (PRs #25, #26) |
+| **Next task** | P6.7d: `GET /v1/status` (worker, app health, public IPs) and its UI. The owner's: P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0` |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-07 |
@@ -53,6 +53,38 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-07: P6.7c recovery and setup
+
+- **Phase / task:** P6.7c: operation failure details, logs recovery, DNS records, the apps list's status, explained form defaults
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **Operation page:**
+  - A failure callout with the reason (the release's `failure_reason`, else the operation's `last_error`), advice for the step, and links to the app's logs and settings. A retried operation's last error shows as a notice.
+  - The steps as a list: deploy fetch → build → start → health → switch → activate; rollback start → activate; delete release → remove. These are the phases `internal/app` persists, in the order it persists them.
+  - `phases.ts` holds `steps`, `failedPhase` and `advice`. When no phase is recorded, `failedPhase` reads the step from the reason's prefix (`fetch:`, `build:`, `start container:`, `health check:`, `switch traffic:`, as `deploy.go` wraps them).
+- **Logs:**
+  - `useStream` now reports the HTTP status that failed a stream. `logAdvice` explains a 503 (the worker is not answering: `systemctl status shipyard-worker`; deploys wait in the queue), a 502 and a 404.
+  - "Start again" is now "Reconnect logs".
+- **Domains:**
+  - The record to create: a CNAME to the hostname the UI is served on, which is the API's hostname (ADR-0016), with a copy button. A note covers bare domains (A/AAAA records).
+  - Each domain's DNS check shows as a badge.
+  - The server's public IPs are not in the API yet: that is P6.7d.
+- **Apps list:** each app's latest deploy, as a status badge and its age. That takes one `listReleases?limit=1` per app; an app whose history fails to load still lists.
+- **Forms:**
+  - Every advanced field has a hint with its default (the schema's).
+  - New app says nothing is built until a deploy.
+  - Settings says changes apply from the next deploy.
+
+**Verification**
+- `tsc` (src and e2e): exit 0.
+- `npm test`: 39 pass (two new: phases, log advice).
+- e2e tests added: a failed release's page (callout, reason, advice, the failed Health check step, axe), and the worker-down advice and "Reconnect logs". They run in CI.
+- P6.7b's CI run passed every job.
+
+**Next**
+- P6.7d: `GET /v1/status` (worker, app health, public IPs), with OpenAPI, tests, and the UI.
 
 ### 2026-10-07: P6.7b app tabs and status
 

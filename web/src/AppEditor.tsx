@@ -50,6 +50,10 @@ export function NewApp({ client, scopes }: { client: Client; scopes: Scope[] }) 
       </p>
       <form className="panel wide" onSubmit={submit} ref={form} noValidate>
         <h1>New app</h1>
+        <p className="hint">
+          Creating an app saves its settings; nothing is built yet. Then deploy it from its page, or push to its branch with
+          push deploys on.
+        </p>
         <Field id="slug" label="Name" hint="a-z, 0-9 and -, starting with a letter; it names the app in URLs and the CLI" error={fields["slug"]}>
           <input id="slug" value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} autoComplete="off" spellCheck={false} placeholder="web" {...fieldProps("slug", fields["slug"], true)} />
         </Field>
@@ -125,7 +129,8 @@ function EditForm({ client, app, onSaved }: { client: Client; app: App; onSaved:
     <form className="panel wide" onSubmit={submit} ref={form} noValidate aria-labelledby="edit-title">
       <h2 id="edit-title">Deploy settings</h2>
       <p className="hint">
-        Repository <code>{app.repo}</code>; to use another, create a new app.
+        Repository <code>{app.repo}</code>; to use another, create a new app. Changes apply from the next deploy: the release
+        serving now keeps the settings it started with.
       </p>
       <SettingsFields v={v} setV={setV} fields={fields} />
       <div className="actions">
@@ -183,7 +188,7 @@ function DangerZone({ client, app }: { client: Client; app: App }) {
 }
 
 function SettingsFields({ v, setV, fields }: { v: AppValues; setV: (v: AppValues) => void; fields: Fields }) {
-  const hinted = new Set(["branch", "port", "health_path", "github_installation_id"]);
+  const hinted = new Set(["branch", "port", "health_path", "github_installation_id", "dockerfile_path", "build_context", "cpu_limit", "memory_mib", "health_timeout", "stop_timeout"]);
   const text = (k: Exclude<keyof AppValues, "auto_deploy">, extra: { placeholder?: string; inputMode?: "numeric" | "decimal" } = {}) => (
     <input
       id={k}
@@ -217,22 +222,22 @@ function SettingsFields({ v, setV, fields }: { v: AppValues; setV: (v: AppValues
       <details open={open || undefined}>
         <summary>Build, limits and timeouts</summary>
         <div className="grid2">
-          <Field id="dockerfile_path" label="Dockerfile" error={fields["dockerfile_path"]}>
+          <Field id="dockerfile_path" label="Dockerfile" hint="path in the repository; default Dockerfile" error={fields["dockerfile_path"]}>
             {text("dockerfile_path")}
           </Field>
-          <Field id="build_context" label="Build context" error={fields["build_context"]}>
+          <Field id="build_context" label="Build context" hint="the directory sent to the build; default . (the repository root)" error={fields["build_context"]}>
             {text("build_context")}
           </Field>
-          <Field id="cpu_limit" label="CPUs" error={fields["cpu_limit"]}>
+          <Field id="cpu_limit" label="CPUs" hint="the most the container may use, e.g. 0.5; default 1" error={fields["cpu_limit"]}>
             {text("cpu_limit", { inputMode: "decimal" })}
           </Field>
-          <Field id="memory_mib" label="Memory (MiB)" error={fields["memory_limit"]}>
+          <Field id="memory_mib" label="Memory (MiB)" hint="a process using more is killed (out of memory); default 512" error={fields["memory_limit"]}>
             {text("memory_mib", { inputMode: "numeric" })}
           </Field>
-          <Field id="health_timeout" label="Health timeout" error={fields["health_timeout"]}>
+          <Field id="health_timeout" label="Health timeout" hint="how long a new release has to pass its health check, e.g. 90s or 2m; default 60s" error={fields["health_timeout"]}>
             {text("health_timeout")}
           </Field>
-          <Field id="stop_timeout" label="Stop timeout" error={fields["stop_timeout"]}>
+          <Field id="stop_timeout" label="Stop timeout" hint="time to shut down after SIGTERM before it is killed; default 10s" error={fields["stop_timeout"]}>
             {text("stop_timeout")}
           </Field>
           <Field id="github_installation_id" label="GitHub App installation" hint="for a private repository" error={fields["github_installation_id"]}>

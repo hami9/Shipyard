@@ -5,6 +5,7 @@ import type { Scope } from "./api/schema.ts";
 import { ago } from "./format.ts";
 import { canChange, explain, focusFirstInvalid, type Explained } from "./forms.ts";
 import { AppFrame } from "./AppFrame.tsx";
+import { CopyButton } from "./Copy.tsx";
 import { useApi } from "./useApi.ts";
 
 interface Props {
@@ -42,14 +43,14 @@ export function DomainsPage({ client, slug, scopes }: Props) {
       {domains.error && <p className="error" role="alert">{domains.error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
       {error && <p className="error" role="alert">{error}</p>}
-      {domains.data && domains.data.domains.length === 0 && <p className="hint">No domains yet.</p>}
+      {domains.data && domains.data.domains.length === 0 && <p className="empty">No domains yet.</p>}
       {domains.data && domains.data.domains.length > 0 && (
         <table>
           <thead>
             <tr>
               <th>Hostname</th>
               <th>Serving</th>
-              <th>DNS checked</th>
+              <th>DNS</th>
               <th>
                 <span className="sr-only">Actions</span>
               </th>
@@ -63,8 +64,16 @@ export function DomainsPage({ client, slug, scopes }: Props) {
                     {d.hostname}
                   </a>
                 </td>
-                <td>{d.deployment_id ? <code title={d.deployment_id}>{d.deployment_id.slice(0, 8)}</code> : "no release yet"}</td>
-                <td>{d.dns_checked_at ? ago(d.dns_checked_at) : "not checked"}</td>
+                <td>{d.deployment_id ? <>release <code title={d.deployment_id}>{d.deployment_id.slice(0, 8)}</code></> : <span className="hint">waits for a release</span>}</td>
+                <td>
+                  {d.dns_checked_at ? (
+                    <>
+                      <span className="badge ok">checked</span> <span className="hint small">{ago(d.dns_checked_at)}</span>
+                    </>
+                  ) : (
+                    <span className="badge idle">not checked</span>
+                  )}
+                </td>
                 <td>
                   {admin && (
                     <ConfirmButton label="Remove" confirmLabel={`Remove ${d.hostname}`} destructive onConfirm={() => void remove(d.hostname)} />
@@ -86,6 +95,50 @@ export function DomainsPage({ client, slug, scopes }: Props) {
         />
       )}
     </AppFrame>
+  );
+}
+
+/**
+ * DnsHelp is the record to create before adding a hostname. The UI is
+ * served on the API's hostname (ADR-0016), which already points at this
+ * server, so a CNAME to it is right for any subdomain. An apex cannot be a
+ * CNAME; it needs A/AAAA records with the same addresses. The API checks
+ * every A/AAAA record against the server's public addresses, and names
+ * them when one is wrong.
+ */
+function DnsHelp({ hostname }: { hostname: string }) {
+  const target = window.location.hostname;
+  return (
+    <div className="dns">
+      <p className="hint">First, in your DNS provider, point the hostname at this server:</p>
+      <table className="dns-records">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Name</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>CNAME</td>
+            <td>
+              <code>{hostname}</code>
+            </td>
+            <td>
+              <span className="copyable">
+                <code>{target}</code>
+                <CopyButton value={target} label="the CNAME value" />
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="hint">
+        For a bare domain (<code>example.com</code>), which cannot be a CNAME, add A (and AAAA) records with the addresses{" "}
+        <code>{target}</code> has. Adding checks the records; a certificate follows within a minute.
+      </p>
+    </div>
   );
 }
 
@@ -127,7 +180,7 @@ function AddForm({ client, slug, onAdded }: { client: Client; slug: string; onAd
         aria-describedby={fieldError ? "hostname-error" : undefined}
       />
       {fieldError && <p id="hostname-error" className="error">{fieldError}</p>}
-      <p className="hint">Point its A (and AAAA) records at the server first.</p>
+      <DnsHelp hostname={hostname.trim() || "www.example.com"} />
       <div className="actions">
         <button type="submit" disabled={busy || hostname.trim() === ""}>
           {busy ? "Checking DNS…" : "Add"}

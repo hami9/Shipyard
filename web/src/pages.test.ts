@@ -10,6 +10,7 @@ import { createBody, durationMs, updateBody, valuesOf } from "./appForm.ts";
 import { graces, tokenTone, whoamiOf } from "./tokens.ts";
 import { canRollBack, needsConfigChoice, rollbackBody } from "./rollbackRules.ts";
 import { filterReleases, summarize } from "./summary.ts";
+import { advice, failedPhase, logAdvice, steps } from "./phases.ts";
 
 test("summary: what serves, and the newest deploy even when it failed", () => {
   const r = (id: string, status: Release["status"], kind: Release["kind"] = "build"): Release => ({
@@ -22,6 +23,34 @@ test("summary: what serves, and the newest deploy even when it failed", () => {
   assert.deepEqual(filterReleases(list, "all"), list);
   assert.deepEqual(filterReleases(list, "failed").map((x) => x.id), ["d3"]);
   assert.deepEqual(filterReleases(list, "rollbacks").map((x) => x.id), ["d2"]);
+});
+
+test("phases: the plan against the phase reached", () => {
+  const states = (op: Parameters<typeof steps>[0]) => steps(op).map((s) => `${s.phase}:${s.state}`).join(" ");
+  assert.equal(
+    states({ kind: "deploy", status: "running", phase: "health" }),
+    "fetch:done build:done start:done health:current switch:todo activate:todo",
+  );
+  assert.equal(
+    states({ kind: "deploy", status: "failed", phase: "build" }),
+    "fetch:done build:failed start:todo health:todo switch:todo activate:todo",
+  );
+  assert.equal(states({ kind: "rollback", status: "succeeded", phase: "activate" }), "start:done health:done switch:done activate:done");
+  assert.equal(states({ kind: "deploy", status: "queued" }), "fetch:todo build:todo start:todo health:todo switch:todo activate:todo");
+  // A phase this UI does not know decides nothing.
+  assert.equal(states({ kind: "deploy", status: "running", phase: "teleport" }), "fetch:todo build:todo start:todo health:todo switch:todo activate:todo");
+  assert.equal(failedPhase("build", "health check: x"), "build");
+  assert.equal(failedPhase(undefined, "health check: health check did not pass within 1m0s"), "health");
+  assert.equal(failedPhase(undefined, "start container: no such image"), "start");
+  assert.equal(failedPhase(undefined, "something else"), undefined);
+  assert.match(advice("health") ?? "", /health path/);
+  assert.equal(advice(undefined), undefined);
+});
+
+test("logs: advice by what failed", () => {
+  assert.match(logAdvice(503, "web"), /shipyard-worker.*not answering/);
+  assert.match(logAdvice(404, "web"), /Nothing of web is running/);
+  assert.match(logAdvice(undefined, "web"), /Reconnect logs/);
 });
 
 test("rollback: which releases, which tokens", () => {

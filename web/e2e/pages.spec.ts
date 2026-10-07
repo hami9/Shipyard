@@ -89,3 +89,15 @@ test("an app's pages are tabs, and the history filters", async ({ page }) => {
   await tabs.getByRole("link", { name: "Overview" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "web" })).toBeVisible();
 });
+
+test("a failed release explains itself on its page", async ({ page }) => {
+  await signIn(page, "read", "/apps/web");
+  await page.getByRole("button", { name: "Failed", exact: true }).click();
+  await page.locator("table.releases tbody tr").first().getByRole("link", { name: "Details", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "This release failed" })).toBeVisible();
+  await expect(page.locator(".reason-text")).toContainText("health check did not pass");
+  await expect(page.getByText("never passed its health check")).toBeVisible();
+  // The seeded operation recorded no phase: the reason names the step.
+  await expect(page.getByRole("list", { name: "Steps" }).locator("li.failed")).toHaveText(/Health check/);
+  await accessible(page);
+});

@@ -21,6 +21,12 @@ All notable changes to Shipyard are recorded here.
   - Every page of an app has the same tabs (Overview, Environment, Domains, Logs, Settings), so switching between them takes one click.
   - The overview opens with the app's status: the release serving traffic, and the newest deploy with its result. A failed deploy shows its reason there, and that traffic stayed on the previous release.
   - The release history can be filtered to failed releases or rollbacks. Each release links to its "Details", and the configuration sits below the history.
+- **Recovery and setup in the web UI:**
+  - A failed operation's page opens with what failed and why, the step it stopped at, and what to check, with links to the app's logs and settings. Each operation shows its steps (fetch, build, start, health check, switch traffic, activate).
+  - When logs are unavailable, the logs page explains why: for example, that the worker is not answering, and how to check it. Its button is now "Reconnect logs".
+  - The domains page shows the DNS record to create, with a copy button, and whether each hostname's DNS was checked.
+  - The apps list shows each app's latest deploy, its result, and when it ran.
+  - The app forms explain each setting and its default, and say when changes take effect.
 
 ## [1.0.0-rc.1] - 2026-10-07
 

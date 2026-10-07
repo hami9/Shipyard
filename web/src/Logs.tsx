@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Client } from "./api/client.ts";
 import type { Scope } from "./api/schema.ts";
 import { AppFrame } from "./AppFrame.tsx";
+import { logAdvice } from "./phases.ts";
 import { EventLog } from "./OperationView.tsx";
 import { useStream } from "./useStream.ts";
 
@@ -59,16 +60,19 @@ export function Logs({ client, slug, scopes }: { client: Client; slug: string; s
                 setRun((r) => r + 1);
               }}
             >
-              Start again
+              Reconnect logs
             </button>
           )}
         </div>
       }
     >
       {stream.state === "failed" && (
-        <p className="error" role="alert">
-          {stream.error === "Not found." ? `${slug} has no running release, or no such app.` : stream.error}
-        </p>
+        <div className="callout bad">
+          <p className="error" role="alert">
+            {stream.error === "Not found." ? `${slug} has no running release, or no such app.` : stream.error}
+          </p>
+          <p>{logAdvice(stream.status, slug)}</p>
+        </div>
       )}
       {stream.state !== "failed" && <EventLog lines={lines} live={live} label={`${slug} output`} quiet />}
       <p className="hint" role="status">

@@ -271,7 +271,7 @@ The UI is never required for a deploy (ARCHITECTURE §1).
 - [ ] **P6.7** UI and UX overhaul (the owner's request, 2026-10-07: the project logo, plus a design critique of the UI; owner's choice: UI first, then the API). Split into:
   - [x] **P6.7a** Brand: the logo (favicon, header, sign-in), color tokens from it, one button hierarchy (primary, secondary, destructive), and stronger type and spacing.
   - [x] **P6.7b** App pages: persistent tabs (Overview, Environment, Domains, Logs, Settings), a status summary (serving release, latest deploy, its result), and a release history with status filters and the latest failure first.
-  - [ ] **P6.7c** Recovery and setup: the failure reason and stages on an operation page, "Reconnect logs" and what the worker has to do with them, DNS records to copy on the domains page, the apps list's latest deploy and result, and explained defaults in the forms.
+  - [x] **P6.7c** Recovery and setup: the failure reason and stages on an operation page, "Reconnect logs" and what the worker has to do with them, DNS records to copy on the domains page, the apps list's latest deploy and result, and explained defaults in the forms.
   - [ ] **P6.7d** `GET /v1/status`: whether the worker answers on its socket, and each app's last health check from the reconciler, shown in the UI.
 
 **Exit criteria:** every CLI flow except install is available in the UI, and the e2e suite is green.

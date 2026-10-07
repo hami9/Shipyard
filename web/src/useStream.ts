@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Client, RequestOf, StreamEvent, StreamId } from "./api/client.ts";
+import { ApiError, type Client, type RequestOf, type StreamEvent, type StreamId } from "./api/client.ts";
 import { message } from "./useApi.ts";
 
 export type StreamState = "connecting" | "open" | "ended" | "stopped" | "failed";
@@ -8,6 +8,8 @@ export interface Streamed<K extends StreamId> {
   events: StreamEvent<K>[];
   state: StreamState;
   error: string | undefined;
+  /** The HTTP status that failed the stream, when the API answered one. */
+  status?: number | undefined;
 }
 
 /** maxEvents bounds what a page keeps: a long log is cut at the top. */
@@ -55,7 +57,7 @@ export function useStream<K extends StreamId>(client: Client, op: K, request: Re
         setS((p) => ({ ...p, state: "ended" }));
       } catch (err) {
         if (!abort.signal.aborted) {
-          setS((p) => ({ ...p, state: "failed", error: message(err) }));
+          setS((p) => ({ ...p, state: "failed", error: message(err), status: err instanceof ApiError ? err.status : undefined }));
         }
       }
     })();

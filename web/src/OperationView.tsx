@@ -1,8 +1,12 @@
 import { useEffect, useRef } from "react";
 import type { Client } from "./api/client.ts";
 import type { Operation } from "./api/schema.ts";
-import { ago, clock, opTone } from "./format.ts";
+import { ago, clock, opTone, shortSHA } from "./format.ts";
 import { Link } from "./nav.tsx";
+import { advice, failedPhase, steps, type StepState } from "./phases.ts";
+
+// A step's state in words, for screen readers; the page shows it in color and shape.
+const stepWords: Record<StepState, string> = { done: "done", current: "in progress", failed: "failed", todo: "not reached" };
 import { useApi } from "./useApi.ts";
 import { useStream } from "./useStream.ts";
 
@@ -26,6 +30,21 @@ export function OperationView({ client, id }: { client: Client; id: string }) {
   const current = final ?? op.data;
   const lines = stream.events.flatMap((e) => (e.event === "message" ? [e.data] : []));
 
+  // The release this deploy or rollback made carries the failure's reason;
+  // look for it among the newest, again once the operation ends.
+  const releases = useApi(
+    () =>
+      appID && current?.kind !== "delete"
+        ? client.call("listReleases", { path: { app: appID }, query: { limit: 20 } })
+        : Promise.resolve(undefined),
+    [client, appID, current?.kind, final?.status],
+  );
+  const release = releases.data?.deployments.find((r) => r.operation_id === id);
+  const reason = release?.failure_reason ?? current?.last_error;
+  const failed = current?.status === "failed";
+  const where = failed ? failedPhase(current?.phase, reason) : undefined;
+  const plan = current ? steps({ kind: current.kind, status: current.status, phase: current.phase ?? where }) : [];
+
   return (
     <section>
       <p className="crumbs">
@@ -45,12 +64,46 @@ export function OperationView({ client, id }: { client: Client; id: string }) {
             {current.kind} <span className={`badge ${opTone(current.status)}`}>{current.status}</span>
           </h1>
           <span className="hint">
-            {current.phase ? `phase ${current.phase} · ` : ""}attempt {current.attempt} of {current.max_attempts} · queued{" "}
-            {ago(current.created_at)}
+            attempt {current.attempt} of {current.max_attempts} · queued {ago(current.created_at)}
+            {release && (
+              <>
+                {" · commit "}
+                <code title={release.commit}>{shortSHA(release.commit)}</code>
+              </>
+            )}
           </span>
         </div>
       )}
-      {current?.last_error && <p className="error">{current.last_error}</p>}
+      {failed && (
+        <div className="callout bad">
+          <h2>{current?.kind === "delete" ? "The delete failed" : "This release failed"}</h2>
+          {reason && <p className="reason-text">{reason}</p>}
+          {advice(where) && <p>{advice(where)}</p>}
+          {current?.kind !== "delete" && <p className="hint">A failed release never takes traffic: the one serving before kept serving.</p>}
+          {app.data && (
+            <p className="actions">
+              <Link to={{ page: "logs", slug: app.data.slug }} className="button small">
+                App logs
+              </Link>
+              <Link to={{ page: "settings", slug: app.data.slug }} className="button small">
+                Settings
+              </Link>
+            </p>
+          )}
+        </div>
+      )}
+      {!failed && current?.last_error && <p className="notice">The last attempt failed, and it will be retried: {current.last_error}</p>}
+      {plan.length > 0 && (
+        <ol className="steps" aria-label="Steps">
+          {plan.map((s) => (
+            <li key={s.phase} className={s.state}>
+              <span className="sr-only">{stepWords[s.state]}: </span>
+              {s.label}
+            </li>
+          ))}
+        </ol>
+      )}
+      <h2 className="section-title">Events</h2>
       <EventLog lines={lines.map((e) => ({ key: String(e.seq), ts: e.ts, tone: e.level, text: e.message }))} live={!final} label="Events" />
       <p className="hint" role="status">
         {stream.state === "connecting" && "Connecting…"}

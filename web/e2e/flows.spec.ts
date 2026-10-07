@@ -128,6 +128,8 @@ test("logs: the tail, live lines, and the end", async ({ page }) => {
   await signIn(page, "read", "/apps/web/logs");
   if (!workerStandIn) {
     await expect(page.getByRole("alert")).toHaveText("logs are unavailable: the worker is not running");
+    await expect(page.getByText("systemctl status shipyard-worker")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reconnect logs" })).toBeVisible();
     return;
   }
   await expect(page.getByText("live line 2")).toBeVisible();

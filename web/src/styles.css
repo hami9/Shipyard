@@ -486,6 +486,124 @@ label {
   gap: var(--s3);
 }
 
+/* Something went wrong, and what to do about it. */
+.callout {
+  display: grid;
+  gap: var(--s2);
+  margin: 0 0 var(--s5);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.callout.bad {
+  border-color: var(--error);
+  border-left-color: var(--error);
+}
+
+.callout h2 {
+  font-size: 1.05rem;
+}
+
+.callout p {
+  margin: 0;
+}
+
+.reason-text {
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+
+/* An operation's steps, left to right; the state is in words for screen
+   readers, and in shape and color here. */
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: 0 0 var(--s5);
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 550;
+}
+
+.steps li::before {
+  content: "";
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+}
+
+.steps li.done {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.steps li.done::before {
+  background: currentColor;
+}
+
+.steps li.current {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.steps li.failed {
+  color: var(--error);
+  border-color: var(--error);
+  background: var(--error-soft);
+}
+
+.steps li.failed::before {
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.section-title {
+  margin: 0 0 var(--s2);
+  font-size: 1rem;
+}
+
+.dns {
+  display: grid;
+  gap: var(--s2);
+}
+
+.dns p {
+  margin: 0;
+}
+
+table.dns-records {
+  box-shadow: none;
+}
+
+.copyable {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+a.strong {
+  font-weight: 650;
+}
+
 /* Nothing to list: a quiet box that says what to do. */
 .empty {
   margin: 0;
