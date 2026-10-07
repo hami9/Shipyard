@@ -264,7 +264,7 @@ The UI is never required for a deploy (ARCHITECTURE §1).
   - [x] **P6.5c** Tokens: list and revoke (admin), and rotate the signed-in token.
 - [ ] **P6.6** Accessibility pass and Playwright e2e tests (owner's choices 2026-10-07: in CI and locally, Chromium only, axe plus a manual pass). Split into:
   - [x] **P6.6a** The harness (`test/uiseed`, `web/e2e`: a seeded database, the real API, the production build under Caddy's CSP, a stand-in worker log socket) and axe's WCAG 2.2 AA rules on every page in both color schemes.
-  - [ ] **P6.6b** The flows end to end: apps, settings, deploy, rollback, environment, domains, tokens, live events and logs, with axe on their forms and errors.
+  - [x] **P6.6b** The flows end to end: apps, settings, deploy, rollback, environment, domains, tokens, live events and logs, with axe on their forms and errors.
   - [ ] **P6.6c** The manual accessibility pass (keyboard, focus after navigation, landmarks, announcements), and its fixes.
   - [ ] **P6.6d** A CI job: PostgreSQL service, `make test-ui`.
 

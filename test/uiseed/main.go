@@ -39,7 +39,9 @@ type output struct {
 	Database    string            `json:"database"`
 	DatabaseURL string            `json:"database_url"`
 	KEKID       string            `json:"kek_id"`
-	Tokens      map[string]string `json:"tokens"` // by scope
+	// Tokens by name: admin, deploy and read for every test; rotate, spare
+	// and doomed only for the token tests, which end them.
+	Tokens map[string]string `json:"tokens"`
 	// CSP is what Caddy serves the UI with, so the tests serve it the same.
 	CSP string `json:"csp"`
 }
@@ -122,13 +124,16 @@ func create(ctx context.Context, admin, kekDir string) (output, error) {
 		return out, err
 	}
 	expires := time.Now().Add(6 * time.Hour)
-	for _, scope := range []string{api.ScopeAdmin, api.ScopeDeploy, api.ScopeRead} {
+	for _, t := range []struct{ name, scope string }{
+		{"admin", api.ScopeAdmin}, {"deploy", api.ScopeDeploy}, {"read", api.ScopeRead},
+		{"rotate", api.ScopeDeploy}, {"spare", api.ScopeRead}, {"doomed", api.ScopeAdmin},
+	} {
 		plain, prefix, hash := api.NewToken()
-		if _, err := s.CreateToken(ctx, store.NewToken{UserID: user.ID, Name: "ui-" + scope, Prefix: prefix, Hash: hash,
-			Scopes: []string{scope}, ExpiresAt: &expires}); err != nil {
+		if _, err := s.CreateToken(ctx, store.NewToken{UserID: user.ID, Name: "ui-" + t.name, Prefix: prefix, Hash: hash,
+			Scopes: []string{t.scope}, ExpiresAt: &expires}); err != nil {
 			return out, err
 		}
-		out.Tokens[scope] = plain
+		out.Tokens[t.name] = plain
 	}
 
 	str := func(s string) *string { return &s }

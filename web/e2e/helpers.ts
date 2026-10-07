@@ -13,16 +13,21 @@ function env(name: string): string {
   return v;
 }
 
-export type Scope = "admin" | "deploy" | "read";
+/**
+ * The seeded tokens (test/uiseed): admin, deploy and read for every test;
+ * rotate (deploy), spare (read) and doomed (admin) only for tokens.spec.ts,
+ * which ends them.
+ */
+export type TokenName = "admin" | "deploy" | "read" | "rotate" | "spare" | "doomed";
 
-export function token(scope: Scope): string {
-  return env(`SHIPYARD_UI_TOKEN_${scope.toUpperCase()}`);
+export function token(name: TokenName): string {
+  return env(`SHIPYARD_UI_TOKEN_${name.toUpperCase()}`);
 }
 
-/** signIn opens path and signs in with a token of that scope, through the login form. */
-export async function signIn(page: Page, scope: Scope, path = "/"): Promise<void> {
+/** signIn opens path and signs in with that token, through the login form. */
+export async function signIn(page: Page, name: TokenName, path = "/"): Promise<void> {
   await page.goto(url + path);
-  await page.getByLabel("API token").fill(token(scope));
+  await page.getByLabel("API token").fill(token(name));
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
 }
