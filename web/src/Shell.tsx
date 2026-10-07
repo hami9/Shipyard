@@ -1,6 +1,8 @@
 import type { Client } from "./api/client.ts";
 import { AppDetail } from "./AppDetail.tsx";
 import { AppList } from "./AppList.tsx";
+import { DomainsPage } from "./DomainsPage.tsx";
+import { EnvPage } from "./EnvPage.tsx";
 import { Logs } from "./Logs.tsx";
 import { Link, useRoute } from "./nav.tsx";
 import { OperationView } from "./OperationView.tsx";
@@ -12,7 +14,7 @@ interface Props {
   onSignOut: () => void;
 }
 
-// The signed-in frame and its pages. Environment and domains come with P6.5.
+// The signed-in frame and its pages.
 export function Shell({ session, client, onSignOut }: Props) {
   const { whoami } = session;
   const route = useRoute();
@@ -35,6 +37,10 @@ export function Shell({ session, client, onSignOut }: Props) {
           <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
         )}
         {route.page === "logs" && <Logs key={route.slug} client={client} slug={route.slug} />}
+        {route.page === "env" && <EnvPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />}
+        {route.page === "domains" && (
+          <DomainsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
+        )}
         {route.page === "operation" && <OperationView key={route.id} client={client} id={route.id} />}
         {route.page === "missing" && (
           <p>

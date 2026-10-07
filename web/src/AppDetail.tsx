@@ -49,7 +49,11 @@ function Settings({ app }: { app: App }) {
     <>
       <div className="title">
         <h1>{app.slug}</h1>
-        <Link to={{ page: "logs", slug: app.slug }}>Logs</Link>
+        <nav className="actions" aria-label={`${app.slug} pages`}>
+          <Link to={{ page: "env", slug: app.slug }}>Environment</Link>
+          <Link to={{ page: "domains", slug: app.slug }}>Domains</Link>
+          <Link to={{ page: "logs", slug: app.slug }}>Logs</Link>
+        </nav>
       </div>
       <dl className="settings">
         {rows.map(([k, v]) => (

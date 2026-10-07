@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ago, bytes, clock, opTone, shortSHA, statusLabel, tone } from "./format.ts";
 import { appendCapped } from "./useStream.ts";
+import { canChange, explain, keyProblem, valueProblem } from "./forms.ts";
 import { href, parseRoute } from "./routes.ts";
 import { ApiError } from "./api/client.ts";
 import type { Release } from "./api/schema.ts";
@@ -56,6 +57,44 @@ test("routes: operations and logs", () => {
   }
   assert.equal(href({ page: "operation", id }), `/operations/${id}`);
   assert.equal(href({ page: "logs", slug: "web" }), "/apps/web/logs");
+});
+
+test("routes: environment and domains", () => {
+  assert.deepEqual(parseRoute("/apps/web/env"), { page: "env", slug: "web" });
+  assert.deepEqual(parseRoute("/apps/web/domains"), { page: "domains", slug: "web" });
+  assert.equal(href({ page: "env", slug: "web" }), "/apps/web/env");
+  assert.equal(href({ page: "domains", slug: "web" }), "/apps/web/domains");
+  assert.equal(parseRoute("/apps/web/secrets").page, "missing");
+});
+
+test("forms: who may change, and what the API accepts", () => {
+  assert.equal(canChange(["admin"]), true);
+  assert.equal(canChange(["deploy"]), false);
+  assert.equal(canChange(["read"]), false);
+  for (const k of ["DATABASE_URL", "_X", "a1", "K".repeat(255)]) {
+    assert.equal(keyProblem(k), undefined, k);
+  }
+  for (const k of ["", "1X", "A-B", "A B", "K".repeat(256), "Ä"]) {
+    assert.ok(keyProblem(k), k);
+  }
+  assert.equal(valueProblem("postgres://u:p@h/db"), undefined);
+  assert.equal(valueProblem(""), undefined);
+  assert.ok(valueProblem("a\0b"));
+  assert.equal(valueProblem("x".repeat(64 << 10)), undefined);
+  assert.ok(valueProblem("x".repeat((64 << 10) + 1)));
+  assert.ok(valueProblem("é".repeat(40000))); // 80 000 bytes in UTF-8
+});
+
+test("forms: the API's field errors by field, other errors as one message", () => {
+  const p = (status: number, errors?: { field: string; detail: string }[]) =>
+    new ApiError(status, { type: "about:blank", title: "", status, detail: "some fields are invalid", ...(errors ? { errors } : {}) }, undefined, "some fields are invalid");
+  assert.deepEqual(explain(p(422, [{ field: "hostname", detail: "resolves to 198.51.100.7, which is not this server" }])), {
+    message: "",
+    fields: { hostname: "resolves to 198.51.100.7, which is not this server" },
+  });
+  assert.deepEqual(explain(p(422, [{ field: "key", detail: "a" }, { field: "key", detail: "b" }])).fields, { key: "a; b" });
+  assert.deepEqual(explain(p(409)), { message: "some fields are invalid", fields: {} });
+  assert.deepEqual(explain(new TypeError("fetch failed")), { message: "The API is not reachable.", fields: {} });
 });
 
 test("appendCapped keeps the newest", () => {

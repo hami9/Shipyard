@@ -156,6 +156,9 @@ h2 {
 }
 
 table {
+  /* The containing block of the hidden column headings (.sr-only), so they
+     stay inside a table that scrolls instead of widening the page. */
+  position: relative;
   width: 100%;
   border-collapse: collapse;
   background: var(--panel);
@@ -273,6 +276,43 @@ tbody tr:last-child td {
   padding: 0.6rem 0.9rem;
   border-left: 3px solid var(--accent);
   background: var(--panel);
+}
+
+.panel {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 32rem;
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.panel h2 {
+  margin-bottom: 0.25rem;
+}
+
+.panel .error {
+  font-size: 0.9em;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.check input {
+  width: auto;
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+nav.actions {
+  gap: 1rem;
 }
 
 .small {
