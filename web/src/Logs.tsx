@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Client } from "./api/client.ts";
-import { Link } from "./nav.tsx";
+import type { Scope } from "./api/schema.ts";
+import { AppFrame } from "./AppFrame.tsx";
 import { EventLog } from "./OperationView.tsx";
 import { useStream } from "./useStream.ts";
 
@@ -11,7 +12,7 @@ const tails = [100, 500, 1000];
  * following. Container logs cannot resume, so a restart begins with a fresh
  * tail (ADR-0008); the worker has already redacted known secret values.
  */
-export function Logs({ client, slug }: { client: Client; slug: string }) {
+export function Logs({ client, slug, scopes }: { client: Client; slug: string; scopes: Scope[] }) {
   const [tail, setTail] = useState(100);
   const [follow, setFollow] = useState(true);
   const [run, setRun] = useState(1); // a new number restarts the stream
@@ -26,12 +27,11 @@ export function Logs({ client, slug }: { client: Client; slug: string }) {
   const live = on && (stream.state === "open" || stream.state === "connecting") && !end;
 
   return (
-    <section>
-      <p className="crumbs">
-        <Link to={{ page: "apps" }}>Apps</Link> / <Link to={{ page: "app", slug }}>{slug}</Link> / logs
-      </p>
-      <div className="title">
-        <h1>Logs</h1>
+    <AppFrame
+      slug={slug}
+      section="logs"
+      scopes={scopes}
+      aside={
         <div className="actions">
           <label>
             Last{" "}
@@ -63,7 +63,8 @@ export function Logs({ client, slug }: { client: Client; slug: string }) {
             </button>
           )}
         </div>
-      </div>
+      }
+    >
       {stream.state === "failed" && (
         <p className="error" role="alert">
           {stream.error === "Not found." ? `${slug} has no running release, or no such app.` : stream.error}
@@ -76,6 +77,6 @@ export function Logs({ client, slug }: { client: Client; slug: string }) {
         {end?.event === "end" && `The stream ended: ${end.data.reason}.`}
         {!on && "Stopped."}
       </p>
-    </section>
+    </AppFrame>
   );
 }

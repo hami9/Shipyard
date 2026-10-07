@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | P6.7: UI and UX overhaul (the owner's request, 2026-10-07: the logo and a design critique). Stacked branches from `main`: `ui-brand` (P6.7a). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
-| **Last completed** | P6.7a: the logo, color tokens from it, one button hierarchy, stronger type and spacing. Before it, `v1.0.0-rc.1`: the release candidate (stack merged, PR #25; README synced, PR #26). Before it, P6.6: the accessibility pass and the Playwright suite in CI, so Phase 6 is done |
-| **Next task** | P6.7b: app tabs, the status summary, and the release history. Then P6.7c and P6.7d (`GET /v1/status`). The owner's: P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0` |
+| **Active phase** | P6.7: UI and UX overhaul (the owner's request, 2026-10-07: the logo and a design critique). Stacked branches from `main`: `ui-brand` (P6.7a, CI green), `app-tabs` (P6.7b). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
+| **Last completed** | P6.7b: app tabs, the status summary, a filterable release history. Before it, P6.7a: the logo, color tokens, the button hierarchy. Before it, `v1.0.0-rc.1`: the release candidate (stack merged, PR #25; README synced, PR #26) |
+| **Next task** | P6.7c: recovery and setup. Then P6.7d (`GET /v1/status`). The owner's: P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0` |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-07 |
@@ -53,6 +53,38 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-07: P6.7b app tabs and status
+
+- **Phase / task:** P6.7b: persistent app tabs, the status summary, the release history
+- **Author:** Claude Code (desktop session)
+
+**Done**
+- **`AppFrame`** wraps every page of one app:
+  - breadcrumbs; one `h1`, which is the app on its overview and the section elsewhere, so titles and focus after navigation are unchanged;
+  - tabs: Overview, Environment, Domains, Logs, and Settings (only for a token that can change them), as links with `aria-current`.
+  - The settings form's heading is now an `h2`, "Deploy settings", under the page's `h1` "Settings".
+- **The overview:**
+  - Three cards: Serving (the active release and since when), Latest deploy (its status, a failure's reason, and that traffic stayed put), and Source (repository, branch, push deploys).
+  - Deploy sits beside the heading.
+  - The configuration is a card below the history.
+  - `summary.ts` (`summarize`, `filterReleases`) holds the logic, with unit tests.
+- **The history:**
+  - filters All, Failed and Rollbacks (`aria-pressed` buttons);
+  - compact cells: the release ID under its commit, the rollback source under its status;
+  - "Details" replaces "events"; Roll back is a small button;
+  - empty states say what to do.
+- **e2e tests:**
+  - updated for "Details" and the Settings heading;
+  - a new test of the tabs, `aria-current`, the read token's missing Settings tab, and the Failed filter.
+
+**Verification**
+- `tsc` (src and e2e): exit 0.
+- `npm test`: 37 pass (one new).
+- Playwright: in CI on the push (no local Chromium). P6.7a's run 37635976159 passed every job, including the UI suite.
+
+**Next**
+- P6.7c: recovery and setup (operation failure details, Reconnect logs, DNS records, the apps list's status, form defaults).
 
 ### 2026-10-07: P6.7a UI brand
 

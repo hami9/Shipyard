@@ -9,6 +9,20 @@ import type { App, Release } from "./api/schema.ts";
 import { createBody, durationMs, updateBody, valuesOf } from "./appForm.ts";
 import { graces, tokenTone, whoamiOf } from "./tokens.ts";
 import { canRollBack, needsConfigChoice, rollbackBody } from "./rollbackRules.ts";
+import { filterReleases, summarize } from "./summary.ts";
+
+test("summary: what serves, and the newest deploy even when it failed", () => {
+  const r = (id: string, status: Release["status"], kind: Release["kind"] = "build"): Release => ({
+    id, operation_id: "o", kind, status, commit: "c", env_revision: 0, created_at: "2026-10-06T12:00:00Z",
+  });
+  const list = [r("d3", "failed"), r("d2", "active", "rollback"), r("d1", "superseded")];
+  assert.deepEqual(summarize(list), { serving: list[1], latest: list[0] });
+  assert.deepEqual(summarize([]), { serving: undefined, latest: undefined });
+  assert.deepEqual(summarize([r("d1", "failed")]).serving, undefined);
+  assert.deepEqual(filterReleases(list, "all"), list);
+  assert.deepEqual(filterReleases(list, "failed").map((x) => x.id), ["d3"]);
+  assert.deepEqual(filterReleases(list, "rollbacks").map((x) => x.id), ["d2"]);
+});
 
 test("rollback: which releases, which tokens", () => {
   const r = (status: Release["status"]): Release => ({

@@ -3,6 +3,7 @@ import type { Client } from "./api/client.ts";
 import type { App, Scope } from "./api/schema.ts";
 import { createBody, updateBody, valuesOf, type AppValues } from "./appForm.ts";
 import { canChange, explain, focusFirstInvalid } from "./forms.ts";
+import { AppFrame } from "./AppFrame.tsx";
 import { Link, navigate } from "./nav.tsx";
 import { useApi } from "./useApi.ts";
 
@@ -71,10 +72,7 @@ export function NewApp({ client, scopes }: { client: Client; scopes: Scope[] }) 
 export function AppSettingsPage({ client, slug, scopes }: { client: Client; slug: string; scopes: Scope[] }) {
   const app = useApi(() => client.call("getApp", { path: { app: slug } }), [client, slug]);
   return (
-    <section>
-      <p className="crumbs">
-        <Link to={{ page: "apps" }}>Apps</Link> / <Link to={{ page: "app", slug }}>{slug}</Link> / settings
-      </p>
+    <AppFrame slug={slug} section="settings" scopes={scopes}>
       {app.error && <p className="error" role="alert">{app.error === "Not found." ? `There is no app named ${slug}.` : app.error}</p>}
       {app.data && !canChange(scopes) && <p>Changing an app needs a token with the admin scope.</p>}
       {app.data && canChange(scopes) && (
@@ -84,7 +82,7 @@ export function AppSettingsPage({ client, slug, scopes }: { client: Client; slug
           <DangerZone client={client} app={app.data} />
         </>
       )}
-    </section>
+    </AppFrame>
   );
 }
 
@@ -124,8 +122,8 @@ function EditForm({ client, app, onSaved }: { client: Client; app: App; onSaved:
   }
 
   return (
-    <form className="panel wide" onSubmit={submit} ref={form} noValidate>
-      <h1>{app.slug} settings</h1>
+    <form className="panel wide" onSubmit={submit} ref={form} noValidate aria-labelledby="edit-title">
+      <h2 id="edit-title">Deploy settings</h2>
       <p className="hint">
         Repository <code>{app.repo}</code>; to use another, create a new app.
       </p>

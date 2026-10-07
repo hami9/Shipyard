@@ -80,7 +80,7 @@ test("the rollback and deploy panels behave as dialogs", async ({ page }) => {
 
 test("an operation's events are a focusable, labelled log", async ({ page }) => {
   await signIn(page, "read", "/apps/web");
-  await page.getByRole("link", { name: "events" }).first().click();
+  await page.getByRole("link", { name: "Details", exact: true }).first().click();
   const log = page.getByRole("log", { name: "Events" });
   await expect(log).toBeVisible();
   await expect(log).toHaveAttribute("tabindex", "0");

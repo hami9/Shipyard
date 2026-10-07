@@ -4,7 +4,7 @@ import type { Client } from "./api/client.ts";
 import type { Scope } from "./api/schema.ts";
 import { ago } from "./format.ts";
 import { canChange, explain, focusFirstInvalid, type Explained } from "./forms.ts";
-import { Link } from "./nav.tsx";
+import { AppFrame } from "./AppFrame.tsx";
 import { useApi } from "./useApi.ts";
 
 interface Props {
@@ -38,13 +38,7 @@ export function DomainsPage({ client, slug, scopes }: Props) {
   }
 
   return (
-    <section>
-      <p className="crumbs">
-        <Link to={{ page: "apps" }}>Apps</Link> / <Link to={{ page: "app", slug }}>{slug}</Link> / domains
-      </p>
-      <div className="title">
-        <h1>Domains</h1>
-      </div>
+    <AppFrame slug={slug} section="domains" scopes={scopes}>
       {domains.error && <p className="error" role="alert">{domains.error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
       {error && <p className="error" role="alert">{error}</p>}
@@ -91,7 +85,7 @@ export function DomainsPage({ client, slug, scopes }: Props) {
           }}
         />
       )}
-    </section>
+    </AppFrame>
   );
 }
 

@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import type { Client } from "./api/client.ts";
-import type { App, Release, Scope } from "./api/schema.ts";
+import type { App, Release, ReleaseList, Scope } from "./api/schema.ts";
+import { AppFrame } from "./AppFrame.tsx";
 import { ago, bytes, shortSHA, statusLabel, tone } from "./format.ts";
 import { Link } from "./nav.tsx";
 import { Deploy } from "./Deploy.tsx";
-import { canChange, canDeploy } from "./forms.ts";
+import { canDeploy } from "./forms.ts";
 import { Rollback } from "./Rollback.tsx";
 import { canRollBack } from "./rollbackRules.ts";
-import { message, useApi } from "./useApi.ts";
+import { filterReleases, summarize, type ReleaseFilter } from "./summary.ts";
+import { message, useApi, type Loaded } from "./useApi.ts";
 
 interface Props {
   client: Client;
@@ -16,33 +18,106 @@ interface Props {
   scopes: Scope[];
 }
 
+const pageSize = 20;
+
 export function AppDetail({ client, slug, scopes }: Props) {
   const app = useApi(() => client.call("getApp", { path: { app: slug } }), [client, slug]);
-  return (
-    <section>
-      <p className="crumbs">
-        <Link to={{ page: "apps" }}>Apps</Link> / {slug}
-      </p>
-      {app.error && (
+  // The newest page of releases feeds both the summary and the history.
+  const first = useApi(
+    () => client.call("listReleases", { path: { app: slug }, query: { limit: pageSize } }),
+    [client, slug],
+  );
+  if (app.error) {
+    return (
+      <section>
+        <p className="crumbs">
+          <Link to={{ page: "apps" }}>Apps</Link> / {slug}
+        </p>
         <p className="error" role="alert">
           {app.error === "Not found." ? `There is no app named ${slug}.` : app.error}
         </p>
-      )}
-      {app.data && <Settings app={app.data} client={client} scopes={scopes} />}
-      {app.data && <Releases client={client} slug={slug} scopes={scopes} />}
+      </section>
+    );
+  }
+  return (
+    <AppFrame
+      slug={slug}
+      section="app"
+      scopes={scopes}
+      aside={app.data && canDeploy(scopes) ? <Deploy client={client} slug={slug} branch={app.data.branch} /> : undefined}
+    >
       {app.loading && !app.data && <p className="hint">Loading…</p>}
-    </section>
+      {app.data && <Summary app={app.data} releases={first} />}
+      {app.data && <Releases client={client} slug={slug} scopes={scopes} first={first} />}
+      {app.data && <Configuration app={app.data} />}
+    </AppFrame>
   );
 }
 
-function Settings({ app, client, scopes }: { app: App; client: Client; scopes: Scope[] }) {
+/**
+ * Summary answers "is it up, and did the last change work?": the release
+ * serving traffic, and the newest deploy with its outcome, so a failure is
+ * the first thing seen rather than a row in the history.
+ */
+function Summary({ app, releases }: { app: App; releases: Loaded<ReleaseList> }) {
+  const s = releases.data ? summarize(releases.data.deployments) : undefined;
+  return (
+    <div className="cards" aria-label="Status">
+      <div className="card">
+        <h2 className="card-label">Serving</h2>
+        {!s && <p className="hint">Loading…</p>}
+        {s && !s.serving && <p className="card-value">Nothing yet</p>}
+        {s?.serving && (
+          <>
+            <p className="card-value">
+              <span className="badge ok">active</span> <code title={s.serving.commit}>{shortSHA(s.serving.commit)}</code>
+            </p>
+            <p className="hint">
+              since {ago(s.serving.active_at ?? s.serving.created_at)}
+              {s.serving.kind === "rollback" ? " · a rollback" : ""}
+            </p>
+          </>
+        )}
+      </div>
+      <div className={s?.latest?.status === "failed" ? "card bad" : "card"}>
+        <h2 className="card-label">Latest deploy</h2>
+        {s && !s.latest && <p className="card-value">None yet</p>}
+        {s?.latest && (
+          <>
+            <p className="card-value">
+              <span className={`badge ${tone(s.latest.status)}`}>{statusLabel(s.latest.status)}</span>{" "}
+              <span className="hint">{ago(s.latest.created_at)}</span>
+            </p>
+            {s.latest.failure_reason && <p className="reason">{s.latest.failure_reason}</p>}
+            {s.latest.status === "failed" && s.serving && (
+              <p className="hint">Traffic stayed on the release serving before it.</p>
+            )}
+            <Link to={{ page: "operation", id: s.latest.operation_id }} className="small">
+              View deployment details
+            </Link>
+          </>
+        )}
+      </div>
+      <div className="card">
+        <h2 className="card-label">Source</h2>
+        <p className="card-value">
+          <code>{app.repo}</code>
+        </p>
+        <p className="hint">
+          branch <code>{app.branch}</code> · push deploys {app.auto_deploy ? "on" : "off"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Configuration({ app }: { app: App }) {
   const rows: [string, string][] = [
-    ["Repository", `${app.repo} @ ${app.branch}`],
-    ["Push deploys", app.auto_deploy ? "on" : "off"],
     ["Build", `${app.dockerfile_path} in ${app.build_context}`],
     ["Port", String(app.port)],
-    ["Health check", `GET ${app.health_path}, ${app.health_timeout}`],
-    ["Limits", `${app.cpu_limit} CPU, ${bytes(app.memory_limit)}, stop timeout ${app.stop_timeout}`],
+    ["Health check", `GET ${app.health_path}, within ${app.health_timeout}`],
+    ["Limits", `${app.cpu_limit} CPU, ${bytes(app.memory_limit)}`],
+    ["Stop timeout", app.stop_timeout],
   ];
   if (app.github_installation_id !== null) {
     rows.push(["GitHub App installation", String(app.github_installation_id)]);
@@ -50,19 +125,8 @@ function Settings({ app, client, scopes }: { app: App; client: Client; scopes: S
   return (
     <>
       <div className="title">
-        <h1>{app.slug}</h1>
-        <nav className="actions" aria-label={`${app.slug} pages`}>
-          <Link to={{ page: "env", slug: app.slug }}>Environment</Link>
-          <Link to={{ page: "domains", slug: app.slug }}>Domains</Link>
-          <Link to={{ page: "logs", slug: app.slug }}>Logs</Link>
-          {canChange(scopes) && <Link to={{ page: "settings", slug: app.slug }}>Settings</Link>}
-        </nav>
+        <h2>Configuration</h2>
       </div>
-      {canDeploy(scopes) && (
-        <div className="deploy">
-          <Deploy client={client} slug={app.slug} branch={app.branch} />
-        </div>
-      )}
       <dl className="settings">
         {rows.map(([k, v]) => (
           <div key={k}>
@@ -75,20 +139,26 @@ function Settings({ app, client, scopes }: { app: App; client: Client; scopes: S
   );
 }
 
-const pageSize = 20;
+const filters: { value: ReleaseFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "failed", label: "Failed" },
+  { value: "rollbacks", label: "Rollbacks" },
+];
 
 /** Releases is the app's deployments, newest first, a page at a time. */
-function Releases({ client, slug, scopes }: Props) {
-  const first = useApi(
-    () => client.call("listReleases", { path: { app: slug }, query: { limit: pageSize } }),
-    [client, slug],
-  );
+function Releases({
+  client,
+  slug,
+  scopes,
+  first,
+}: Props & { first: Loaded<ReleaseList> }) {
   const [more, setMore] = useState<Release[]>([]);
   const [next, setNext] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [target, setTarget] = useState<Release | undefined>();
   const [queued, setQueued] = useState<{ text: string; op: string } | undefined>();
+  const [filter, setFilter] = useState<ReleaseFilter>("all");
 
   // A new first page (a refresh) starts the list over.
   useEffect(() => {
@@ -113,14 +183,24 @@ function Releases({ client, slug, scopes }: Props) {
     }
   }
 
-  const releases = [...(first.data?.deployments ?? []), ...more];
+  const all = [...(first.data?.deployments ?? []), ...more];
+  const releases = filterReleases(all, filter);
   return (
     <>
       <div className="title">
         <h2>Releases</h2>
-        <button type="button" onClick={first.reload} disabled={first.loading}>
-          Refresh
-        </button>
+        <div className="actions">
+          <div className="segmented" role="group" aria-label="Show">
+            {filters.map((f) => (
+              <button key={f.value} type="button" className="small" aria-pressed={filter === f.value} onClick={() => setFilter(f.value)}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="small" onClick={first.reload} disabled={first.loading}>
+            Refresh
+          </button>
+        </div>
       </div>
       {first.error && <p className="error" role="alert">{first.error}</p>}
       {queued && (
@@ -150,10 +230,14 @@ function Releases({ client, slug, scopes }: Props) {
           }}
         />
       )}
-      {first.data && releases.length === 0 && (
-        <p className="hint">
-          Nothing deployed yet. Deploy with <code>shipyard deploy {slug}</code>.
+      {first.data && all.length === 0 && (
+        <p className="empty">
+          Nothing deployed yet. {canDeploy(scopes) ? "Deploy it with the button above, or" : "Deploy it"} with{" "}
+          <code>shipyard deploy {slug}</code>.
         </p>
+      )}
+      {all.length > 0 && releases.length === 0 && (
+        <p className="empty">No {filter === "failed" ? "failed releases" : "rollbacks"} among the {all.length} loaded.</p>
       )}
       {releases.length > 0 && (
         <table className="releases">
@@ -161,9 +245,8 @@ function Releases({ client, slug, scopes }: Props) {
             <tr>
               <th>Status</th>
               <th>Commit</th>
-              <th>Release</th>
-              <th>Config</th>
               <th>Created</th>
+              <th>Config</th>
               <th>
                 <span className="sr-only">Actions</span>
               </th>
@@ -174,35 +257,38 @@ function Releases({ client, slug, scopes }: Props) {
               <tr key={r.id}>
                 <td>
                   <span className={`badge ${tone(r.status)}`}>{statusLabel(r.status)}</span>
+                  {r.kind === "rollback" && r.rollback_of && (
+                    <div className="hint small">rollback to {r.rollback_of.slice(0, 8)}</div>
+                  )}
                   {r.failure_reason && <div className="reason">{r.failure_reason}</div>}
                 </td>
                 <td>
                   <code title={r.commit}>{shortSHA(r.commit)}</code>
+                  <div className="hint small">
+                    release <code title={r.id}>{r.id.slice(0, 8)}</code>
+                  </div>
                 </td>
-                <td>
-                  <code title={r.id}>{r.id.slice(0, 8)}</code>{" "}
-                  <Link to={{ page: "operation", id: r.operation_id }} className="small">
-                    events
-                  </Link>
-                  {r.kind === "rollback" && r.rollback_of && (
-                    <div className="hint">rollback to {r.rollback_of.slice(0, 8)}</div>
-                  )}
-                </td>
-                <td>{r.env_revision === 0 ? "none" : `revision ${r.env_revision}`}</td>
                 <td title={r.created_at}>{ago(r.created_at)}</td>
+                <td>{r.env_revision === 0 ? "none" : `revision ${r.env_revision}`}</td>
                 <td>
-                  {canRollBack(r, scopes) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQueued(undefined);
-                        setTarget(r);
-                      }}
-                      disabled={target !== undefined}
-                    >
-                      Roll back
-                    </button>
-                  )}
+                  <div className="row-actions">
+                    <Link to={{ page: "operation", id: r.operation_id }} className="small">
+                      Details
+                    </Link>
+                    {canRollBack(r, scopes) && (
+                      <button
+                        type="button"
+                        className="small"
+                        onClick={() => {
+                          setQueued(undefined);
+                          setTarget(r);
+                        }}
+                        disabled={target !== undefined}
+                      >
+                        Roll back
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

@@ -10,7 +10,7 @@ const pages: { path: string; heading: string | RegExp }[] = [
   { path: "/apps/web/env", heading: "Environment" },
   { path: "/apps/web/domains", heading: "Domains" },
   { path: "/apps/web/logs", heading: "Logs" },
-  { path: "/apps/web/settings", heading: "web settings" },
+  { path: "/apps/web/settings", heading: "Settings" },
   { path: "/new", heading: "New app" },
   { path: "/tokens", heading: "Tokens" },
   { path: "/nowhere", heading: /./ },
@@ -43,7 +43,7 @@ for (const scheme of ["light", "dark"] as const) {
       }
       // An operation page, reached from a release.
       await page.goto(url + "/apps/web");
-      await page.getByRole("link", { name: "events" }).first().click();
+      await page.getByRole("link", { name: "Details", exact: true }).first().click();
       await expect(page.getByText("seeded release 25")).toBeVisible();
       await accessible(page);
       expect(csp).toEqual([]);
@@ -65,4 +65,27 @@ test("a wrong token is refused, and a good one is kept across a reload", async (
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("API token")).toBeVisible();
+});
+
+test("an app's pages are tabs, and the history filters", async ({ page }) => {
+  await signIn(page, "read", "/apps/web");
+  const tabs = page.getByRole("navigation", { name: "web pages" });
+  await expect(tabs.getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
+  await expect(tabs.getByRole("link", { name: "Settings" })).toHaveCount(0); // read cannot change them
+  await expect(page.getByRole("heading", { name: "Latest deploy" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Failed", exact: true }).click();
+  const rows = page.locator("table.releases tbody tr");
+  await expect(rows).not.toHaveCount(0);
+  for (const row of await rows.all()) {
+    await expect(row.locator(".badge")).toHaveText("failed");
+  }
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await expect(rows).toHaveCount(20);
+
+  await tabs.getByRole("link", { name: "Domains" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Domains" })).toBeVisible();
+  await expect(tabs.getByRole("link", { name: "Domains" })).toHaveAttribute("aria-current", "page");
+  await tabs.getByRole("link", { name: "Overview" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "web" })).toBeVisible();
 });

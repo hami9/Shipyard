@@ -17,6 +17,10 @@ All notable changes to Shipyard are recorded here.
   - Main actions (Deploy, New app, Save) are styled as primary buttons, and destructive ones in red.
   - Statuses show as colored badges.
   - Type and spacing are stronger, and the header stays visible while scrolling.
+- **App pages in the web UI:**
+  - Every page of an app has the same tabs (Overview, Environment, Domains, Logs, Settings), so switching between them takes one click.
+  - The overview opens with the app's status: the release serving traffic, and the newest deploy with its result. A failed deploy shows its reason there, and that traffic stayed on the previous release.
+  - The release history can be filtered to failed releases or rollbacks. Each release links to its "Details", and the configuration sits below the history.
 
 ## [1.0.0-rc.1] - 2026-10-07
 

@@ -376,6 +376,126 @@ label {
   font-size: 0.9rem;
 }
 
+/* The deploy dialog opens in the heading's row: it takes the row's width. */
+.title > .confirm {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* An app's pages, one click apart. */
+.tabs {
+  display: flex;
+  gap: var(--s1);
+  margin: 0 0 var(--s5);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.tabs a {
+  padding: 0.55rem 0.85rem;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-weight: 550;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tabs a:hover {
+  color: var(--fg);
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+/* The overview's status cards. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--s4);
+}
+
+.card {
+  display: grid;
+  align-content: start;
+  gap: var(--s1);
+  padding: var(--s4) var(--s5);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.card.bad {
+  border-color: var(--error);
+}
+
+.card p {
+  margin: 0;
+}
+
+.card-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* A choice of views: buttons that stay pressed. */
+.segmented {
+  display: inline-flex;
+}
+
+.segmented button {
+  border-radius: 0;
+}
+
+.segmented button + button {
+  margin-left: -1px;
+}
+
+.segmented button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.segmented button:last-child {
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s3);
+}
+
+/* Nothing to list: a quiet box that says what to do. */
+.empty {
+  margin: 0;
+  padding: var(--s5);
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--field-line);
+  border-radius: var(--radius-lg);
+}
+
 /* Tables: a card, a quiet header, rows that read as one. */
 table {
   /* The containing block of the hidden column headings (.sr-only), so they

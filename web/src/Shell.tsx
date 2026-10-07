@@ -80,7 +80,7 @@ export function Shell({ session, client, onSignOut, onSession }: Props) {
         {route.page === "app" && (
           <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
         )}
-        {route.page === "logs" && <Logs key={route.slug} client={client} slug={route.slug} />}
+        {route.page === "logs" && <Logs key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />}
         {route.page === "env" && <EnvPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />}
         {route.page === "domains" && (
           <DomainsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />

@@ -3,7 +3,7 @@ import { ConfirmButton, focusHeading } from "./a11y.tsx";
 import type { Client } from "./api/client.ts";
 import type { Scope } from "./api/schema.ts";
 import { canChange, explain, focusFirstInvalid, keyProblem, valueProblem, type Explained } from "./forms.ts";
-import { Link } from "./nav.tsx";
+import { AppFrame } from "./AppFrame.tsx";
 import { useApi } from "./useApi.ts";
 
 interface Props {
@@ -38,14 +38,7 @@ export function EnvPage({ client, slug, scopes }: Props) {
   }
 
   return (
-    <section>
-      <p className="crumbs">
-        <Link to={{ page: "apps" }}>Apps</Link> / <Link to={{ page: "app", slug }}>{slug}</Link> / environment
-      </p>
-      <div className="title">
-        <h1>Environment</h1>
-        {env.data && <span className="hint">revision {env.data.revision}</span>}
-      </div>
+    <AppFrame slug={slug} section="env" scopes={scopes} aside={env.data && <span className="hint">revision {env.data.revision}</span>}>
       <p className="hint">Values are never shown, here or anywhere: only their keys. A change takes effect at the next deploy.</p>
       {env.error && <p className="error" role="alert">{env.error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
@@ -87,7 +80,7 @@ export function EnvPage({ client, slug, scopes }: Props) {
           }}
         />
       )}
-    </section>
+    </AppFrame>
   );
 }
 
