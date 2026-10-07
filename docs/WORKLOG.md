@@ -72,7 +72,7 @@ Copy this block to the top of the entries section.
   - **UI end to end: success, 19 passed (57.9 s)** on Linux, all-in-one: the seeder, the API, and the stand-in log socket, so the full logs path (tail, stderr, live, end) ran for the first time.
   - Integration and Web client: success.
   - Lint: failure (`gofmt needed on: test/uiseed/main.go`).
-- **After the fix:** `make lint` and `go test ./...` exit 0 (WSL). This push's CI: CI_RESULT.
+- **After the fix:** `make lint` and `go test ./...` exit 0 (WSL). **CI run 37607643580** (`faa805f`): Lint, Web client, Integration, and UI end to end all succeeded.
 - **Phase 6 exit criteria:**
   - Every CLI flow but install is in the UI (P6.5c's check).
   - The e2e suite is green: 19 Playwright tests in CI.
