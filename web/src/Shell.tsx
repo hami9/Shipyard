@@ -1,5 +1,6 @@
 import type { Client } from "./api/client.ts";
 import { AppDetail } from "./AppDetail.tsx";
+import { AppSettingsPage, NewApp } from "./AppEditor.tsx";
 import { AppList } from "./AppList.tsx";
 import { DomainsPage } from "./DomainsPage.tsx";
 import { EnvPage } from "./EnvPage.tsx";
@@ -32,7 +33,11 @@ export function Shell({ session, client, onSignOut }: Props) {
         </button>
       </header>
       <main>
-        {route.page === "apps" && <AppList client={client} />}
+        {route.page === "apps" && <AppList client={client} scopes={whoami.scopes} />}
+        {route.page === "new" && <NewApp client={client} scopes={whoami.scopes} />}
+        {route.page === "settings" && (
+          <AppSettingsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
+        )}
         {route.page === "app" && (
           <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
         )}

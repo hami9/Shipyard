@@ -5,7 +5,8 @@ import { appendCapped } from "./useStream.ts";
 import { canChange, explain, keyProblem, valueProblem } from "./forms.ts";
 import { href, parseRoute } from "./routes.ts";
 import { ApiError } from "./api/client.ts";
-import type { Release } from "./api/schema.ts";
+import type { App, Release } from "./api/schema.ts";
+import { createBody, durationMs, updateBody, valuesOf } from "./appForm.ts";
 import { canRollBack, needsConfigChoice, rollbackBody } from "./rollbackRules.ts";
 
 test("rollback: which releases, which tokens", () => {
@@ -95,6 +96,58 @@ test("forms: the API's field errors by field, other errors as one message", () =
   assert.deepEqual(explain(p(422, [{ field: "key", detail: "a" }, { field: "key", detail: "b" }])).fields, { key: "a; b" });
   assert.deepEqual(explain(p(409)), { message: "some fields are invalid", fields: {} });
   assert.deepEqual(explain(new TypeError("fetch failed")), { message: "The API is not reachable.", fields: {} });
+});
+
+test("routes: new app and settings", () => {
+  assert.deepEqual(parseRoute("/new"), { page: "new" });
+  assert.deepEqual(parseRoute("/apps/new"), { page: "app", slug: "new" }); // an app may be called new
+  assert.deepEqual(parseRoute("/apps/web/settings"), { page: "settings", slug: "web" });
+  assert.equal(href({ page: "new" }), "/new");
+  assert.equal(href({ page: "settings", slug: "web" }), "/apps/web/settings");
+});
+
+test("durations as Go writes and reads them", () => {
+  assert.equal(durationMs("90s"), 90_000);
+  assert.equal(durationMs("1m30s"), 90_000);
+  assert.equal(durationMs("1m0s"), 60_000);
+  assert.equal(durationMs("500ms"), 500);
+  assert.equal(durationMs("1.5h"), 5_400_000);
+  assert.equal(durationMs("0s"), 0);
+  assert.equal(durationMs("0"), 0);
+  for (const s of ["", "10", "5 min", "s", "1d", "-1s", "1m30"]) {
+    assert.equal(durationMs(s), undefined, s);
+  }
+});
+
+const app: App = {
+  id: "0b6e1c1e-2a0c-4bde-9c43-0d3f1c2b9a10", slug: "web", repo: "acme/web", branch: "main", dockerfile_path: "Dockerfile",
+  build_context: ".", port: 8080, health_path: "/healthz", health_timeout: "1m0s", cpu_limit: 1, memory_limit: 512 << 20,
+  stop_timeout: "10s", auto_deploy: false, github_installation_id: null, created_at: "2026-10-07T10:00:00Z", updated_at: "2026-10-07T10:00:00Z",
+};
+
+test("a new app: defaults, required fields, and the request", () => {
+  const v = valuesOf();
+  assert.deepEqual(createBody(v).fields, { slug: "is required", repo: "is required", port: "a number from 1 to 65535" });
+  const { body, fields } = createBody({ ...v, slug: " web ", repo: "acme/web", port: "8080", memory_mib: "256" });
+  assert.deepEqual(fields, {});
+  assert.deepEqual(body, {
+    slug: "web", repo: "acme/web", branch: "main", port: 8080, dockerfile_path: "Dockerfile", build_context: ".",
+    health_path: "/", health_timeout: "60s", stop_timeout: "10s", cpu_limit: 1, memory_limit: 256 << 20, auto_deploy: false,
+  });
+  const bad = createBody({ ...v, slug: "web", repo: "a/b", port: "80", cpu_limit: "0", memory_mib: "5", health_timeout: "1 min", github_installation_id: "x" });
+  assert.deepEqual(Object.keys(bad.fields).sort(), ["cpu_limit", "github_installation_id", "health_timeout", "memory_limit"]);
+  assert.equal(bad.body, undefined);
+});
+
+test("a change: only what differs, durations compared by value", () => {
+  const v = valuesOf(app);
+  assert.equal(v.memory_mib, "512");
+  assert.deepEqual(updateBody(v, app), { body: {}, fields: {} }); // nothing changed, even "1m0s" vs itself
+  assert.deepEqual(updateBody({ ...v, health_timeout: "60s" }, app).body, {}); // the same duration, written another way
+  assert.deepEqual(updateBody({ ...v, port: "3000", auto_deploy: true, memory_mib: "1024", github_installation_id: "42" }, app).body, {
+    port: 3000, auto_deploy: true, memory_limit: 1 << 30, github_installation_id: 42,
+  });
+  assert.deepEqual(updateBody({ ...v, port: "99999" }, app), { fields: { port: "a number from 1 to 65535" } });
 });
 
 test("appendCapped keeps the newest", () => {

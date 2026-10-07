@@ -259,7 +259,9 @@ The UI is never required for a deploy (ARCHITECTURE §1).
   - [x] **P6.3b** Rollback from a release (deploy scope), with the choice of configuration when secrets changed since (409), and the operation it queued.
 - [x] **P6.4** Live operation events and logs through `EventSource`. As built: over `fetch` (`client.stream`), since `EventSource` cannot send the bearer token (ADR-0015). It has an operation page that resumes with `Last-Event-ID` and rides out an API restart, and a logs page with tail, follow and stop.
 - [x] **P6.5** Environment management (write-only values) and domains.
-- [ ] **P6.5b** The CLI flows the UI still lacks, for the exit criteria (found 2026-10-07): creating an app, changing its settings, deleting it, starting a deploy, and listing, revoking and rotating tokens.
+- [ ] **P6.5b** The CLI flows the UI still lacks, for the exit criteria (found 2026-10-07): creating an app, changing its settings, deleting it, starting a deploy, and listing, revoking and rotating tokens. Split into:
+  - [x] **P6.5b** Apps: create (`/new`), settings (`/apps/<app>/settings`), delete behind its typed name (the owner's choice, 2026-10-07), and deploy (the branch head or a commit).
+  - [ ] **P6.5c** Tokens: list and revoke (admin), and rotate the signed-in token.
 - [ ] **P6.6** Accessibility pass and Playwright e2e tests.
 
 **Exit criteria:** every CLI flow except install is available in the UI, and the e2e suite is green.

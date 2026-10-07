@@ -297,6 +297,56 @@ tbody tr:last-child td {
   font-size: 0.9em;
 }
 
+.panel.wide {
+  max-width: 44rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field .hint,
+.field .error {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.field.invalid input {
+  border-color: var(--error);
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--accent);
+  margin: 0.25rem 0;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin-top: 0.5rem;
+}
+
+.deploy {
+  margin-bottom: 1rem;
+}
+
+.danger {
+  border-color: var(--error);
+}
+
+.danger h2 {
+  color: var(--error);
+}
+
+button.destructive {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+
 .check {
   display: flex;
   align-items: center;

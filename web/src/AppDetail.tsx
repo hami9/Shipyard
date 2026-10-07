@@ -3,6 +3,8 @@ import type { Client } from "./api/client.ts";
 import type { App, Release, Scope } from "./api/schema.ts";
 import { ago, bytes, shortSHA, statusLabel, tone } from "./format.ts";
 import { Link } from "./nav.tsx";
+import { Deploy } from "./Deploy.tsx";
+import { canChange, canDeploy } from "./forms.ts";
 import { Rollback } from "./Rollback.tsx";
 import { canRollBack } from "./rollbackRules.ts";
 import { message, useApi } from "./useApi.ts";
@@ -26,14 +28,14 @@ export function AppDetail({ client, slug, scopes }: Props) {
           {app.error === "Not found." ? `There is no app named ${slug}.` : app.error}
         </p>
       )}
-      {app.data && <Settings app={app.data} />}
+      {app.data && <Settings app={app.data} client={client} scopes={scopes} />}
       {app.data && <Releases client={client} slug={slug} scopes={scopes} />}
       {app.loading && !app.data && <p className="hint">Loading…</p>}
     </section>
   );
 }
 
-function Settings({ app }: { app: App }) {
+function Settings({ app, client, scopes }: { app: App; client: Client; scopes: Scope[] }) {
   const rows: [string, string][] = [
     ["Repository", `${app.repo} @ ${app.branch}`],
     ["Push deploys", app.auto_deploy ? "on" : "off"],
@@ -53,8 +55,14 @@ function Settings({ app }: { app: App }) {
           <Link to={{ page: "env", slug: app.slug }}>Environment</Link>
           <Link to={{ page: "domains", slug: app.slug }}>Domains</Link>
           <Link to={{ page: "logs", slug: app.slug }}>Logs</Link>
+          {canChange(scopes) && <Link to={{ page: "settings", slug: app.slug }}>Settings</Link>}
         </nav>
       </div>
+      {canDeploy(scopes) && (
+        <div className="deploy">
+          <Deploy client={client} slug={app.slug} branch={app.branch} />
+        </div>
+      )}
       <dl className="settings">
         {rows.map(([k, v]) => (
           <div key={k}>

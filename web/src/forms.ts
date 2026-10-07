@@ -10,6 +10,11 @@ export function canChange(scopes: Scope[]): boolean {
   return scopes.includes("admin");
 }
 
+/** canDeploy: deploys and rollbacks need the deploy scope, which admin includes. */
+export function canDeploy(scopes: Scope[]): boolean {
+  return scopes.some((s) => s === "deploy" || s === "admin");
+}
+
 // The API's rules (api/openapi.json EnvKey; internal/secrets MaxValueSize).
 const keyRE = /^[A-Za-z_][A-Za-z0-9_]{0,254}$/;
 export const maxValueBytes = 64 << 10;

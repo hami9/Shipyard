@@ -3,10 +3,11 @@
 
 import { ApiError } from "./api/client.ts";
 import type { Release, Scope } from "./api/schema.ts";
+import { canDeploy } from "./forms.ts";
 
 /** canRollBack: only a release that served before is a target, and only with the deploy scope. */
 export function canRollBack(r: Release, scopes: Scope[]): boolean {
-  return r.status === "superseded" && scopes.some((s) => s === "deploy" || s === "admin");
+  return r.status === "superseded" && canDeploy(scopes);
 }
 
 export type ConfigChoice = "current" | "old";
