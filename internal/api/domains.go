@@ -176,9 +176,14 @@ func (h *domainHandlers) remove(w http.ResponseWriter, r *http.Request) {
 }
 
 func ips(addrs []netip.Addr) string {
+	return strings.Join(addrStrings(addrs), ", ")
+}
+
+// addrStrings is addrs as text; never nil, so JSON says [].
+func addrStrings(addrs []netip.Addr) []string {
 	s := make([]string, len(addrs))
 	for i, a := range addrs {
 		s[i] = a.String()
 	}
-	return strings.Join(s, ", ")
+	return s
 }

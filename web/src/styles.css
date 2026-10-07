@@ -486,6 +486,16 @@ label {
   gap: var(--s3);
 }
 
+/* Something about the whole server, above every page. */
+.banner {
+  margin: 0 0 var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  color: var(--fg);
+}
+
 /* Something went wrong, and what to do about it. */
 .callout {
   display: grid;

@@ -292,7 +292,14 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	}
 
 	env := secrets.NewEnv(keys, s)
-	logSrv, err := serveLogs(cfg.WorkerSocket, &applogs.Server{Store: s, Secrets: env, Source: runtimeAdapter{rt}, Log: log}, log)
+	// Every reconciler pass checks the active apps' health: for GET /status
+	// on the socket (P6.7d), and for the metrics when they are on (ADR-0013).
+	var next reconcile.HealthReporter
+	if wm != nil {
+		next = wm // not a nil *workerMetrics in a non-nil interface
+	}
+	board := newHealthBoard(next)
+	logSrv, err := serveLogs(cfg.WorkerSocket, &applogs.Server{Store: s, Secrets: env, Source: runtimeAdapter{rt}, Health: board, Log: log}, log)
 	if err != nil {
 		return err
 	}
@@ -341,11 +348,8 @@ func work(ctx context.Context, cfg config.Worker, log *slog.Logger) error {
 	if router != nil {
 		rec.Router = router
 	}
-	if wm != nil {
-		// Each pass checks the active apps for the metrics (ADR-0013).
-		rec.Health = wm
-		rec.Probe = func(ctx context.Context, url string) error { return health.Probe(ctx, url, 0) }
-	}
+	rec.Health = board
+	rec.Probe = func(ctx context.Context, url string) error { return health.Probe(ctx, url, 0) }
 
 	// The rest of retention (ADR-0006): daily by default, and at start.
 	ret := &app.Retention{Events: s, Cache: builder, CacheMax: cfg.BuildCacheMax,

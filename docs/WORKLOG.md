@@ -8,9 +8,9 @@ A chronological record of work on Shipyard, **newest entry first**. Every workin
 
 | Field | Value |
 | --- | --- |
-| **Active phase** | P6.7: UI and UX overhaul (the owner's request, 2026-10-07: the logo and a design critique). Stacked branches from `main`: `ui-brand` (P6.7a, CI green), `app-tabs` (P6.7b, CI green), `ui-recovery` (P6.7c). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
-| **Last completed** | P6.7c: failure details and steps on operation pages, logs recovery, DNS records, the apps list's latest deploy, explained form defaults. Before it, P6.7b: app tabs, the status summary, a filterable release history; P6.7a: the logo, color tokens, the button hierarchy. Before it, `v1.0.0-rc.1` (PRs #25, #26) |
-| **Next task** | P6.7d: `GET /v1/status` (worker, app health, public IPs) and its UI. The owner's: P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0` |
+| **Active phase** | P6.7 is done: the UI and UX overhaul (the owner's request, 2026-10-07). Stacked branches from `main`, no PRs: `ui-brand` (P6.7a), `app-tabs` (P6.7b), `ui-recovery` (P6.7c), `api-status` (P6.7d). `main` holds Phases 1–6 and is tagged `v1.0.0-rc.1`. P5.9b (the acceptance demo) is the owner's, running now |
+| **Last completed** | P6.7d: `GET /v1/status` (worker, app health, public IPs) and its UI. Before it, P6.7c: failure details and steps, logs recovery, DNS records, the apps list's latest deploy, form defaults; P6.7b: app tabs, the status summary, a filterable history; P6.7a: the logo, color tokens, the button hierarchy. Before it, `v1.0.0-rc.1` (PRs #25, #26) |
+| **Next task** | The owner: review and merge the P6.7 branches; P5.9b on a VPS from the `v1.0.0-rc.1` archives, then `v1.0.0`. Then P7 (unscheduled) |
 | **Blockers** | None |
 | **Open risks** | Builder egress is unrestricted (ADR-0009). The builder container is still privileged, though rootless (ADR-0010); Ubuntu 24.04+ hosts need the userns sysctl (`deploy/sysctl/`), untested on a real Ubuntu kernel. On Docker Desktop (macOS/Windows), Phase 1+ health probes cannot reach container IPs `[DK-DESKTOP-NET]`. Images that start as root and drop privileges (e.g. stock nginx) may need allowlisted capabilities, which have no per-app setting yet. A delete that fails midway leaves the app out of service until it is deleted again. Pushes match apps by repository name and an app's repo is fixed, so a renamed repository stops deploying until P4.4. `webhook_deliveries` has no retention yet (one small row per push) |
 | **Last updated** | 2026-10-07 |
@@ -53,6 +53,39 @@ Copy this block to the top of the entries section.
 - Keep entries short, around 10–25 lines. Move long analysis to an ADR or `docs/`.
 
 ## Entries
+
+### 2026-10-07: P6.7d server status
+
+- **Phase / task:** P6.7d: `GET /v1/status` and its UI; P6.7 is done
+- **Author:** Claude Code (desktop session)
+- **Decision (the owner's, 2026-10-07):** UI first, then this small API addition.
+
+**Done**
+- **The worker socket** (`internal/applogs`): `GET /status` answers `{checked_at, apps: [{app, running, healthy}]}` from a `StatusSource`. `Client.Status` wraps `ErrUnavailable` when there is no worker.
+- **The worker** (`cmd/shipyard-worker/status.go`):
+  - `healthBoard` keeps the reconciler's last report, stamped with the time, and passes it on to the metrics when they are on.
+  - The reconciler now checks health on every pass (ADR-0013 note). Before, it checked only with metrics on.
+- **The API** (`internal/api/status.go`): `GET /v1/status` (`read`).
+  - It asks the worker with a 2 s deadline: `worker` is `up` or `down`, `checked_at` is null before the first pass or when down, and `apps` is the worker's report.
+  - It adds `public_ips` from `SHIPYARD_PUBLIC_IPS`, and is always 200.
+  - The API shares one worker client between logs and status.
+  - `api/openapi.json` gains the path, `ServerStatus` and `AppHealth`; `schema.ts` was regenerated.
+- **The UI:**
+  - The Shell asks for the status on each page change. When the worker is down, it shows a notice without an ARIA role, so it does not compete with the pages' own alerts.
+  - A Health card on the overview and a Health column in the apps list, from `status.ts` (`health`: healthy, unhealthy, down, not running, or unknown with the reason).
+  - The domains page lists A/AAAA records for each public IP, each with a copy button; a CNAME stays the fallback.
+- **The e2e stand-in worker** answers `/status` with `web` healthy. A new test covers the Health card (stand-in mode) and the notice (no worker).
+- **Docs:** an ADR-0008 note (the socket's second read-only route), an ADR-0013 note, and the ARCHITECTURE §6 table.
+
+**Verification** (WSL, Go 1.26.8)
+- `go test -race ./internal/applogs/ ./internal/api/ ./cmd/shipyard-worker/ ./cmd/shipyard-api/ ./internal/openapits/`: all ok.
+- `go test -race -tags integration ./internal/api/`: ok. This includes the OpenAPI check that every 2xx in the spec was provoked.
+- `make lint` on an LF copy of the checkout: exit 0 (gofmt, vet and staticcheck with every tag). The Windows checkout's CRLF files make gofmt list every file, so lint is run from a copy.
+- `tsc` (src and e2e): exit 0. `npm test`: 40 pass (one new: `health`).
+- Playwright: in CI.
+
+**Next**
+- The owner reviews the P6.7 branches (`ui-brand` → `app-tabs` → `ui-recovery` → `api-status`, stacked from `main`). P5.9b on a VPS.
 
 ### 2026-10-07: P6.7c recovery and setup
 

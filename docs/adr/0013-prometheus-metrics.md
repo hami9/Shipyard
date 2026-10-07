@@ -81,6 +81,10 @@
   - **A late commit can be missed.** An operation whose transaction commits more than a minute after its `finished_at` is not counted. Shipyard's finishing transactions are short.
   - **A hand-written format** must keep to the text format's rules. Tests pin its escaping and histogram output.
 
+## Implementation notes
+
+- **2026-10-07 (P6.7d).** The reconciler checks the active apps' health on every pass now, not only when the metrics are on. The result feeds the worker socket's `GET /status` (ADR-0008 note), which the API serves as `GET /v1/status` for the web UI. With the metrics on, it is passed on to them unchanged. The cost is one GET of each active app's health path per pass, the same probe the metrics already made.
+
 ## Alternatives considered
 
 - **`prometheus/client_golang`:** complete, including OpenMetrics, but a large dependency tree and an owner decision for a few metric types.

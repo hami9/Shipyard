@@ -31,6 +31,25 @@ export interface Ready {
   status: "ready";
 }
 
+export interface ServerStatus {
+  /** Whether the worker answered on its socket */
+  worker: "up" | "down";
+  /** The worker's last health check; null before its first, or when it is down */
+  checked_at: string | null;
+  /** Running apps at that check; empty when the worker is down */
+  apps: AppHealth[];
+  /** SHIPYARD_PUBLIC_IPS: where A/AAAA records must point */
+  public_ips: string[];
+}
+
+export interface AppHealth {
+  app: Slug;
+  /** Its container is running */
+  running: boolean;
+  /** Running, and one GET of its health path passed */
+  healthy: boolean;
+}
+
 export interface Whoami {
   /** The display prefix */
   token: string;
@@ -259,6 +278,12 @@ export interface Operations {
     response: Ready;
     events: never;
   };
+  /** The worker, the apps' health, and the server's addresses */
+  getStatus: {
+    request: {};
+    response: ServerStatus;
+    events: never;
+  };
   /** Describe the calling token */
   whoami: {
     request: {};
@@ -391,6 +416,7 @@ export interface Operations {
 export const operations = {
   getHealth: { method: "GET", path: "/healthz", stream: false },
   getReady: { method: "GET", path: "/readyz", stream: false },
+  getStatus: { method: "GET", path: "/v1/status", stream: false },
   whoami: { method: "GET", path: "/v1/whoami", stream: false },
   listTokens: { method: "GET", path: "/v1/tokens", stream: false },
   revokeToken: { method: "DELETE", path: "/v1/tokens/{prefix}", stream: false },

@@ -59,6 +59,12 @@ The worker serves app logs on a private Unix socket, and the API proxies them as
   - P2.8 publishes the API, and with it this endpoint, through Caddy.
   - Candidate output copied into operation events on a failed health check gets the same redaction.
 
+## Implementation notes
+
+- **2026-10-07 (P6.7d).** The socket also answers `GET /status`: the apps' health as the reconciler last checked it, and when, as one JSON object. Like `/logs`, it only reads, from memory the worker already holds; nothing on the socket starts or changes anything.
+  - The API asks it for `GET /v1/status` (`read` scope), with a 2 s deadline. An unanswered question means the worker is down, which the UI shows on every page.
+  - The API still reads no Docker state itself (invariant 1). The socket's users and permissions are unchanged, so the trust model (ADR-0007) is unchanged too.
+
 ## Alternatives considered
 
 - **Copy logs into PostgreSQL:** survives worker restarts and keeps history. But it writes every app line to the database, needs pruning, and grows backups (ADR-0006). The owner declined it.

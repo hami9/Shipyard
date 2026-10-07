@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Client } from "./api/client.ts";
-import { title } from "./routes.ts";
+import { href, title } from "./routes.ts";
 import { AppDetail } from "./AppDetail.tsx";
 import { AppSettingsPage, NewApp } from "./AppEditor.tsx";
 import { AppList } from "./AppList.tsx";
@@ -12,6 +12,7 @@ import { Link, useRoute } from "./nav.tsx";
 import { OperationView } from "./OperationView.tsx";
 import { expiresIn, type Session } from "./session.ts";
 import { TokensPage } from "./TokensPage.tsx";
+import { useApi } from "./useApi.ts";
 
 interface Props {
   session: Session;
@@ -28,6 +29,11 @@ export function Shell({ session, client, onSignOut, onSession }: Props) {
   const main = useRef<HTMLElement>(null);
   const first = useRef(true);
   const [announced, setAnnounced] = useState("");
+
+  // The worker's state, asked again on every page change: cheap, and a page
+  // never shows an old answer for long (P6.7d).
+  const status = useApi(() => client.call("getStatus"), [client, href(route)]);
+  const st = status.data;
 
   // A page change without a reload: retitle the document, move focus to the
   // new content (the old link is gone), and say where we are, as a full
@@ -72,18 +78,24 @@ export function Shell({ session, client, onSignOut, onSession }: Props) {
         </button>
       </header>
       <main id="main" ref={main} tabIndex={-1}>
-        {route.page === "apps" && <AppList client={client} scopes={whoami.scopes} />}
+        {st?.worker === "down" && (
+          <p className="banner">
+            <strong>The worker is not answering.</strong> Deploys wait in the queue, and logs and health checks are unavailable
+            until <code>shipyard-worker</code> runs again on the server.
+          </p>
+        )}
+        {route.page === "apps" && <AppList client={client} scopes={whoami.scopes} status={st} />}
         {route.page === "new" && <NewApp client={client} scopes={whoami.scopes} />}
         {route.page === "settings" && (
           <AppSettingsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
         )}
         {route.page === "app" && (
-          <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
+          <AppDetail key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} status={st} />
         )}
         {route.page === "logs" && <Logs key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />}
         {route.page === "env" && <EnvPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />}
         {route.page === "domains" && (
-          <DomainsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
+          <DomainsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} status={st} />
         )}
         {route.page === "operation" && <OperationView key={route.id} client={client} id={route.id} />}
         {route.page === "tokens" && <TokensPage client={client} session={session} onSession={onSession} onSignOut={onSignOut} />}

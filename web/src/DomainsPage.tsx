@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { ConfirmButton, focusHeading } from "./a11y.tsx";
 import type { Client } from "./api/client.ts";
-import type { Scope } from "./api/schema.ts";
+import type { Scope, ServerStatus } from "./api/schema.ts";
 import { ago } from "./format.ts";
 import { canChange, explain, focusFirstInvalid, type Explained } from "./forms.ts";
 import { AppFrame } from "./AppFrame.tsx";
@@ -12,6 +12,8 @@ interface Props {
   client: Client;
   slug: string;
   scopes: Scope[];
+  /** Its public_ips are where A/AAAA records point (P6.7d). */
+  status: ServerStatus | undefined;
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * checks the DNS first (every A/AAAA record must point at the server), and
  * Caddy picks a change up within a minute, getting its certificate then.
  */
-export function DomainsPage({ client, slug, scopes }: Props) {
+export function DomainsPage({ client, slug, scopes, status }: Props) {
   const domains = useApi(() => client.call("listDomains", { path: { app: slug } }), [client, slug]);
   const admin = canChange(scopes);
   const [notice, setNotice] = useState<string | undefined>();
@@ -88,6 +90,7 @@ export function DomainsPage({ client, slug, scopes }: Props) {
         <AddForm
           client={client}
           slug={slug}
+          ips={status?.public_ips ?? []}
           onAdded={(h) => {
             setNotice(`${h} added. Caddy serves it within a minute, and requests its certificate then.`);
             domains.reload();
@@ -99,15 +102,15 @@ export function DomainsPage({ client, slug, scopes }: Props) {
 }
 
 /**
- * DnsHelp is the record to create before adding a hostname. The UI is
- * served on the API's hostname (ADR-0016), which already points at this
- * server, so a CNAME to it is right for any subdomain. An apex cannot be a
- * CNAME; it needs A/AAAA records with the same addresses. The API checks
- * every A/AAAA record against the server's public addresses, and names
- * them when one is wrong.
+ * DnsHelp is the records to create before adding a hostname: A (IPv4) and
+ * AAAA (IPv6) records with the server's public addresses, which the API
+ * checks every record against (SHIPYARD_PUBLIC_IPS, from GET /v1/status).
+ * A subdomain may instead be a CNAME to the hostname this page is served
+ * on, the API's (ADR-0016), which already points here.
  */
-function DnsHelp({ hostname }: { hostname: string }) {
+function DnsHelp({ hostname, ips }: { hostname: string; ips: string[] }) {
   const target = window.location.hostname;
+  const records: [string, string][] = ips.map((ip) => [ip.includes(":") ? "AAAA" : "A", ip]);
   return (
     <div className="dns">
       <p className="hint">First, in your DNS provider, point the hostname at this server:</p>
@@ -120,29 +123,54 @@ function DnsHelp({ hostname }: { hostname: string }) {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>CNAME</td>
-            <td>
-              <code>{hostname}</code>
-            </td>
-            <td>
-              <span className="copyable">
-                <code>{target}</code>
-                <CopyButton value={target} label="the CNAME value" />
-              </span>
-            </td>
-          </tr>
+          {records.map(([type, value]) => (
+            <tr key={value}>
+              <td>{type}</td>
+              <td>
+                <code>{hostname}</code>
+              </td>
+              <td>
+                <span className="copyable">
+                  <code>{value}</code>
+                  <CopyButton value={value} label={`the ${type} value ${value}`} />
+                </span>
+              </td>
+            </tr>
+          ))}
+          {records.length === 0 && (
+            <tr>
+              <td>CNAME</td>
+              <td>
+                <code>{hostname}</code>
+              </td>
+              <td>
+                <span className="copyable">
+                  <code>{target}</code>
+                  <CopyButton value={target} label="the CNAME value" />
+                </span>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
       <p className="hint">
-        For a bare domain (<code>example.com</code>), which cannot be a CNAME, add A (and AAAA) records with the addresses{" "}
-        <code>{target}</code> has. Adding checks the records; a certificate follows within a minute.
+        {records.length > 0 ? (
+          <>
+            For a subdomain, a CNAME to <code>{target}</code> works too.{" "}
+          </>
+        ) : (
+          <>
+            A bare domain (<code>example.com</code>) cannot be a CNAME: give it A (and AAAA) records with the addresses{" "}
+            <code>{target}</code> has.{" "}
+          </>
+        )}
+        Adding checks every A and AAAA record; a certificate follows within a minute.
       </p>
     </div>
   );
 }
 
-function AddForm({ client, slug, onAdded }: { client: Client; slug: string; onAdded: (hostname: string) => void }) {
+function AddForm({ client, slug, ips, onAdded }: { client: Client; slug: string; ips: string[]; onAdded: (hostname: string) => void }) {
   const [hostname, setHostname] = useState("");
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<Explained>({ message: "", fields: {} });
@@ -180,7 +208,7 @@ function AddForm({ client, slug, onAdded }: { client: Client; slug: string; onAd
         aria-describedby={fieldError ? "hostname-error" : undefined}
       />
       {fieldError && <p id="hostname-error" className="error">{fieldError}</p>}
-      <DnsHelp hostname={hostname.trim() || "www.example.com"} />
+      <DnsHelp hostname={hostname.trim() || "www.example.com"} ips={ips} />
       <div className="actions">
         <button type="submit" disabled={busy || hostname.trim() === ""}>
           {busy ? "Checking DNS…" : "Add"}

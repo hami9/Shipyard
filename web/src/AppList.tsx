@@ -1,8 +1,9 @@
 import type { Client } from "./api/client.ts";
-import type { App, Release, Scope } from "./api/schema.ts";
+import type { App, Release, Scope, ServerStatus } from "./api/schema.ts";
 import { ago, statusLabel, tone } from "./format.ts";
 import { canChange } from "./forms.ts";
 import { Link } from "./nav.tsx";
+import { health } from "./status.ts";
 import { useApi } from "./useApi.ts";
 
 /**
@@ -10,7 +11,7 @@ import { useApi } from "./useApi.ts";
  * the one that needs attention stands out. One small request per app: a
  * single server has few apps.
  */
-export function AppList({ client, scopes }: { client: Client; scopes: Scope[] }) {
+export function AppList({ client, scopes, status }: { client: Client; scopes: Scope[]; status: ServerStatus | undefined }) {
   const { data, error, loading, reload } = useApi(async () => {
     const { apps } = await client.call("listApps");
     const latest = await Promise.all(
@@ -49,19 +50,23 @@ export function AppList({ client, scopes }: { client: Client; scopes: Scope[] })
           <thead>
             <tr>
               <th>App</th>
+              <th>Health</th>
               <th>Latest deploy</th>
               <th>Repository</th>
               <th>Push deploys</th>
             </tr>
           </thead>
           <tbody>
-            {data.map(([a, r]) => (
+            {data.map(([a, r]) => {
+              const h = health(status, a.slug);
+              return (
               <tr key={a.id}>
                 <td>
                   <Link to={{ page: "app", slug: a.slug }} className="strong">
                     {a.slug}
                   </Link>
                 </td>
+                <td>{h ? <span className={`badge ${h.tone}`} title={h.detail}>{h.label}</span> : <span className="hint">…</span>}</td>
                 <td>
                   {r ? (
                     <>
@@ -79,7 +84,8 @@ export function AppList({ client, scopes }: { client: Client; scopes: Scope[] })
                 </td>
                 <td>{a.auto_deploy ? "on" : "off"}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

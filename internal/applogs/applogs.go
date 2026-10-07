@@ -2,9 +2,10 @@
 // Docker, to the API, which never does (invariant 1, ADR-0008). The worker
 // serves Server on a private Unix socket; the API reads it with Client.
 //
-// The protocol is one JSON object per line: log lines, then a final line
-// with only "end" set, so a reader can tell a finished stream from a broken
-// one.
+// GET /logs is one JSON object per line: log lines, then a final line with
+// only "end" set, so a reader can tell a finished stream from a broken one.
+// GET /status is one JSON object: the apps' health as the reconciler last
+// saw it (P6.7d). Both only read.
 package applogs
 
 import (
@@ -63,16 +64,47 @@ type Source interface {
 	StreamLogs(ctx context.Context, containerID string, tail int, follow bool, fn func(Line) error) error
 }
 
+// AppHealth is one active app as the reconciler's last pass saw it
+// (ADR-0013): its container running, and one GET of its health path passing.
+type AppHealth struct {
+	App     string `json:"app"`
+	Running bool   `json:"running"`
+	Healthy bool   `json:"healthy"`
+}
+
+// Status is what GET /status answers.
+type Status struct {
+	// CheckedAt is when the apps were last checked; zero before the first
+	// pass.
+	CheckedAt time.Time   `json:"checked_at,omitzero"`
+	Apps      []AppHealth `json:"apps"`
+}
+
+// StatusSource is the worker's latest health check.
+type StatusSource interface {
+	Status() Status
+}
+
 // Server is the worker's side. It only reads: nothing on the socket starts,
-// stops, or changes anything.
+// stops, or changes anything. A nil Health answers an empty status.
 type Server struct {
 	Store   Store
 	Secrets Secrets
 	Source  Source
+	Health  StatusSource
 	Log     *slog.Logger
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/status" {
+		st := Status{Apps: []AppHealth{}}
+		if s.Health != nil {
+			st = s.Health.Status()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(st)
+		return
+	}
 	if r.Method != http.MethodGet || r.URL.Path != "/logs" {
 		http.NotFound(w, r)
 		return
@@ -163,6 +195,28 @@ func NewClient(path string) *Client {
 			return d.DialContext(ctx, "unix", path)
 		},
 	}}}
+}
+
+// Status asks the worker for its latest health check. Any error means the
+// worker could not be asked, wrapping ErrUnavailable when it is not there.
+func (c *Client) Status(ctx context.Context) (Status, error) {
+	var st Status
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://worker/status", nil)
+	if err != nil {
+		return st, err
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return st, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return st, fmt.Errorf("worker status: %s", res.Status)
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&st); err != nil {
+		return st, fmt.Errorf("worker status: %w", err)
+	}
+	return st, nil
 }
 
 // Stream is an open log stream; Next returns lines until one with End set.

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { accessible, cspViolations, signIn, url } from "./helpers.ts";
+import { accessible, cspViolations, signIn, url, workerStandIn } from "./helpers.ts";
 
 // Every page, as an admin sees it, passes axe's WCAG 2.2 AA rules in both
 // color schemes and runs under Caddy's CSP without a violation (P6.6a).
@@ -99,5 +99,20 @@ test("a failed release explains itself on its page", async ({ page }) => {
   await expect(page.getByText("never passed its health check")).toBeVisible();
   // The seeded operation recorded no phase: the reason names the step.
   await expect(page.getByRole("list", { name: "Steps" }).locator("li.failed")).toHaveText(/Health check/);
+  await accessible(page);
+});
+
+test("the worker's status: each app's health, or a banner when it is down", async ({ page }) => {
+  await signIn(page, "read", "/apps/web");
+  const health = page.locator(".card").filter({ has: page.getByRole("heading", { name: "Health" }) });
+  if (workerStandIn) {
+    await expect(health.locator(".badge")).toHaveText("healthy");
+    await expect(page.locator(".banner")).toHaveCount(0);
+    await page.goto(url + "/apps/docs");
+    await expect(health.locator(".badge")).toHaveText("not running");
+  } else {
+    await expect(health.locator(".badge")).toHaveText("unknown");
+    await expect(page.locator(".banner")).toContainText("The worker is not answering");
+  }
   await accessible(page);
 });

@@ -16,7 +16,8 @@
     { "name": "env" },
     { "name": "domains" },
     { "name": "deploys" },
-    { "name": "logs" }
+    { "name": "logs" },
+    { "name": "status" }
   ],
   "paths": {
     "/healthz": {
@@ -39,6 +40,19 @@
         "responses": {
           "200": { "description": "Ready", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ready" } } } },
           "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "operationId": "getStatus",
+        "tags": ["status"],
+        "summary": "The worker, the apps' health, and the server's addresses",
+        "description": "What the database does not hold: whether the worker answers on its socket (within 2 s), each running app's last health check by the worker's reconciler, and the public IPs domains must point at. A worker that does not answer is reported down; the response is still 200.",
+        "security": [{ "bearer": ["read"] }],
+        "responses": {
+          "200": { "description": "The status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ServerStatus" } } } },
+          "default": { "$ref": "#/components/responses/Problem" }
         }
       }
     },
@@ -520,6 +534,27 @@
         "required": ["status"],
         "additionalProperties": false,
         "properties": { "status": { "type": "string", "const": "ready" } }
+      },
+      "ServerStatus": {
+        "type": "object",
+        "required": ["worker", "checked_at", "apps", "public_ips"],
+        "additionalProperties": false,
+        "properties": {
+          "worker": { "type": "string", "enum": ["up", "down"], "description": "Whether the worker answered on its socket" },
+          "checked_at": { "type": ["string", "null"], "format": "date-time", "description": "The worker's last health check; null before its first, or when it is down" },
+          "apps": { "type": "array", "items": { "$ref": "#/components/schemas/AppHealth" }, "description": "Running apps at that check; empty when the worker is down" },
+          "public_ips": { "type": "array", "items": { "type": "string" }, "description": "SHIPYARD_PUBLIC_IPS: where A/AAAA records must point" }
+        }
+      },
+      "AppHealth": {
+        "type": "object",
+        "required": ["app", "running", "healthy"],
+        "additionalProperties": false,
+        "properties": {
+          "app": { "$ref": "#/components/schemas/Slug" },
+          "running": { "type": "boolean", "description": "Its container is running" },
+          "healthy": { "type": "boolean", "description": "Running, and one GET of its health path passed" }
+        }
       },
       "Whoami": {
         "type": "object",

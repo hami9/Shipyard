@@ -5,12 +5,13 @@ import { appendCapped } from "./useStream.ts";
 import { canChange, explain, keyProblem, valueProblem } from "./forms.ts";
 import { href, parseRoute, title, type Route } from "./routes.ts";
 import { ApiError } from "./api/client.ts";
-import type { App, Release } from "./api/schema.ts";
+import type { App, Release, ServerStatus } from "./api/schema.ts";
 import { createBody, durationMs, updateBody, valuesOf } from "./appForm.ts";
 import { graces, tokenTone, whoamiOf } from "./tokens.ts";
 import { canRollBack, needsConfigChoice, rollbackBody } from "./rollbackRules.ts";
 import { filterReleases, summarize } from "./summary.ts";
 import { advice, failedPhase, logAdvice, steps } from "./phases.ts";
+import { health } from "./status.ts";
 
 test("summary: what serves, and the newest deploy even when it failed", () => {
   const r = (id: string, status: Release["status"], kind: Release["kind"] = "build"): Release => ({
@@ -45,6 +46,23 @@ test("phases: the plan against the phase reached", () => {
   assert.equal(failedPhase(undefined, "something else"), undefined);
   assert.match(advice("health") ?? "", /health path/);
   assert.equal(advice(undefined), undefined);
+});
+
+test("status: an app's health, and when it cannot be known", () => {
+  const st = (over: Partial<ServerStatus>): ServerStatus => ({
+    worker: "up", checked_at: "2026-10-07T12:00:00Z", public_ips: [], apps: [
+      { app: "web", running: true, healthy: true },
+      { app: "api", running: true, healthy: false },
+      { app: "job", running: false, healthy: false },
+    ], ...over,
+  });
+  assert.equal(health(undefined, "web"), undefined);
+  assert.equal(health(st({}), "web")?.label, "healthy");
+  assert.equal(health(st({}), "api")?.label, "unhealthy");
+  assert.equal(health(st({}), "job")?.label, "down");
+  assert.equal(health(st({}), "docs")?.label, "not running");
+  assert.equal(health(st({ worker: "down", checked_at: null, apps: [] }), "web")?.label, "unknown");
+  assert.equal(health(st({ checked_at: null }), "web")?.label, "unknown");
 });
 
 test("logs: advice by what failed", () => {

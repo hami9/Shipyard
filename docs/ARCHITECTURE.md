@@ -338,6 +338,7 @@ The reconciler runs at worker start and then every 60 s by default. Since P3.2 i
 | `shipyard domain add APP example.com` | `POST /v1/apps/{id}/domains` (`admin` scope): normalize, suffix allow-list, DNS preflight, then a `routes` row. 201; 409 if another app has the hostname; 422 for a bad name or DNS; 503 if the preflight cannot run. An app may have several hostnames |
 | `shipyard domain remove APP example.com` | `DELETE /v1/apps/{id}/domains/{hostname}` → 204 |
 | `shipyard domain list APP` | `GET /v1/apps/{id}/domains` (hostname, the deployment it targets, when DNS was checked) |
+| — (the web UI) | `GET /v1/status` (`read` scope): whether the worker answers on its socket within 2 s (`up`/`down`), each running app's last health check by the reconciler (`running`, `healthy`) with its time, and `SHIPYARD_PUBLIC_IPS`. Always 200: a worker that does not answer is reported `down` (P6.7d, ADR-0008 note) |
 | — | `POST /hooks/github` (public, HMAC-verified; see §7 GitHub). 200 for `ping`, 202 with `{"delivery", "outcome", "reason", "operations"}` for any other verified delivery, 401 for a bad signature, 404 when no secret is configured |
 
 - **Routing and errors.** Standard-library routing (`GET /v1/apps/{id}`) is sufficient, so no router framework is needed `[GO-ROUTING]`. Errors use `application/problem+json` `[RFC9457]`.

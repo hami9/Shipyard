@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Client } from "./api/client.ts";
-import type { App, Release, ReleaseList, Scope } from "./api/schema.ts";
+import type { App, ReleaseList, Release, Scope, ServerStatus } from "./api/schema.ts";
 import { AppFrame } from "./AppFrame.tsx";
 import { ago, bytes, shortSHA, statusLabel, tone } from "./format.ts";
 import { Link } from "./nav.tsx";
@@ -8,6 +8,7 @@ import { Deploy } from "./Deploy.tsx";
 import { canDeploy } from "./forms.ts";
 import { Rollback } from "./Rollback.tsx";
 import { canRollBack } from "./rollbackRules.ts";
+import { health } from "./status.ts";
 import { filterReleases, summarize, type ReleaseFilter } from "./summary.ts";
 import { message, useApi, type Loaded } from "./useApi.ts";
 
@@ -20,7 +21,7 @@ interface Props {
 
 const pageSize = 20;
 
-export function AppDetail({ client, slug, scopes }: Props) {
+export function AppDetail({ client, slug, scopes, status }: Props & { status: ServerStatus | undefined }) {
   const app = useApi(() => client.call("getApp", { path: { app: slug } }), [client, slug]);
   // The newest page of releases feeds both the summary and the history.
   const first = useApi(
@@ -47,7 +48,7 @@ export function AppDetail({ client, slug, scopes }: Props) {
       aside={app.data && canDeploy(scopes) ? <Deploy client={client} slug={slug} branch={app.data.branch} /> : undefined}
     >
       {app.loading && !app.data && <p className="hint">Loading…</p>}
-      {app.data && <Summary app={app.data} releases={first} />}
+      {app.data && <Summary app={app.data} releases={first} status={status} />}
       {app.data && <Releases client={client} slug={slug} scopes={scopes} first={first} />}
       {app.data && <Configuration app={app.data} />}
     </AppFrame>
@@ -59,8 +60,9 @@ export function AppDetail({ client, slug, scopes }: Props) {
  * serving traffic, and the newest deploy with its outcome, so a failure is
  * the first thing seen rather than a row in the history.
  */
-function Summary({ app, releases }: { app: App; releases: Loaded<ReleaseList> }) {
+function Summary({ app, releases, status }: { app: App; releases: Loaded<ReleaseList>; status: ServerStatus | undefined }) {
   const s = releases.data ? summarize(releases.data.deployments) : undefined;
+  const h = health(status, app.slug);
   return (
     <div className="cards" aria-label="Status">
       <div className="card">
@@ -75,6 +77,21 @@ function Summary({ app, releases }: { app: App; releases: Loaded<ReleaseList> })
             <p className="hint">
               since {ago(s.serving.active_at ?? s.serving.created_at)}
               {s.serving.kind === "rollback" ? " · a rollback" : ""}
+            </p>
+          </>
+        )}
+      </div>
+      <div className={h?.tone === "bad" ? "card bad" : "card"}>
+        <h2 className="card-label">Health</h2>
+        {!h && <p className="hint">Loading…</p>}
+        {h && (
+          <>
+            <p className="card-value">
+              <span className={`badge ${h.tone}`}>{h.label}</span>
+            </p>
+            <p className="hint">
+              {h.detail}
+              {status?.checked_at ? ` Checked ${ago(status.checked_at)}.` : ""}
             </p>
           </>
         )}

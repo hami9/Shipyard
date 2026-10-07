@@ -1,13 +1,20 @@
 // A stand-in for the worker's log socket (ADR-0008): the API reads app logs
 // from it, so the logs page can be tested without Docker or a worker. It
-// answers GET /logs?app=&tail=&follow= with NDJSON lines, then an end line.
+// answers GET /logs?app=&tail=&follow= with NDJSON lines, then an end line,
+// and GET /status with web healthy at its last check (P6.7d).
 
 import { rmSync } from "node:fs";
 import http from "node:http";
 
 export function workerLogs(socket) {
   const server = http.createServer(async (req, res) => {
-    const q = new URL(req.url ?? "/", "http://worker").searchParams;
+    const u = new URL(req.url ?? "/", "http://worker");
+    if (u.pathname === "/status") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ checked_at: new Date().toISOString(), apps: [{ app: "web", running: true, healthy: true }] }));
+      return;
+    }
+    const q = u.searchParams;
     const tail = Number(q.get("tail") ?? 100);
     const follow = q.get("follow") === "true";
     const line = (text, stream = "stdout") => JSON.stringify({ ts: new Date().toISOString(), stream, line: text }) + "\n";

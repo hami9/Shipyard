@@ -39,6 +39,8 @@ type Deps struct {
 	StreamPoll, StreamKeepalive time.Duration
 	// Logs reads app logs from the worker (ADR-0008); nil answers 503.
 	Logs LogSource
+	// Worker answers GET /v1/status (P6.7d); nil reports the worker down.
+	Worker WorkerStatus
 	// WebhookSecret verifies POST /hooks/github; empty answers 404.
 	// Pushes receives the verified pushes; nil ignores them.
 	WebhookSecret []byte
@@ -93,6 +95,8 @@ func newMux(log *slog.Logger, d Deps) (*http.ServeMux, []routeInfo) {
 	mux.HandleFunc("POST /hooks/github", hooks.github)
 	routes = append(routes, routeInfo{"GET /healthz", ""}, routeInfo{"GET /readyz", ""}, routeInfo{"POST /hooks/github", ""})
 	route(mux, "GET /v1/whoami", ScopeRead, handleWhoami)
+	status := &statusHandlers{log: log, worker: d.Worker, ips: addrStrings(d.DomainPolicy.PublicIPs)}
+	route(mux, "GET /v1/status", ScopeRead, status.status)
 	tokens := &tokenHandlers{log: log, tokens: d.TokenAdmin, now: time.Now}
 	route(mux, "GET /v1/tokens", ScopeAdmin, tokens.list)
 	route(mux, "DELETE /v1/tokens/{prefix}", ScopeAdmin, tokens.revoke)

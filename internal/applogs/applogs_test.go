@@ -158,3 +158,37 @@ func TestParseTail(t *testing.T) {
 		}
 	}
 }
+
+type board Status
+
+func (b board) Status() Status { return Status(b) }
+
+// The worker answers its latest health check; before one, an empty list.
+func TestStatusOverSocket(t *testing.T) {
+	ctx := t.Context()
+	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	want := Status{CheckedAt: at, Apps: []AppHealth{{App: "web", Running: true, Healthy: true}, {App: "docs", Running: true}}}
+	got, err := NewClient(serve(t, &Server{Health: board(want)})).Status(ctx)
+	if err != nil || !got.CheckedAt.Equal(at) || fmt.Sprint(got.Apps) != fmt.Sprint(want.Apps) {
+		t.Fatalf("status %+v, %v", got, err)
+	}
+	if got, err := NewClient(serve(t, &Server{})).Status(ctx); err != nil || !got.CheckedAt.IsZero() || got.Apps == nil || len(got.Apps) != 0 {
+		t.Fatalf("no check yet: %+v, %v", got, err)
+	}
+	if _, err := NewClient(filepath.Join(t.TempDir(), "none.sock")).Status(ctx); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("no socket: %v", err)
+	}
+	// Only GET reads it.
+	path := serve(t, &Server{})
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	}}}
+	res, err := hc.Post("http://worker/status", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST /status: %d", res.StatusCode)
+	}
+}

@@ -133,12 +133,15 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 		}
 		defer srv.Close()
 	}
+	// One client for the worker's socket: logs, and its status (P6.7d).
+	worker := applogs.NewClient(cfg.WorkerSocket)
 	h := api.NewHandler(log, api.Deps{Metrics: reg, DB: db, Tokens: s, TokenAdmin: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s,
 		Domains: s, Resolver: net.DefaultResolver,
 		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes,
 			APIHostname: cfg.APIHostname},
 		// App logs come from the worker's socket, never from Docker (ADR-0008).
-		Logs:          api.LogClient{Client: applogs.NewClient(cfg.WorkerSocket)},
+		Logs:          api.LogClient{Client: worker},
+		Worker:        worker,
 		WebhookSecret: hookSecret, Pushes: api.StorePushes{Store: s},
 		Limits: api.RateLimits{Rate: cfg.Rate, Burst: cfg.Burst, AuthFailures: cfg.AuthFailures}})
 	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)

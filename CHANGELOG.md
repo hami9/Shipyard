@@ -9,6 +9,18 @@ All notable changes to Shipyard are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /v1/status`** (`read` scope):
+  - whether the worker answers on its socket;
+  - each running app's last health check by the reconciler;
+  - the server's public IPs.
+- **Status in the web UI:**
+  - The web UI shows each app's health on its overview and in the apps list.
+  - A notice on every page says when the worker is not answering.
+  - The domains page lists the exact A/AAAA records to create.
+- **Health checks without metrics:** the reconciler now checks the running apps' health on every pass, even when metrics are off, to feed the status.
+
 ### Changed
 
 - **Web UI look:**
