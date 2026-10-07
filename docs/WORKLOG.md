@@ -392,6 +392,33 @@ Copy this block to the top of the entries section.
 **Next**
 - P6.3b: rollback from a release.
 
+### 2026-10-06: e2e observation-window flake
+
+- **Phase / task:** test fix (no roadmap item): the flaky P2.6 check in `TestPhase1ExitCriteria`, flagged in the P6.2b entry
+- **Author:** Claude Code (desktop session), on the owner's request
+- **Goal:** Check that the superseded container is not stopped before ended_at + window, without depending on how fast `deploy --follow` returns.
+
+**Done**
+- `test/e2e/deploy_test.go`: the `{{.State.Running}}` inspect after `--follow` is gone. A new `wantDrained` runs after the container is removed. It reads the first deployment's `ended_at` (the window's start, set in the same transaction as the new `active_at`) from the store, and the container's `kill`/`die`/`stop` events from `docker events --since … --until …`. The first event must not come before `ended_at + 6s`, and it must be a SIGTERM `kill` (a graceful stop, not a forced removal).
+  - The deployment ID comes from the `io.shipyard.deployment` label, read before the deploy.
+  - `observationWindow` is one constant for the worker's env and the check. The "removed within 30 s" part is unchanged.
+- `docs/SOURCES.md`: `DK-EVENTS` (the 256-event replay buffer, filters, and the format, as observed on Engine 29.8.1).
+
+**Decisions**
+- Docker's event log, not `State.FinishedAt`: the janitor removes the container right after the stop, so an inspect cannot reliably see the stopped state. The database, the daemon, and the worker share the host clock, so the comparison needs no slack.
+
+**Verification**
+- Probe in WSL (Engine 29.8.1): after `docker stop` + `rm`, `docker events --since/--until --filter container=<id>` replays `kill <ns> 15`, `kill <ns> 9`, `stop`, `die`, then exits.
+- `make lint`: exit 0.
+- `go test -tags e2e -run TestPhase1ExitCriteria ./test/e2e` in WSL, twice: both PASS, no leftovers.
+  - Run 1: 1117.4 s, a very slow host. The container stopped 7.884 s after ended_at.
+  - Run 2: 604.7 s. It stopped 6.62 s after ended_at.
+- Negative check: with the worker's window at 2 s and the test's constant at 6 s, the run FAILS at `deploy_test.go:233`: "stopped 2.627711758s before its observation window ended". The log shows `kill … 15`, `stop`, `die`. Afterwards, no e2e containers are left (`docker ps -a`).
+- Not run: `make test` and integration tests (only an e2e-tagged file changed; `make lint` vets it with the e2e tag).
+
+**Next**
+- The owner reviews and merges `window-flake` on top of `web-serve`. Then P6.3 as before.
+
 ### 2026-10-06: P6.2b web UI through Caddy
 
 - **Phase / task:** P6.2b: Caddy serves the built UI on the API hostname; packaging; P6.2 is done
