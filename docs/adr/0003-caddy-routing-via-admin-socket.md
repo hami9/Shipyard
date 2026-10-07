@@ -23,7 +23,7 @@
   - The API process has no access to the socket.
 - **Config ownership:**
   - The worker renders the **complete** Caddy JSON config from the `routes` table: apps, the Shipyard API upstream, and `/hooks/github`.
-  - The worker applies it with `POST /load` and `If-Match: <etag>`. Caddy applies it atomically without downtime or rolls back `[CADDY-API]`.
+  - The worker applies it as a whole-config replace guarded by `If-Match: <etag>`. Caddy applies it atomically without downtime or rolls back `[CADDY-API]`. The endpoint is `POST /config/`, not `POST /load`: see the 2026-09-28 note.
   - Every change goes through this path, and nothing patches Caddy by hand.
 - **Verification:** after a load, request the route through Caddy with the app's `Host` header and require the health response before committing the new active deployment.
 - **Domains:**
@@ -44,6 +44,52 @@
   - Caddy joins N networks. The Docker network address pools must be sized as the app count grows.
   - Every config change is a full reload, which is cheap at single-VPS scale.
 - **Follow-ups:** P2.2 (config renderer with golden tests), P2.3 (admin socket client), P2.5 (DNS preflight), P3.x (Caddy data backup).
+
+## Implementation notes
+
+- **2026-09-27 (P2.1).** The decision is unchanged. Details fixed while implementing `runtime.EnsureEdge`; ARCHITECTURE §7 has the full list:
+  - **Socket path.** The socket lives in its own directory: `/run/shipyard/caddy/caddy-admin.sock`, not `/run/shipyard/caddy-admin.sock`.
+    - The directory is group-owned by the worker's group with mode `2770` (setgid), and is bind-mounted into Caddy at the same path.
+    - Only this directory is shared, never all of `/run/shipyard`, where the API socket also lives.
+  - **Admin address.** It is set by `CADDY_ADMIN`, the default admin address; a loaded config takes precedence over it `[CADDY-API]`. P2.2's renderer must therefore keep `admin.listen` on the socket.
+  - **User.** Caddy runs as uid 0 with the worker's gid, `--cap-drop ALL` plus `NET_BIND_SERVICE`, and `no-new-privileges`. The official image's binary carries the `cap_net_bind_service=ep` file capability, so the container cannot even exec it without that capability `[CADDY-IMAGE]`.
+  - **Resume.** `caddy run --resume` with a persistent `/config` volume serves the last loaded config after a restart, before the worker reloads it `[CADDY-CLI]`.
+
+- **2026-09-28 (P2.3).** The decision is unchanged, but the endpoint is corrected: **`POST /load` ignores `If-Match`**.
+  - The source shows it (`handleLoad` never reads the header), and so did a test: a stale `If-Match` loaded fine `[CADDY-ADMIN-SRC]`.
+  - The optimistic-concurrency guard this ADR relies on exists only on `/config/…` paths.
+  - The admin client (`routing.Admin`) therefore replaces the whole config with `POST /config/` and `If-Match`. That is the same replace, the same no-reload-if-unchanged, and the same rollback on failure (`changeConfig`), with a 412 on a concurrent change.
+  - One difference: a config that fails to load returns 500 there instead of 400.
+
+- **2026-09-28 (P2.4).** How "request the route through Caddy with the app's `Host` header" is done:
+  - **The problem with public HTTPS.** Doing it over the public HTTPS listener would tie a first deploy's success to ACME timing, because the certificate may not exist yet.
+  - **The verify server.** The rendered config therefore adds a second server, `verify`, on a Unix socket next to the admin socket (`caddy-verify.sock`, `0660`, same directory and group). It has exactly the same routes over plain HTTP, with automatic HTTPS skipped for its hosts, as `caddy adapt` expresses an `http://` site `[CADDY-JSON]`.
+  - **What is checked.** The worker requests `health_path` there with each hostname as `Host`. Caddy's routing is checked; certificate issuance stays Caddy's job.
+  - **Scope.** Like the admin socket, the verify socket is reachable only by the worker's group.
+
+- **2026-09-28 (P2.5).** Domain details:
+  - **Several hostnames per app** (`POST`, `DELETE`, and `GET /v1/apps/{app}/domains`), where ARCHITECTURE v2 sketched one (`PUT …/domain`). The `routes` schema already allows it, and "one app per hostname" still holds (the unique hostname).
+  - **The preflight requires every A/AAAA record to be one of the configured public IPs.**
+  - **A new hostname targets the running deployment at once**, by the deterministic container name, without the API touching Docker or Caddy.
+    - Activation moves routes still on the superseded deployment (or on none) along with the app.
+    - The worker loads route changes on a periodic reconcile.
+  - **The reconciler's sync keeps a switch in progress** (`routing.Router` pending switches). Otherwise a sync during verification would revert Caddy to the old container, and the check would pass against it.
+  - The "staging CA toggle" is the worker's `SHIPYARD_CADDY_CA=staging`.
+
+- **2026-09-28 (P2.8).** How Caddy publishes the API:
+  - **Socket only.** The API listens on loopback or a Unix socket, and the public-listen override is gone. Caddy runs in a container and cannot reach the host's loopback, so publishing needs the socket (`SHIPYARD_API_LISTEN=unix:…`).
+  - **The mount.** The worker mounts the socket's directory into the edge, **read-only**, at the same path. Connecting to a socket works on a read-only mount, since Linux refuses writes there only for regular files, directories, and symlinks. The socket is `0660` in the shared `shipyard` group, which Caddy runs with.
+  - **The route.** `SHIPYARD_API_HOSTNAME` renders the API route: only `/v1/*` and `/hooks/github` reach `unix//<socket>` `[CADDY-RP]`, and everything else on that host is 404. HTTPS uses automatic certificates like the apps, and HTTP/2 is on by default `[CADDY-OPTIONS]`.
+  - **Reserved name.** The API refuses the hostname as an app domain (409), since the render would otherwise name one host twice and fail.
+  - **systemd.** The API's `RuntimeDirectory` is kept across stops (`RuntimeDirectoryPreserve=yes`), because a recreated directory would leave Caddy's mount stale `[SYSTEMD-EXEC]`. The worker starts after the API, so the directory exists when the edge is created. A missing directory is reported clearly, and the worker retries on restart.
+  - **Upgrades.** The new spec field is omitted when empty, so an edge without the API keeps its hash and is not recreated on upgrade.
+
+- **2026-10-06 (P5.8b, security review F2).** The admin directory gets a **group of its own**, `shipyard-caddy` (`SHIPYARD_CADDY_GROUP`), instead of the worker's `shipyard` group:
+  - **Why.** The API's user is in `shipyard` to read the worker's log socket (ADR-0008), so it could open the admin socket and rewrite Caddy's config. Invariants 1 and 12 held only in code.
+  - **Who is in it.** Only the worker, through the user database (`install.sh` runs `usermod -aG`); `User=` takes supplementary groups from there `[SYSTEMD-EXEC]`. Caddy runs as `0:<shipyard-caddy gid>`.
+  - **The API socket.** With an API hostname, Caddy also gets the worker's own group as a supplementary group (`GroupAdd`, spec field `APIGID`), so it still reaches the API's `0660` socket. The API's user still cannot reach Caddy.
+  - **Fallback.** If the group is missing and was not set explicitly (development, tests, a host where `install.sh` was not rerun), the worker uses its own group, as before, and warns. If the group exists but the worker is not in it, the worker refuses to start the edge.
+  - **Upgrade.** The spec's group changes, so the edge container is recreated once (a few seconds without traffic). The volumes, and so the certificates, are kept.
 
 ## Alternatives considered
 

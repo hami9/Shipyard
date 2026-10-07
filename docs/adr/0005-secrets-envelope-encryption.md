@@ -30,7 +30,7 @@ Go 1.24+ provides `cipher.NewGCMWithRandomNonce`. A single key must not encrypt 
   - A 32-byte key file at `/etc/shipyard/kek/<kek_id>.key` (root-owned, mode `0640`, group `shipyard`), or a systemd credential.
   - **Never** in PostgreSQL, never in the same backup artifact as the database, and never in the repository.
 - **Access:** the API seals new values, and the worker opens them only to start containers. Both read the KEK in the MVP. Asymmetric wrapping, so that the API can seal but not open, is a Phase 5 option.
-- **Rotation:** `shipyard-admin kek rotate` adds a new `kek_id` and re-wraps DEKs in batches, without re-encrypting values. The old KEK is removed only after all rows are migrated. The procedure is tested before 1.0.
+- **Rotation:** `shipyard-admin kek rotate` adds a new `kek_id` and re-wraps DEKs in batches, without re-encrypting values. The old KEK is removed only after all rows are migrated. The procedure is tested before 1.0. (Implemented in P5.4 as `shipyard-worker kek rewrap`, with a narrower immutability rule: ADR-0012.)
 - **Exposure rules:**
   - The API returns only keys and metadata, never values.
   - Logs never include values.

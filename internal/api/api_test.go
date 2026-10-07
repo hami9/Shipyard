@@ -26,7 +26,8 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 func newTestHandler(t *testing.T, db Pinger) (http.Handler, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	return NewHandler(logging.New(&buf, slog.LevelDebug, logging.FormatJSON), db), &buf
+	deps := Deps{DB: db, Tokens: newFakeTokens(), Audit: &fakeAudit{}}
+	return conform(t, NewHandler(logging.New(&buf, slog.LevelDebug, logging.FormatJSON), deps)), &buf
 }
 
 func do(h http.Handler, method, target string, header http.Header) *httptest.ResponseRecorder {
@@ -211,5 +212,58 @@ func TestServeShutsDownGracefully(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Serve did not return after cancel")
+	}
+}
+
+// A long-lived stream ends when shutdown starts instead of holding it up
+// until the timeout; an ordinary request still finishes.
+func TestServeEndsStreams(t *testing.T) {
+	ln, err := Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, slowDone := make(chan struct{}), make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /stream", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		http.NewResponseController(w).Flush()
+		started <- struct{}{}
+		<-stopping(r.Context())
+	})
+	mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		time.Sleep(300 * time.Millisecond)
+		if r.Context().Err() == nil {
+			close(slowDone)
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, mux, 30*time.Second, logging.New(io.Discard, slog.LevelInfo, logging.FormatJSON))
+	}()
+	for _, path := range []string{"/stream", "/slow"} {
+		go func() {
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+ln.Addr().String()+path, nil)
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}()
+		<-started
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the open stream held up shutdown")
+	}
+	select {
+	case <-slowDone:
+	default:
+		t.Fatal("an in-flight request was cut short")
 	}
 }

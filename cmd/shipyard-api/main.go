@@ -5,18 +5,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/hami9/shipyard/internal/api"
+	"github.com/hami9/shipyard/internal/applogs"
 	"github.com/hami9/shipyard/internal/buildinfo"
 	"github.com/hami9/shipyard/internal/config"
 	"github.com/hami9/shipyard/internal/logging"
+	"github.com/hami9/shipyard/internal/metrics"
+	"github.com/hami9/shipyard/internal/secrets"
 	"github.com/hami9/shipyard/internal/store"
+	"github.com/hami9/shipyard/internal/webhook"
 	"github.com/hami9/shipyard/migrations"
 )
 
@@ -25,6 +31,7 @@ const usage = `Usage: shipyard-api <command>
 Commands:
   serve     Run the HTTP API server
   migrate   Apply pending database migrations
+  token     Create, list, or revoke API tokens (run "token" for usage)
   version   Print version information
 
 Configuration is read from SHIPYARD_* environment variables (see deploy/shipyard.env.example).
@@ -46,7 +53,7 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage)
 		return 0
-	case "serve", "migrate":
+	case "serve", "migrate", "token":
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -61,10 +68,20 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if args[0] == "migrate" {
+	switch args[0] {
+	case "migrate":
 		err = migrate(ctx, cfg, log)
-	} else {
+	case "token":
+		err = withStore(ctx, cfg, func(s *store.Store) error {
+			return tokenCommand(ctx, s, args[1:], stdout, stderr)
+		})
+	default:
 		err = serve(ctx, cfg, log)
+	}
+	var uerr usageError
+	if errors.As(err, &uerr) {
+		fmt.Fprint(stderr, uerr)
+		return 2
 	}
 	if err != nil {
 		log.Error(args[0]+" failed", slog.Any("err", err))
@@ -75,6 +92,16 @@ func run(args []string, lookup config.LookupFunc, stdout, stderr io.Writer) int 
 
 func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	log.Info("starting", slog.String("version", buildinfo.Get().String()))
+	// The API seals new environment values, so it needs the active KEK, and
+	// only that: its symmetric key, or with an HPKE KEK just the public key,
+	// so the API cannot open stored values (ADR-0012).
+	if cfg.KEKActive == "" {
+		return fmt.Errorf("%s is required to serve: it names the KEK in %s that seals new values", config.EnvKEKActive, cfg.KEKDir)
+	}
+	keys, err := secrets.LoadSealKeyring(cfg.KEKDir, cfg.KEKActive)
+	if err != nil {
+		return fmt.Errorf("load KEKs: %w", err)
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -85,7 +112,45 @@ func serve(ctx context.Context, cfg config.API, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	return api.Serve(ctx, ln, api.NewHandler(log, db), cfg.ShutdownTimeout, log)
+	var hookSecret []byte
+	if cfg.WebhookSecretFile == "" {
+		log.Info("GitHub webhooks are off: POST /hooks/github answers 404", slog.String("env", config.EnvWebhookSecretFile))
+	} else if hookSecret, err = webhook.LoadSecret(cfg.WebhookSecretFile); err != nil {
+		return fmt.Errorf("load the GitHub webhook secret: %w", err)
+	}
+	s := store.New(db)
+	if cfg.Domains.Preflight && len(cfg.Domains.PublicIPs) == 0 {
+		log.Warn("adding domains is refused until the server's public IPs are set, or the DNS preflight is turned off",
+			slog.String("env", config.EnvPublicIPs+" / "+config.EnvDNSPreflight))
+	}
+	var reg *metrics.Registry
+	if cfg.MetricsListen != "" {
+		reg = &metrics.Registry{}
+		metrics.BuildInfo(reg)
+		srv, err := metrics.Serve(cfg.MetricsListen, reg, log)
+		if err != nil {
+			return err
+		}
+		defer srv.Close()
+	}
+	h := api.NewHandler(log, api.Deps{Metrics: reg, DB: db, Tokens: s, TokenAdmin: s, Audit: s, Apps: s, Env: secrets.NewEnv(keys, s), Ops: s,
+		Domains: s, Resolver: net.DefaultResolver,
+		DomainPolicy: api.DomainPolicy{Preflight: cfg.Domains.Preflight, PublicIPs: cfg.Domains.PublicIPs, Suffixes: cfg.Domains.Suffixes,
+			APIHostname: cfg.APIHostname},
+		// App logs come from the worker's socket, never from Docker (ADR-0008).
+		Logs:          api.LogClient{Client: applogs.NewClient(cfg.WorkerSocket)},
+		WebhookSecret: hookSecret, Pushes: api.StorePushes{Store: s},
+		Limits: api.RateLimits{Rate: cfg.Rate, Burst: cfg.Burst, AuthFailures: cfg.AuthFailures}})
+	return api.Serve(ctx, ln, h, cfg.ShutdownTimeout, log)
+}
+
+func withStore(ctx context.Context, cfg config.API, fn func(*store.Store) error) error {
+	db, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return fn(store.New(db))
 }
 
 func migrate(ctx context.Context, cfg config.API, log *slog.Logger) error {

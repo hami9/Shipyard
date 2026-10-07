@@ -1,0 +1,503 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5;
+  --fg: #1c1c1a;
+  --muted: #6b6b66;
+  --line: #d9d9d4;
+  --accent: #1f5fbf;
+  --error: #b42318;
+  --panel: #ffffff;
+  /* Text on --accent and --error fills: white on the dark light-scheme
+     fills, near-black on the light dark-scheme ones (WCAG AA, 4.5:1). */
+  --on-fill: #ffffff;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615;
+    --fg: #ececea;
+    --muted: #a3a39d;
+    --line: #34342f;
+    --accent: #7aa7ec;
+    --error: #f97066;
+    --panel: #1f1f1d;
+    --on-fill: #10141a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.92em;
+}
+
+button {
+  font: inherit;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button[type="submit"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-fill);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+input {
+  font: inherit;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+}
+
+.login {
+  max-width: 24rem;
+  margin: 12vh auto 0;
+  padding: 0 16px;
+}
+
+.login form {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.error {
+  margin: 0;
+  color: var(--error);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.shell header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.shell .who {
+  margin-left: auto;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1rem 16px 3rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+.shell .brand {
+  color: var(--fg);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.25rem 0 0.75rem;
+}
+
+.crumbs {
+  margin: 0;
+  color: var(--muted);
+}
+
+table {
+  /* The containing block of the hidden column headings (.sr-only), so they
+     stay inside a table that scrolls instead of widening the page. */
+  position: relative;
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+th,
+td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85em;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Wide tables scroll inside themselves, never the page. */
+@media (max-width: 640px) {
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+.settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 0;
+}
+
+.settings dt {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.settings dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.85em;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.badge.ok {
+  color: #1a7f37;
+}
+
+.badge.busy {
+  color: var(--accent);
+}
+
+.badge.bad {
+  color: var(--error);
+}
+
+.badge.idle {
+  color: var(--muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .badge.ok {
+    color: #4ac26b;
+  }
+}
+
+.reason {
+  margin-top: 0.25rem;
+  color: var(--error);
+  font-size: 0.85em;
+  max-width: 28rem;
+  overflow-wrap: anywhere;
+}
+
+.releases + button,
+.error + button {
+  margin-top: 0.75rem;
+}
+
+.confirm {
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.confirm h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.notice {
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid var(--accent);
+  background: var(--panel);
+}
+
+.panel {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 32rem;
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.panel h2 {
+  margin-bottom: 0.25rem;
+}
+
+.panel .error {
+  font-size: 0.9em;
+}
+
+.panel.wide {
+  max-width: 44rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field .hint,
+.field .error {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.field.invalid input {
+  border-color: var(--error);
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--accent);
+  margin: 0.25rem 0;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin-top: 0.5rem;
+}
+
+.deploy {
+  margin-bottom: 1rem;
+}
+
+.danger {
+  border-color: var(--error);
+}
+
+.danger h2 {
+  color: var(--error);
+}
+
+button.destructive {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--on-fill);
+}
+
+/* A credential shown once: selectable in full, never wrapped mid-word. */
+.secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.secret code {
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.check input {
+  width: auto;
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+nav.actions {
+  gap: 1rem;
+}
+
+.small {
+  font-size: 0.85em;
+}
+
+select {
+  font: inherit;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+}
+
+.actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+}
+
+.actions input[type="checkbox"] {
+  width: auto;
+}
+
+/* Events and logs: timed lines in a box of their own that scrolls. */
+.log ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log {
+  margin: 0;
+  padding: 0.5rem 0;
+  max-height: 65vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.log li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.75rem;
+  padding: 0 0.75rem;
+}
+
+.log time {
+  color: var(--muted);
+}
+
+.log span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log .warn span {
+  color: #9a6700;
+}
+
+.log .error span,
+.log .stderr span {
+  color: var(--error);
+}
+
+.log .debug span {
+  color: var(--muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .log .warn span {
+    color: #d29922;
+  }
+}
+
+/* Keyboard focus is always visible, in both schemes (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Focus moved here by the page (a page change, a removed row): no ring,
+   since the reader did not tab here. */
+main:focus,
+h1:focus {
+  outline: none;
+}
+
+/* The first tab stop; shown only when it has focus (WCAG 2.4.1). */
+.skip {
+  position: absolute;
+  left: 16px;
+  top: -3rem;
+  padding: 0.4rem 0.8rem;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  z-index: 10;
+}
+
+.skip:focus {
+  top: 0.5rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

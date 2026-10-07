@@ -1,0 +1,79 @@
+# Prometheus alerting rules for Shipyard (ADR-0013, ADR-0014).
+# Load from prometheus.yml with:  rule_files: [/etc/prometheus/shipyard-alerts.yml]
+# Check with:                     promtool check rules shipyard-alerts.yml
+# The thresholds match the worker's log warnings: 80% of a disk, 80% of a
+# certificate's lifetime (Caddy renews when a third is left [CM-RENEW]).
+groups:
+  - name: shipyard
+    rules:
+      - alert: ShipyardDiskAlmostFull
+        expr: shipyard_filesystem_used_ratio >= 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.path }} is {{ $value | humanizePercentage }} full"
+          description: "Images, the build cache, logs and backups fill this disk. See retention settings (ADR-0006)."
+
+      - alert: ShipyardCertificateRenewalFailing
+        expr: shipyard_certificate_lifetime_used_ratio >= 0.8
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "The certificate for {{ $labels.hostname }} is {{ $value | humanizePercentage }} through its lifetime"
+          description: "Caddy should have renewed it already. Check the Caddy container's logs and the hostname's DNS records."
+
+      - alert: ShipyardCertificateMissing
+        expr: shipyard_certificate_ok == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Caddy presents no certificate for {{ $labels.hostname }}"
+          description: "Usually DNS does not point at this server yet, or issuance is failing."
+
+      - alert: ShipyardChecksStale
+        expr: time() - shipyard_checks_timestamp_seconds > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disks and certificates have not been checked for an hour"
+
+      - alert: ShipyardAppUnhealthy
+        expr: shipyard_app_healthy == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.app }} does not answer its health path"
+
+      - alert: ShipyardDatabaseDown
+        expr: shipyard_database_up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The worker cannot read PostgreSQL"
+
+      - alert: ShipyardDeploysFailing
+        expr: |
+          sum(increase(shipyard_operations_total{kind="deploy",result="failed"}[1h])) >= 3
+          and
+          sum(increase(shipyard_operations_total{kind="deploy",result="failed"}[1h]))
+            > sum(increase(shipyard_operations_total{kind="deploy",result="succeeded"}[1h]))
+        labels:
+          severity: warning
+        annotations:
+          summary: "Most deploys in the last hour failed"
+
+      # A queued operation also waits while its app's previous one runs
+      # (one at a time per app), so allow for a long build.
+      - alert: ShipyardQueueStuck
+        expr: shipyard_queue_oldest_wait_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An operation has waited {{ $value | humanizeDuration }} to run"

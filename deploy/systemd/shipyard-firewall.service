@@ -1,0 +1,18 @@
+# Shipyard's host firewall for build networks (ADR-0009): builds cannot
+# reach the host's services or cloud metadata. Runs after Docker, which
+# creates the DOCKER-USER chain, and again whenever Docker restarts.
+[Unit]
+Description=Shipyard build network firewall
+Documentation=https://github.com/hami9/shipyard/blob/main/docs/adr/0009-builder-egress-deferred.md
+After=docker.service
+PartOf=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/shipyard/shipyard-firewall.sh apply
+ExecStop=/usr/local/lib/shipyard/shipyard-firewall.sh remove
+
+[Install]
+WantedBy=multi-user.target docker.service

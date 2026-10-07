@@ -1,0 +1,29 @@
+{
+  "name": "shipyard-web",
+  "private": true,
+  "description": "Shipyard's web UI (Phase 6): React, built with esbuild (ADR-0015, ADR-0016).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "tsc -p . && tsc -p tsconfig.e2e.json",
+    "e2e": "playwright test",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --dev"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  }
+}

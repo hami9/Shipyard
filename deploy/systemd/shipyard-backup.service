@@ -1,0 +1,35 @@
+# Shipyard backup (ADR-0006): one run of `shipyard-worker backup`, started
+# nightly by shipyard-backup.timer. It writes the database dump and Caddy's
+# data to target A and the KEKs to target B, then runs the hooks that copy
+# them off-host.
+[Unit]
+Description=Shipyard backup
+Documentation=https://github.com/hami9/shipyard/blob/main/docs/ARCHITECTURE.md
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The worker's user: it can read the KEKs (group shipyard) and Caddy's data
+# volume (group docker). The hooks run as this user too.
+User=shipyard-worker
+Group=shipyard
+SupplementaryGroups=docker
+EnvironmentFile=/etc/shipyard/shipyard.env
+ExecStart=/usr/local/bin/shipyard-worker backup
+# A oneshot has no start timeout by default [SYSTEMD-TIMER]; a stuck upload
+# must not block the next night's run forever.
+TimeoutStartSec=2h
+
+# Both targets must exist, owned by shipyard-worker, mode 0700. They are the
+# defaults of SHIPYARD_BACKUP_DIR and SHIPYARD_BACKUP_KEK_DIR: change them
+# here too if you change those.
+ReadWritePaths=/var/backups/shipyard /var/backups/shipyard-kek
+UMask=0077
+NoNewPrivileges=yes
+# No namespaces of any kind: offsets the host-wide userns sysctl that
+# rootless BuildKit needs on Ubuntu 24.04+ (ADR-0010) [SYSTEMD-EXEC].
+RestrictNamespaces=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

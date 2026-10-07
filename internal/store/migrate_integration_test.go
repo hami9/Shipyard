@@ -50,6 +50,22 @@ func tableExists(t *testing.T, db *pgxpool.Pool, name string) bool {
 	return ok
 }
 
+// P3.6b: a restore needs a database without tables; a migrated one is not.
+func TestEmpty(t *testing.T) {
+	db := openTestDB(t)
+	s := store.New(db)
+	if empty, err := s.Empty(t.Context()); err != nil || !empty {
+		t.Fatalf("new database: empty = %v, %v", empty, err)
+	}
+	m := store.Migration{Version: 1, Name: "one", SQL: `CREATE TABLE widgets (id int)`}
+	if _, err := store.Migrate(t.Context(), db, []store.Migration{m}); err != nil {
+		t.Fatal(err)
+	}
+	if empty, err := s.Empty(t.Context()); err != nil || empty {
+		t.Fatalf("migrated database: empty = %v, %v", empty, err)
+	}
+}
+
 func TestMigrateAppliesPendingOnce(t *testing.T) {
 	db := openTestDB(t)
 	ctx := t.Context()

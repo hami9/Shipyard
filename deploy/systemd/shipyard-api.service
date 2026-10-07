@@ -10,8 +10,11 @@ Type=simple
 User=shipyard-api
 Group=shipyard
 EnvironmentFile=/etc/shipyard/shipyard.env
-# Caddy reaches the API through this socket; the bind mount into the Caddy container is wired in P2.8.
-Environment=SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock
+# The API listens on SHIPYARD_API_LISTEN=unix:/run/shipyard-api/api.sock,
+# set in shipyard.env because the worker reads it too. Caddy reaches the API
+# only through it (P2.8): the worker mounts /run/shipyard-api read-only into
+# the Caddy container, which runs with the shipyard group. Set
+# SHIPYARD_API_HOSTNAME in shipyard.env to publish it.
 # Run `shipyard-api migrate` explicitly during install and upgrade, after a backup.
 ExecStart=/usr/local/bin/shipyard-api serve
 Restart=on-failure
@@ -19,7 +22,14 @@ RestartSec=2s
 
 RuntimeDirectory=shipyard-api
 RuntimeDirectoryMode=0750
+# Keep the directory across stops and restarts: Caddy's bind mount points at
+# this directory, and a new one would leave Caddy with a stale, empty mount
+# [SYSTEMD-EXEC]. The API replaces its stale socket at start.
+RuntimeDirectoryPreserve=yes
 NoNewPrivileges=yes
+# No namespaces of any kind: offsets the host-wide userns sysctl that
+# rootless BuildKit needs on Ubuntu 24.04+ (ADR-0010) [SYSTEMD-EXEC].
+RestrictNamespaces=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

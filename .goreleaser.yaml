@@ -6,6 +6,8 @@ project_name: shipyard
 before:
   hooks:
     - ./scripts/check-go-version.sh
+    # The web UI the server archive ships (ADR-0016); needs Node.js 24+.
+    - make web-build
 
 builds:
   - id: cli
@@ -56,6 +58,9 @@ archives:
     ids: [api, worker]
     name_template: "shipyard-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
+    # One top-level directory named like the archive, which docs/OPERATIONS.md
+    # runs deploy/install.sh from [GORELEASER-ARCHIVE].
+    wrap_in_directory: true
     files:
       - LICENSE
       - NOTICE
@@ -67,8 +72,33 @@ archives:
         dst: deploy/docker
       - src: deploy/caddy/*
         dst: deploy/caddy
+      - src: deploy/sysctl/*
+        dst: deploy/sysctl
+      - src: deploy/prometheus/*
+        dst: deploy/prometheus
+      - src: deploy/firewall/*
+        dst: deploy/firewall
+        info:
+          mode: 0755
       - deploy/shipyard.env.example
       - deploy/README.md
+      - src: deploy/install.sh
+        dst: deploy/install.sh
+        info:
+          mode: 0755
+      - docs/OPERATIONS.md
+      - docs/RESTORE.md
+      # The built web UI; install.sh puts it in /usr/local/share/shipyard/web.
+      # One level per entry: a "**" glob flattened assets/ and missed
+      # index.html (2026-10-06 snapshot).
+      - src: web/dist/index.html
+        dst: web/index.html
+        info:
+          mode: 0644
+      - src: web/dist/assets/*
+        dst: web/assets
+        info:
+          mode: 0644
 
 checksum:
   name_template: checksums.txt

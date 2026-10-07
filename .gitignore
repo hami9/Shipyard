@@ -18,6 +18,7 @@ go.work.sum
 *.pem
 /secrets/
 /kek/
+/.dev/
 
 # Local runtime data
 /data/
@@ -27,7 +28,10 @@ go.work.sum
 # Web UI (Phase 6)
 /web/node_modules/
 /web/dist/
-/web/.vite/
+/web/.dev-web/
+/web/test-results/
+/web/playwright-report/
+/web/e2e/.external.json
 
 # Editors / OS
 .idea/

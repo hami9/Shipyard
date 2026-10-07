@@ -29,6 +29,7 @@
   - Tag images `shipyard/<slug>:<sha12>` for humans, and label them `io.shipyard.app`, `io.shipyard.commit`, and `io.shipyard.deployment`.
   - Persist the Engine **image ID** from image inspect. All container creation uses the image ID.
   - Persist the `--metadata-file` output (`containerimage.digest`, `containerimage.config.digest`) as provenance `[DK-BX-BUILD]`.
+    - *Note 2026-09-27:* with `--load`, buildx 0.37.1 omits `containerimage.config.digest` and reports `containerimage.descriptor` instead. The whole file is persisted, so nothing is lost. The decision is unchanged.
 
 ## Consequences
 
@@ -45,4 +46,4 @@
 
 - **The default `docker` build driver:** no builder-level resource caps.
 - **Buildpacks or Nixpacks:** out of MVP scope.
-- **Kaniko or rootless BuildKit:** a stronger isolation option to evaluate in Phase 5.
+- **Kaniko or rootless BuildKit:** a stronger isolation option to evaluate in Phase 5. Rootless BuildKit was adopted in P5.2 (ADR-0010).

@@ -17,6 +17,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make lint
+      - name: Known vulnerabilities (govulncheck)
+        run: make vuln
       - run: make test
       - run: make build
       - name: Validate release config
@@ -25,6 +27,63 @@ jobs:
           distribution: goreleaser
           version: v2.18.2
           args: check
+
+  web:
+    name: Web client (tsc, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # schema.ts being current is a Go test (make test, above).
+      - run: make web-check
+
+  # The web UI end to end (P6.6): Playwright and Chromium against the real
+  # API and a throwaway database on this PostgreSQL. No Docker and no
+  # worker: deploys only queue, and logs come from a stand-in socket.
+  ui:
+    name: UI end to end (Playwright, PostgreSQL 18)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: shipyard
+          POSTGRES_PASSWORD: shipyard
+          POSTGRES_DB: shipyard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shipyard -d shipyard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHIPYARD_TEST_DATABASE_URL: postgres://shipyard:shipyard@localhost:5432/postgres?sslmode=disable
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - name: Keep the report and traces of a failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 7
 
   integration:
     name: Integration tests (PostgreSQL 18)

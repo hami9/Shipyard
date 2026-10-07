@@ -1,0 +1,14 @@
+# Runs shipyard-backup.service every night (ADR-0006). Enable with:
+#   systemctl enable --now shipyard-backup.timer
+[Unit]
+Description=Nightly Shipyard backup
+Documentation=https://github.com/hami9/shipyard/blob/main/docs/ARCHITECTURE.md
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# Spread the start, and catch up after downtime at the next boot [SYSTEMD-TIMER].
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

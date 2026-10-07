@@ -4,12 +4,13 @@ Releases are cut by pushing a `vX.Y.Z` tag. [`.github/workflows/release.yml`](..
 
 1. Runs `make lint test`.
 2. Verifies that the build uses the Go toolchain pinned in `go.mod` (`scripts/check-go-version.sh`).
-3. Builds and publishes these artifacts:
+3. Builds the web UI (`make web-build`, Node.js 24, ADR-0016). A local `make release-snapshot` needs Node.js 24 too.
+4. Builds and publishes these artifacts:
 
 | Artifact | Platforms | Contents |
 | --- | --- | --- |
 | `shipyard_<ver>_<os>_<arch>` | Linux, macOS, Windows × amd64, arm64 | CLI, LICENSE, NOTICE, README, CHANGELOG |
-| `shipyard-server_<ver>_linux_<arch>.tar.gz` | Linux amd64, arm64 | `shipyard-api`, `shipyard-worker`, and `deploy/` (systemd units, `daemon.json`, Caddy bootstrap, env example) |
+| `shipyard-server_<ver>_linux_<arch>.tar.gz` | Linux amd64, arm64 | `shipyard-api`, `shipyard-worker`, `deploy/` (`install.sh`, systemd units, `daemon.json`, Caddy bootstrap, env example, sysctl, firewall script, Prometheus rules), the built web UI (`web/`), and `docs/OPERATIONS.md`, `docs/RESTORE.md` |
 | `checksums.txt` | — | SHA-256 of every archive |
 | Build provenance attestation | — | Signed SLSA provenance for every archive `[GH-ATTEST]` |
 | `ghcr.io/hami9/shipyard:v<ver>` (and `:latest` for stable releases) | linux/amd64, linux/arm64 | All three binaries on distroless `static:nonroot` `[GHCR]` |

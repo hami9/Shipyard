@@ -143,6 +143,36 @@ make dev-down              # stop PostgreSQL (data kept; `make dev-reset` delete
 
 **Send back:** the output of §2.5, the last lines of `make lint`, `make test`, and `make test-integration`, and the two `curl` responses.
 
+### Try the API with the CLI
+
+```bash
+make dev-up && make migrate && make build
+./bin/shipyard-api token create --name dev > /tmp/dev.token    # the first admin token
+make run-api                                                     # second terminal
+make run-worker                                                  # third terminal: needs Docker and buildx
+./bin/shipyard login --url http://127.0.0.1:8080 < /tmp/dev.token
+./bin/shipyard app create hello --repo OWNER/REPO --branch main --port 8080 --health-path /
+echo 's3cret' | ./bin/shipyard env set hello API_KEY
+./bin/shipyard env list hello
+./bin/shipyard deploy hello             # prints the operation ID
+./bin/shipyard operation <ID>           # phase fetch → build → start → health → switch → activate; then "succeeded"
+docker ps --filter label=io.shipyard.app=hello
+./bin/shipyard domain add hello hello.localtest.example   # no DNS preflight in dev (make run-api)
+curl -sk --resolve hello.localtest.example:18443:127.0.0.1 https://hello.localtest.example:18443/   # within a minute
+```
+
+The repository must be public (GitHub App tokens arrive in Phase 4), and its image must listen on `--port`. Routes arrive with P2.2–P2.4: until then, reach the container by its IP on `shipyard-app-hello`.
+
+What `make run-worker` leaves running on your machine:
+- **The `shipyard` buildx builder** (2 GB, 2 CPUs), created on the first run and kept for later builds.
+- **The `shipyard-caddy` container**, with its network and its `-data` and `-config` volumes. It publishes only on `127.0.0.1:18081` (HTTP) and `127.0.0.1:18443` (HTTPS), and its admin socket is `.dev/caddy/caddy-admin.sock`.
+  - It uses Caddy's internal CA (`SHIPYARD_CADDY_CA=internal`), so nothing is ever requested from Let's Encrypt.
+  - At start, the worker loads the config rendered from the routes table. To inspect it: `curl --unix-socket .dev/caddy/caddy-admin.sock http://caddy/config/`.
+  - Remove it with `docker rm -f shipyard-caddy`.
+  - Set `SHIPYARD_CADDY=false` to skip it.
+
+`login` reads the token from stdin so it never lands in shell history. The CLI refuses plain `http://` to a non-loopback host. On the server itself, use the API socket: `--url unix:///run/shipyard-api/api.sock`. From anywhere else, use the published API: `--url https://<SHIPYARD_API_HOSTNAME>`. On Windows, a `shipyard.exe` built with `GOOS=windows` reaches an API in WSL at `http://127.0.0.1:<port>`.
+
 ## 4. Everyday commands
 
 Run `make help` for the full list.
@@ -152,7 +182,13 @@ Run `make help` for the full list.
 | `make fmt` | Format Go code |
 | `make lint test` | Required before every commit |
 | `make test-integration` | Needs `make dev-up`. Uses throwaway databases and drops them afterwards |
-| `make run-api` / `make run-worker` | Run against the dev database with text logs |
+| `make test-docker` | Tests that need Docker Engine and buildx (tag `docker`). CI does not run these; paste the output into the work log. Build tests create their own `shipyard-test-*` builder and remove it, with its images. Runtime tests build two small `shipyard-test/probe` images `FROM scratch` (nothing is pulled), run `shipyard-rt-*` containers on `shipyard-app-rt-*` networks, and probe them by bridge IP, so they need the §2.5 check to pass. Edge tests pull `caddy:2.11.4-alpine` once and run `shipyard-test-edge-*` Caddy containers on loopback-only random ports. Packages run one at a time (`-p 1`): an edge joins every app network on the host, so parallel packages would join each other's test networks. Everything is removed afterwards |
+| `make test-e2e` | Needs `make dev-up`, Docker, buildx, and git. Builds the three binaries, serves a test repository over local git HTTP, and deploys through the CLI. It covers a pinned SHA that becomes a hardened, healthy container, a broken Dockerfile, a SHA off the branch, an unhealthy release that leaves the running one alone, an `Idempotency-Key` replay, and a second release superseding the first. Since Phase 3 there are three tests, about 20 minutes together: `TestPhase1ExitCriteria` (the deploy path through Caddy, rollback, retention, backup), `TestRestoreDrill` (lose the host, restore, converge), and `TestCrashSafety` (kill the worker at each of 11 fault points with `SHIPYARD_TEST_CRASH_AT`, then recover). Run one with `go test -tags e2e -run TestCrashSafety ./test/e2e` and `SHIPYARD_TEST_DATABASE_URL` set. Each uses its own `shipyard-e2e-*` builder and removes everything afterwards |
+| `make web-types` | After changing `api/openapi.json`: regenerate `web/src/api/schema.ts` (ADR-0015). `make test` fails while it is stale |
+| `make web-check` | The web UI: `npm ci`, `tsc`, its tests, and a production build. Needs Node.js 24+, on the host or in WSL; CI runs it too |
+| `make test-ui` | The web UI's Playwright tests (Chromium), against a real API and a throwaway database (`make dev-up` first). They build the API and the UI and serve the UI under Caddy's CSP. **Windows with Docker in WSL:** WSL does not forward the dev database's port to Windows (Docker publishes it by iptables alone). Run `web/e2e/serve-api.sh 18090 web/e2e/.external.json` in WSL, then on Windows, in `web/`: `SHIPYARD_UI_EXTERNAL=e2e/.external.json npx playwright test`. Logs then meet "the worker is not running" |
+| `make web-dev` | The web UI on `http://127.0.0.1:5173`, proxying `/v1` to `SHIPYARD_API_URL` (default `http://127.0.0.1:8080`, the `run-api` address). From Windows, the API in WSL is reachable on `127.0.0.1` |
+| `make run-api` / `make run-worker` | Run against the dev database with text logs. `run-api` first runs `make dev-kek`, which creates a dev-only KEK in the ignored `.dev/kek/` |
 | `make dev-reset` | Wipe the dev database volume |
 
 Configuration comes only from `SHIPYARD_*` environment variables. See [deploy/shipyard.env.example](../deploy/shipyard.env.example). The Makefile supplies dev defaults, and you can override any of them, e.g. `make migrate SHIPYARD_DATABASE_URL=...`.
@@ -162,6 +198,7 @@ Configuration comes only from `SHIPYARD_*` environment variables. See [deploy/sh
 | Symptom | Fix |
 | --- | --- |
 | `port is already allocated` on `make dev-up` | Something already uses 54320. Stop it, or run `make dev-up` after editing the port in `deploy/dev/compose.yaml` and the two URLs in the Makefile |
+| Requests to `127.0.0.1:8080` reach another service, or `make run-api` fails with `address already in use` | Another program uses 8080. On WSL, containers published by Docker Desktop count too, because all distros share one network. Run with `SHIPYARD_API_LISTEN=127.0.0.1:18080` |
 | `SHIPYARD_TEST_DATABASE_URL is not set` | Run the tests through `make test-integration`, or export the variable yourself |
 | `go: downloading go1.26.8` hangs | The Go proxy is unreachable. Set `GOPROXY=https://proxy.golang.org,direct` and check the network |
 | staticcheck errors mentioning Go 1.27 | You are building with a newer local toolchain. Keep `GOTOOLCHAIN=auto` so `go.mod`'s pin applies |

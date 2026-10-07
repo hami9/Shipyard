@@ -1,0 +1,23 @@
+{
+  "admin": {
+    "listen": "unix//run/shipyard/caddy/caddy-admin.sock|0660"
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "shipyard": {
+          "listen": [
+            ":443"
+          ],
+          "routes": []
+        },
+        "verify": {
+          "listen": [
+            "unix//run/shipyard/caddy/caddy-verify.sock|0660"
+          ],
+          "routes": []
+        }
+      }
+    }
+  }
+}

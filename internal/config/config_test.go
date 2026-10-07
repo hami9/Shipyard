@@ -53,34 +53,82 @@ func TestLoadAPIOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadKEK(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.KEKDir != DefaultKEKDir || cfg.KEKActive != "" {
+		t.Fatalf("defaults: %+v, %v", cfg.Common, err)
+	}
+	w, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvKEKDir: "/srv/kek", EnvKEKActive: "2026-09_a"}))
+	if err != nil || w.KEKDir != "/srv/kek" || w.KEKActive != "2026-09_a" {
+		t.Fatalf("overrides: %+v, %v", w.Common, err)
+	}
+	_, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvKEKDir: "kek", EnvKEKActive: "bad id"}))
+	if err == nil || !strings.Contains(err.Error(), EnvKEKDir) || !strings.Contains(err.Error(), EnvKEKActive) {
+		t.Fatalf("want both KEK errors, got %v", err)
+	}
+}
+
+// P2.8: loopback or a Unix socket only; there is no override any more.
 func TestLoadAPIListenValidation(t *testing.T) {
 	tests := []struct {
-		listen      string
-		allowPublic string
-		wantErr     string
+		listen  string
+		wantErr string
 	}{
-		{"127.0.0.1:8080", "", ""},
-		{"localhost:9000", "", ""},
-		{"[::1]:8080", "", ""},
-		{"unix:/run/shipyard/api.sock", "", ""},
-		{"0.0.0.0:8080", "", "not a loopback"},
-		{":8080", "", "not a loopback"},
-		{"10.0.0.5:8080", "", "not a loopback"},
-		{"api.example.com:8080", "", "not a loopback"},
-		{"10.0.0.5:8080", "true", ""},
-		{"unix:relative.sock", "", "must be absolute"},
-		{"127.0.0.1", "", "host:port"},
-		{"127.0.0.1:http", "", "invalid port"},
-		{"127.0.0.1:8080", "maybe", "invalid boolean"},
+		{"127.0.0.1:8080", ""},
+		{"localhost:9000", ""},
+		{"[::1]:8080", ""},
+		{"unix:/run/shipyard/api.sock", ""},
+		{"0.0.0.0:8080", "not a loopback"},
+		{":8080", "not a loopback"},
+		{"10.0.0.5:8080", "not a loopback"},
+		{"api.example.com:8080", "not a loopback"},
+		{"unix:relative.sock", "clean absolute path"},
+		{"unix:/run/../api.sock", "clean absolute path"},
+		{"unix:/run/a b.sock", "clean absolute path"},
+		{"127.0.0.1", "host:port"},
+		{"127.0.0.1:http", "invalid port"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.listen+"/"+tt.allowPublic, func(t *testing.T) {
-			kv := map[string]string{EnvDatabaseURL: testDB, EnvAPIListen: tt.listen}
-			if tt.allowPublic != "" {
-				kv[EnvAPIAllowPublic] = tt.allowPublic
-			}
-			_, err := LoadAPI(env(kv))
+		t.Run(tt.listen, func(t *testing.T) {
+			_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIListen: tt.listen}))
 			checkErr(t, err, tt.wantErr)
+		})
+	}
+	// The removed override no longer opens a public address.
+	_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIListen: "0.0.0.0:8080", "SHIPYARD_API_ALLOW_PUBLIC_LISTEN": "true"}))
+	checkErr(t, err, "not a loopback")
+}
+
+// P2.8: the API hostname Caddy publishes the API on; the worker needs the
+// API on a Unix socket in a directory of its own.
+func TestAPIHostname(t *testing.T) {
+	const sock = "unix:/run/shipyard-api/api.sock"
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIHostname: "Shipyard.Example.com.", EnvAPIListen: sock}))
+	if err != nil || cfg.APIHostname != "shipyard.example.com" || cfg.APISocket() != "/run/shipyard-api/api.sock" {
+		t.Fatalf("worker = %q %q, %v", cfg.APIHostname, cfg.APISocket(), err)
+	}
+	if a, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIHostname: "shipyard.example.com"})); err != nil || a.APIHostname != "shipyard.example.com" || a.APISocket() != "" {
+		t.Fatalf("api = %+v, %v", a.Common, err)
+	}
+	// Caddy disabled: nothing to publish, so TCP is fine.
+	if _, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIHostname: "shipyard.example.com", EnvCaddy: "false"})); err != nil {
+		t.Fatalf("caddy off: %v", err)
+	}
+	for name, kv := range map[string]map[string]string{
+		"tcp listen":       {EnvAPIHostname: "shipyard.example.com"},
+		"socket in /":      {EnvAPIHostname: "shipyard.example.com", EnvAPIListen: "unix:/api.sock"},
+		"admin dir":        {EnvAPIHostname: "shipyard.example.com", EnvAPIListen: "unix:/srv/caddy/api.sock", EnvCaddyAdminDir: "/srv/caddy"},
+		"single label":     {EnvAPIHostname: "shipyard", EnvAPIListen: sock},
+		"wildcard":         {EnvAPIHostname: "*.example.com", EnvAPIListen: sock},
+		"ip address":       {EnvAPIHostname: "203.0.113.7", EnvAPIListen: sock},
+		"port in the name": {EnvAPIHostname: "shipyard.example.com:443", EnvAPIListen: sock},
+	} {
+		t.Run(name, func(t *testing.T) {
+			kv[EnvDatabaseURL] = testDB
+			_, err := LoadWorker(env(kv))
+			if err == nil || (!strings.Contains(err.Error(), EnvAPIHostname) && !strings.Contains(err.Error(), EnvAPIListen)) {
+				t.Fatalf("err = %v", err)
+			}
 		})
 	}
 }
@@ -140,6 +188,394 @@ func TestLoadWorker(t *testing.T) {
 
 	_, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerPollInterval: "10ms"}))
 	checkErr(t, err, "at least")
+}
+
+func TestLoadAPIWebhookSecretFile(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.WebhookSecretFile != "" {
+		t.Fatalf("default = %q, %v", cfg.WebhookSecretFile, err)
+	}
+	cfg, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvWebhookSecretFile: "/etc/shipyard/github-webhook.secret"}))
+	if err != nil || cfg.WebhookSecretFile != "/etc/shipyard/github-webhook.secret" {
+		t.Fatalf("set = %q, %v", cfg.WebhookSecretFile, err)
+	}
+	for _, bad := range []string{"secret", "/etc/shipyard/../secret", "/etc/shipyard/"} {
+		_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvWebhookSecretFile: bad}))
+		checkErr(t, err, EnvWebhookSecretFile)
+	}
+}
+
+func TestLoadAPIRateLimits(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.Rate != 10 || cfg.Burst != 50 || cfg.AuthFailures != 10 {
+		t.Fatalf("defaults = %d/%d/%d, %v", cfg.Rate, cfg.Burst, cfg.AuthFailures, err)
+	}
+	cfg, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIRate: "0", EnvAPIBurst: "5", EnvAuthFailures: "0"}))
+	if err != nil || cfg.Rate != 0 || cfg.Burst != 5 || cfg.AuthFailures != 0 {
+		t.Fatalf("set = %d/%d/%d, %v", cfg.Rate, cfg.Burst, cfg.AuthFailures, err)
+	}
+	for _, tc := range []struct{ key, value string }{
+		{EnvAPIRate, "-1"}, {EnvAPIRate, "fast"}, {EnvAPIBurst, "0"}, {EnvAuthFailures, "100001"},
+	} {
+		_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+		checkErr(t, err, tc.key)
+	}
+}
+
+func TestLoadAPIDomains(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || !cfg.Domains.Preflight || cfg.Domains.PublicIPs != nil || cfg.Domains.Suffixes != nil {
+		t.Fatalf("defaults = %+v, %v", cfg.Domains, err)
+	}
+	cfg, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvDNSPreflight: "false",
+		EnvPublicIPs: " 203.0.113.10, 2001:db8::10 ,", EnvDomainSuffixes: "Example.com, .apps.example.org"}))
+	d := cfg.Domains
+	if err != nil || d.Preflight || len(d.PublicIPs) != 2 || d.PublicIPs[1].String() != "2001:db8::10" ||
+		strings.Join(d.Suffixes, ",") != "example.com,apps.example.org" {
+		t.Fatalf("cfg = %+v, %v", d, err)
+	}
+	for name, tc := range map[string]struct{ key, value string }{
+		"private IP":        {EnvPublicIPs, "10.0.0.5"},
+		"loopback IP":       {EnvPublicIPs, "127.0.0.1"},
+		"not an IP":         {EnvPublicIPs, "vps.example.com"},
+		"wildcard suffix":   {EnvDomainSuffixes, "*.example.com"},
+		"single label":      {EnvDomainSuffixes, "com"},
+		"preflight garbage": {EnvDNSPreflight, "sometimes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+			checkErr(t, err, tc.key)
+		})
+	}
+}
+
+func TestLoadWorkerReconcileInterval(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.ReconcileInterval != time.Minute {
+		t.Fatalf("default = %s, %v", cfg.ReconcileInterval, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvReconcileInterval: "2s"}))
+	if err != nil || cfg.ReconcileInterval != 2*time.Second {
+		t.Fatalf("2s = %s, %v", cfg.ReconcileInterval, err)
+	}
+	_, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvReconcileInterval: "10ms"}))
+	checkErr(t, err, EnvReconcileInterval)
+}
+
+func TestWorkerSocket(t *testing.T) {
+	cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.WorkerSocket != DefaultWorkerSocket {
+		t.Fatalf("default = %q, %v", cfg.WorkerSocket, err)
+	}
+	w, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerSocket: "/tmp/x/logs.sock"}))
+	if err != nil || w.WorkerSocket != "/tmp/x/logs.sock" {
+		t.Fatalf("set = %q, %v", w.WorkerSocket, err)
+	}
+	for _, bad := range []string{"logs.sock", "/run/../logs.sock", "/run//logs.sock"} {
+		_, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerSocket: bad}))
+		checkErr(t, err, EnvWorkerSocket)
+	}
+}
+
+func TestLoadWorkerObservationWindow(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{{"", 5 * time.Minute}, {"0", 0}, {"0s", 0}, {"90s", 90 * time.Second}, {"24h", 24 * time.Hour}} {
+		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvObservationWindow: tc.value}))
+		if err != nil || cfg.ObservationWindow != tc.want {
+			t.Errorf("%q = %s, %v; want %s", tc.value, cfg.ObservationWindow, err, tc.want)
+		}
+	}
+	for _, bad := range []string{"-1s", "soon", "25h"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvObservationWindow: bad}))
+		checkErr(t, err, EnvObservationWindow)
+	}
+}
+
+// P3.4b: the retention job's settings and their defaults (ADR-0006).
+func TestLoadWorkerRetention(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.RetentionInterval != 24*time.Hour || cfg.BuildCacheMax != 10<<30 ||
+		cfg.RetainOperations != 20 || cfg.OperationLogMax != 5<<20 {
+		t.Fatalf("defaults = %s %d %d %d, %v", cfg.RetentionInterval, cfg.BuildCacheMax, cfg.RetainOperations, cfg.OperationLogMax, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetentionInterval: "5s",
+		EnvBuildCacheMax: "512MB", EnvRetainOperations: "1", EnvOperationLogMax: "4096"}))
+	if err != nil || cfg.RetentionInterval != 5*time.Second || cfg.BuildCacheMax != 512<<20 ||
+		cfg.RetainOperations != 1 || cfg.OperationLogMax != 4096 {
+		t.Fatalf("set = %s %d %d %d, %v", cfg.RetentionInterval, cfg.BuildCacheMax, cfg.RetainOperations, cfg.OperationLogMax, err)
+	}
+	for key, bad := range map[string][]string{
+		EnvRetentionInterval: {"0s", "500ms", "daily"},
+		EnvBuildCacheMax:     {"0", "1k", "10x", "-1g", "2000t", "1.5g", "99999999999999999g"},
+		EnvRetainOperations:  {"0", "10001", "all"},
+		EnvOperationLogMax:   {"1000", "5 m", "m"},
+	} {
+		for _, v := range bad {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, key: v}))
+			checkErr(t, err, key)
+		}
+	}
+}
+
+// P3.5: the backup targets must be separate from each other and from the
+// live KEK directory (ADR-0005, ADR-0006).
+func TestLoadWorkerBackup(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	want := Backup{Dir: "/var/backups/shipyard", KEKDir: "/var/backups/shipyard-kek", PGDump: "pg_dump", PGRestore: "pg_restore", KeepDaily: 14, KeepWeekly: 8}
+	if err != nil || cfg.Backup != want {
+		t.Fatalf("defaults = %+v, %v", cfg.Backup, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/b",
+		EnvBackupHook: "rclone copy $SHIPYARD_BACKUP_PATH a:", EnvBackupKEKHook: "true", EnvBackupKeepDaily: "3", EnvBackupKeepWeekly: "0",
+		EnvBackupPGDump: "/usr/lib/postgresql/18/bin/pg_dump", EnvBackupPGRestore: "/usr/lib/postgresql/18/bin/pg_restore"}))
+	want = Backup{Dir: "/mnt/a", KEKDir: "/mnt/b", Hook: "rclone copy $SHIPYARD_BACKUP_PATH a:", KEKHook: "true",
+		PGDump: "/usr/lib/postgresql/18/bin/pg_dump", PGRestore: "/usr/lib/postgresql/18/bin/pg_restore", KeepDaily: 3, KeepWeekly: 0}
+	if err != nil || cfg.Backup != want {
+		t.Fatalf("set = %+v, %v", cfg.Backup, err)
+	}
+	for name, tc := range map[string]struct {
+		vars map[string]string
+		key  string
+	}{
+		"relative":            {map[string]string{EnvBackupDir: "backups"}, EnvBackupDir},
+		"root":                {map[string]string{EnvBackupKEKDir: "/"}, EnvBackupKEKDir},
+		"unclean":             {map[string]string{EnvBackupDir: "/mnt/a/../b"}, EnvBackupDir},
+		"same":                {map[string]string{EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/a"}, EnvBackupKEKDir},
+		"keys inside data":    {map[string]string{EnvBackupDir: "/mnt/a", EnvBackupKEKDir: "/mnt/a/kek"}, EnvBackupKEKDir},
+		"data inside keys":    {map[string]string{EnvBackupDir: "/mnt/b/data", EnvBackupKEKDir: "/mnt/b"}, EnvBackupKEKDir},
+		"data in live keys":   {map[string]string{EnvBackupDir: "/etc/shipyard/kek/backup"}, EnvBackupDir},
+		"live keys in data":   {map[string]string{EnvBackupDir: "/etc/shipyard"}, EnvBackupDir},
+		"backup is live keys": {map[string]string{EnvBackupKEKDir: "/etc/shipyard/kek"}, EnvBackupKEKDir},
+		"relative pg_dump":    {map[string]string{EnvBackupPGDump: "bin/pg_dump"}, EnvBackupPGDump},
+		"relative pg_restore": {map[string]string{EnvBackupPGRestore: "./pg_restore"}, EnvBackupPGRestore},
+		"no dailies":          {map[string]string{EnvBackupKeepDaily: "0"}, EnvBackupKeepDaily},
+		"weeklies":            {map[string]string{EnvBackupKeepWeekly: "-1"}, EnvBackupKeepWeekly},
+	} {
+		tc.vars[EnvDatabaseURL] = testDB
+		_, err := LoadWorker(env(tc.vars))
+		if err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s: err = %v, want %s", name, err, tc.key)
+		}
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	for s, want := range map[string]int64{"1": 1, "4096": 4096, "1k": 1024, "10g": 10 << 30, "10GB": 10 << 30, "1t": 1 << 40, "1024t": 1 << 50} {
+		if got, ok := parseSize(s); !ok || got != want {
+			t.Errorf("parseSize(%q) = %d, %v; want %d", s, got, ok, want)
+		}
+	}
+	for _, s := range []string{"", "0", "01", "1025t", "1e3", "1kib", "g"} {
+		if got, ok := parseSize(s); ok {
+			t.Errorf("parseSize(%q) = %d, want invalid", s, got)
+		}
+	}
+}
+
+// P3.7: the lease is configurable, and the crash point is a test-only name.
+func TestLoadWorkerLeaseAndCrashPoint(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.Lease != time.Minute || cfg.CrashAt != "" {
+		t.Fatalf("defaults = %s, %q, %v", cfg.Lease, cfg.CrashAt, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerLease: "3s", EnvTestCrashAt: "switched"}))
+	if err != nil || cfg.Lease != 3*time.Second || cfg.CrashAt != "switched" {
+		t.Fatalf("set = %s, %q, %v", cfg.Lease, cfg.CrashAt, err)
+	}
+	for key, bad := range map[string][]string{
+		EnvWorkerLease: {"1s", "0", "2h", "soon"},
+		EnvTestCrashAt: {"Build", "after build", "rm -rf /", strings.Repeat("a", 33)},
+	} {
+		for _, v := range bad {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, key: v}))
+			checkErr(t, err, key)
+		}
+	}
+}
+
+func TestLoadWorkerGitHubApp(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.GitHub != (GitHub{APIURL: DefaultGitHubAPIURL}) {
+		t.Fatalf("default = %+v, %v", cfg.GitHub, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvGitHubAppID: "Iv23liExample.1",
+		EnvGitHubAppKeyFile: "/etc/shipyard/github-app.pem", EnvGitHubAPIURL: "http://127.0.0.1:9000"}))
+	if err != nil || cfg.GitHub != (GitHub{AppID: "Iv23liExample.1", KeyFile: "/etc/shipyard/github-app.pem", APIURL: "http://127.0.0.1:9000"}) {
+		t.Fatalf("set = %+v, %v", cfg.GitHub, err)
+	}
+	for name, tc := range map[string]struct {
+		kv   map[string]string
+		want string
+	}{
+		"id without key":   {map[string]string{EnvGitHubAppID: "123"}, EnvGitHubAppKeyFile},
+		"key without id":   {map[string]string{EnvGitHubAppKeyFile: "/k.pem"}, EnvGitHubAppID},
+		"bad id":           {map[string]string{EnvGitHubAppID: "a b", EnvGitHubAppKeyFile: "/k.pem"}, EnvGitHubAppID},
+		"relative key":     {map[string]string{EnvGitHubAppID: "1", EnvGitHubAppKeyFile: "k.pem"}, EnvGitHubAppKeyFile},
+		"plain http":       {map[string]string{EnvGitHubAPIURL: "http://api.github.com"}, EnvGitHubAPIURL},
+		"credentials":      {map[string]string{EnvGitHubAPIURL: "https://u:p@api.github.com"}, EnvGitHubAPIURL},
+		"not a url":        {map[string]string{EnvGitHubAPIURL: "api.github.com"}, EnvGitHubAPIURL},
+		"query in the url": {map[string]string{EnvGitHubAPIURL: "https://api.github.com/?x=1"}, EnvGitHubAPIURL},
+	} {
+		tc.kv[EnvDatabaseURL] = testDB
+		_, err := LoadWorker(env(tc.kv))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want one naming %s", name, err, tc.want)
+		}
+	}
+}
+
+func TestLoadWorkerCatchUpInterval(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.CatchUpInterval != DefaultCatchUpInterval {
+		t.Fatalf("default = %v, %v", cfg.CatchUpInterval, err)
+	}
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCatchUpInterval: "30s"})); err != nil || cfg.CatchUpInterval != 30*time.Second {
+		t.Fatalf("30s = %v, %v", cfg.CatchUpInterval, err)
+	}
+	for _, bad := range []string{"500ms", "0", "-1m", "soon"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCatchUpInterval: bad}))
+		checkErr(t, err, EnvCatchUpInterval)
+	}
+}
+
+func TestLoadWorkerCheckInterval(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil || cfg.CheckInterval != DefaultCheckInterval {
+		t.Fatalf("default = %v, %v", cfg.CheckInterval, err)
+	}
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCheckInterval: "2s"})); err != nil || cfg.CheckInterval != 2*time.Second {
+		t.Fatalf("2s = %v, %v", cfg.CheckInterval, err)
+	}
+	for _, bad := range []string{"500ms", "0", "-1m", "often"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCheckInterval: bad}))
+		checkErr(t, err, EnvCheckInterval)
+	}
+}
+
+func TestLoadWorkerMetricsListen(t *testing.T) {
+	for value, want := range map[string]string{"": "", "127.0.0.1:9187": "127.0.0.1:9187", "[::1]:9187": "[::1]:9187", "localhost:9187": "localhost:9187"} {
+		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: value}))
+		if err != nil || cfg.MetricsListen != want {
+			t.Errorf("%q: %q, %v", value, cfg.MetricsListen, err)
+		}
+	}
+	for _, bad := range []string{"0.0.0.0:9187", ":9187", "192.0.2.1:9187", "127.0.0.1", "127.0.0.1:0", "127.0.0.1:x", "unix:/run/m.sock"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: bad}))
+		checkErr(t, err, EnvWorkerMetricsListen)
+		_, err = LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIMetricsListen: bad}))
+		checkErr(t, err, EnvAPIMetricsListen)
+	}
+	if cfg, err := LoadAPI(env(map[string]string{EnvDatabaseURL: testDB, EnvAPIMetricsListen: "127.0.0.1:9188"})); err != nil || cfg.MetricsListen != "127.0.0.1:9188" {
+		t.Errorf("API: %q, %v", cfg.MetricsListen, err)
+	}
+	// Both processes read one environment file: one port each.
+	_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkerMetricsListen: "127.0.0.1:9187", EnvAPIMetricsListen: "127.0.0.1:9187"}))
+	checkErr(t, err, EnvWorkerMetricsListen)
+}
+
+func TestLoadWorkerRetainImages(t *testing.T) {
+	for value, want := range map[string]int{"": 5, "0": 0, "12": 12, "1000": 1000} {
+		cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: value}))
+		if err != nil || cfg.RetainImages != want {
+			t.Errorf("%q = %d, %v; want %d", value, cfg.RetainImages, err, want)
+		}
+	}
+	for _, bad := range []string{"-1", "1001", "five", "2.5"} {
+		_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvRetainImages: bad}))
+		checkErr(t, err, EnvRetainImages)
+	}
+}
+
+func TestLoadWorkerCaddy(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Caddy
+	if !c.Enabled || c.Name != "shipyard-caddy" || c.Image != "" || c.AdminDir != "/run/shipyard/caddy" ||
+		c.BindIP.IsValid() || c.HTTPPort != 80 || c.HTTPSPort != 443 || c.Group != "shipyard-caddy" || c.GroupRequired ||
+		c.WebDir != "/usr/local/share/shipyard/web" || c.WebDirRequired {
+		t.Errorf("defaults = %+v", c)
+	}
+	// ADR-0016: the web UI directory, explicit (must exist) or off.
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWebDir: "/srv/ui"})); err != nil ||
+		cfg.Caddy.WebDir != "/srv/ui" || !cfg.Caddy.WebDirRequired {
+		t.Errorf("explicit web dir = %+v, %v", cfg.Caddy, err)
+	}
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWebDir: "off"})); err != nil ||
+		cfg.Caddy.WebDir != "" || cfg.Caddy.WebDirRequired {
+		t.Errorf("web dir off = %+v, %v", cfg.Caddy, err)
+	}
+	// P5.8b: a group set explicitly is required to exist.
+	if cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddyGroup: "edge-admins"})); err != nil ||
+		cfg.Caddy.Group != "edge-admins" || !cfg.Caddy.GroupRequired {
+		t.Errorf("explicit group = %+v, %v", cfg.Caddy, err)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvCaddy: "false", EnvCaddyName: "edge-2",
+		EnvCaddyImage: "caddy:2", EnvCaddyAdminDir: "/srv/caddy", EnvCaddyBind: "127.0.0.1", EnvCaddyHTTPPort: "0", EnvCaddyHTTPSPort: "8443",
+		EnvCaddyCA: "staging", EnvACMEEmail: "ops@example.com"}))
+	c = cfg.Caddy
+	if err != nil || c.Enabled || c.Name != "edge-2" || c.Image != "caddy:2" || c.AdminDir != "/srv/caddy" ||
+		c.BindIP.String() != "127.0.0.1" || c.HTTPPort != 0 || c.HTTPSPort != 8443 || c.CA != "staging" || c.ACMEEmail != "ops@example.com" {
+		t.Fatalf("cfg = %+v, %v", c, err)
+	}
+	for name, tc := range map[string]struct{ key, value string }{
+		"app network name":    {EnvCaddyName, "shipyard-app-x"},
+		"bad name":            {EnvCaddyName, "Caddy!"},
+		"relative admin dir":  {EnvCaddyAdminDir, "run/caddy"},
+		"permission suffix":   {EnvCaddyAdminDir, "/run/caddy|0777"},
+		"bind not an ip":      {EnvCaddyBind, "localhost"},
+		"port out of range":   {EnvCaddyHTTPPort, "70000"},
+		"port not a number":   {EnvCaddyHTTPSPort, "https"},
+		"enabled not boolean": {EnvCaddy, "maybe"},
+		"unknown CA":          {EnvCaddyCA, "zerossl"},
+		"bad email":           {EnvACMEEmail, "ops at example.com"},
+		"bad group":           {EnvCaddyGroup, "Shipyard Caddy"},
+		"relative web dir":    {EnvWebDir, "web"},
+		"web dir placeholder": {EnvWebDir, "/srv/{env.X}"},
+		"web dir root":        {EnvWebDir, "/"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+			checkErr(t, err, tc.key)
+		})
+	}
+}
+
+func TestLoadWorkerDeploySettings(t *testing.T) {
+	cfg, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkDir != DefaultWorkDir || cfg.SourceBaseURL != "https://github.com" || cfg.BuilderMemory != "2g" || cfg.BuilderCPUs != 2 {
+		t.Errorf("defaults = %+v", cfg)
+	}
+	cfg, err = LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, EnvWorkDir: "/srv/work",
+		EnvSourceBaseURL: "http://127.0.0.1:9999", EnvBuilderMemory: "512M", EnvBuilderCPUs: "0.5"}))
+	if err != nil || cfg.WorkDir != "/srv/work" || cfg.SourceBaseURL != "http://127.0.0.1:9999" || cfg.BuilderMemory != "512m" || cfg.BuilderCPUs != 0.5 {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+	for name, tc := range map[string]struct{ key, value, want string }{
+		"relative work dir":    {EnvWorkDir, "work", EnvWorkDir},
+		"plain http remote":    {EnvSourceBaseURL, "http://git.example.com", EnvSourceBaseURL},
+		"credentials in url":   {EnvSourceBaseURL, "https://user:pw@github.com", EnvSourceBaseURL},
+		"other scheme":         {EnvSourceBaseURL, "file:///srv/repos", EnvSourceBaseURL},
+		"builder name":         {EnvBuilderName, "Shipyard; rm", EnvBuilderName},
+		"bad memory":           {EnvBuilderMemory, "lots", EnvBuilderMemory},
+		"memory with fraction": {EnvBuilderMemory, "1.5g", EnvBuilderMemory},
+		"zero cpus":            {EnvBuilderCPUs, "0", EnvBuilderCPUs},
+		"cpus not a number":    {EnvBuilderCPUs, "two", EnvBuilderCPUs},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadWorker(env(map[string]string{EnvDatabaseURL: testDB, tc.key: tc.value}))
+			checkErr(t, err, tc.want)
+			if err != nil && strings.Contains(err.Error(), "pw@") {
+				t.Errorf("error leaks the URL's credentials: %v", err)
+			}
+		})
+	}
 }
 
 func checkErr(t *testing.T, err error, want string) {
