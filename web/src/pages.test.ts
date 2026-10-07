@@ -7,6 +7,7 @@ import { href, parseRoute } from "./routes.ts";
 import { ApiError } from "./api/client.ts";
 import type { App, Release } from "./api/schema.ts";
 import { createBody, durationMs, updateBody, valuesOf } from "./appForm.ts";
+import { graces, tokenTone, whoamiOf } from "./tokens.ts";
 import { canRollBack, needsConfigChoice, rollbackBody } from "./rollbackRules.ts";
 
 test("rollback: which releases, which tokens", () => {
@@ -41,7 +42,7 @@ test("routes: paths to pages and back", () => {
   assert.deepEqual(parseRoute("/apps/"), { page: "apps" });
   assert.deepEqual(parseRoute("/apps/web-1"), { page: "app", slug: "web-1" });
   assert.deepEqual(parseRoute("/apps/web-1/"), { page: "app", slug: "web-1" });
-  for (const p of ["/apps/Web", "/apps/-x", "/apps/a/b", "/tokens", "/apps/%E0%A4%A", "/apps/x%2F..%2Fy"]) {
+  for (const p of ["/apps/Web", "/apps/-x", "/apps/a/b", "/settings", "/apps/%E0%A4%A", "/apps/x%2F..%2Fy"]) {
     assert.equal(parseRoute(p).page, "missing", p);
   }
   assert.equal(href({ page: "apps" }), "/");
@@ -148,6 +149,20 @@ test("a change: only what differs, durations compared by value", () => {
     port: 3000, auto_deploy: true, memory_limit: 1 << 30, github_installation_id: 42,
   });
   assert.deepEqual(updateBody({ ...v, port: "99999" }, app), { fields: { port: "a number from 1 to 65535" } });
+});
+
+test("tokens: the route, the session after a rotation, graces, tones", () => {
+  assert.deepEqual(parseRoute("/tokens"), { page: "tokens" });
+  assert.equal(href({ page: "tokens" }), "/tokens");
+  const t = { prefix: "shp_abcdefgh", name: "ci", scopes: ["deploy" as const], status: "active" as const, expires_at: "2027-01-01T00:00:00Z",
+    last_used_at: null, revoked_at: null, created_at: "2026-10-07T00:00:00Z" };
+  assert.deepEqual(whoamiOf(t), { token: "shp_abcdefgh", name: "ci", scopes: ["deploy"], expires_at: "2027-01-01T00:00:00Z" });
+  // The API refuses more than 7 days (api/openapi.json RotateRequest).
+  assert.ok(graces.every((g) => g.seconds >= 0 && g.seconds <= 604800));
+  assert.equal(graces[0]?.seconds, 0);
+  assert.equal(tokenTone("active"), "ok");
+  assert.equal(tokenTone("revoked"), "bad");
+  assert.equal(tokenTone("expired"), "idle");
 });
 
 test("appendCapped keeps the newest", () => {

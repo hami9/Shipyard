@@ -2,7 +2,7 @@
 
 Shipyard's web UI, Phase 6 of the [roadmap](../docs/ROADMAP.md). It is never required for a deploy: the CLI does everything.
 
-React, built by esbuild, served on the API's own hostname, with the API token in the tab's `sessionStorage` ([ADR-0016](../docs/adr/0016-web-ui-build-and-session.md)). Today it has the token login; creating, changing and deleting apps; their releases, environment and domains; deploy and rollback; and live operation events and logs. Token management comes with P6.5c.
+React, built by esbuild, served on the API's own hostname, with the API token in the tab's `sessionStorage` ([ADR-0016](../docs/adr/0016-web-ui-build-and-session.md)). It does everything the CLI does but install: the token login and token management; creating, changing and deleting apps; their releases, environment and domains; deploy and rollback; and live operation events and logs.
 
 | Path | What |
 | --- | --- |
@@ -11,6 +11,7 @@ React, built by esbuild, served on the API's own hostname, with the API token in
 | `src/AppList.tsx`, `src/AppDetail.tsx` | The app list; an app's settings and its releases, a page at a time |
 | `src/OperationView.tsx`, `src/Logs.tsx` | An operation's events, live until its end event; an app's logs with tail, follow and stop. `EventLog` keeps to the bottom unless the reader scrolled up |
 | `src/AppEditor.tsx`, `src/appForm.ts` | New app, an app's settings, and deleting it behind its typed name; form values to requests (only changed fields in a PATCH; Go durations compared by value) |
+| `src/TokensPage.tsx`, `src/tokens.ts` | Rotating the signed-in token (the page switches to the new one and shows it once); listing and revoking tokens (admin) |
 | `src/Deploy.tsx` | Deploying the branch head or a commit, then following the operation |
 | `src/EnvPage.tsx`, `src/DomainsPage.tsx`, `src/forms.ts` | An app's variables (keys only; values write-only) and hostnames; the checks a form makes first, and the API's field errors (`explain`) |
 | `src/useStream.ts` | Following one event stream while a page shows it: batched renders, at most 2000 kept, stopped when the page leaves |

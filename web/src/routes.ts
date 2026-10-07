@@ -10,6 +10,7 @@ export type Route =
   | { page: "settings"; slug: string }
   // Not under /apps/: "new" is a valid slug.
   | { page: "new" }
+  | { page: "tokens" }
   | { page: "operation"; id: string }
   | { page: "missing"; path: string };
 
@@ -30,7 +31,14 @@ export function parseRoute(path: string): Route {
     case 0:
       return { page: "apps" };
     case 1:
-      return first === "apps" ? { page: "apps" } : first === "new" ? { page: "new" } : missing;
+      switch (first) {
+        case "apps":
+          return { page: "apps" };
+        case "new":
+        case "tokens":
+          return { page: first };
+      }
+      return missing;
     case 2:
       if (first === "apps" && slugRE.test(second ?? "")) {
         return { page: "app", slug: second ?? "" };
@@ -67,7 +75,8 @@ export function href(r: Route): string {
     case "settings":
       return `/apps/${encodeURIComponent(r.slug)}/${r.page}`;
     case "new":
-      return "/new";
+    case "tokens":
+      return `/${r.page}`;
     case "operation":
       return `/operations/${r.id}`;
     case "missing":

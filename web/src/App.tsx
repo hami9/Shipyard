@@ -38,5 +38,16 @@ export function App() {
       />
     );
   }
-  return <Shell session={session} client={client} onSignOut={() => signOut()} />;
+  return (
+    <Shell
+      session={session}
+      client={client}
+      onSignOut={signOut}
+      onSession={(s) => {
+        // A rotation: the new token from now on, here and after a reload.
+        saveToken(s.token);
+        setSession(s);
+      }}
+    />
+  );
 }

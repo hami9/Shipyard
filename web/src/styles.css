@@ -347,6 +347,22 @@ button.destructive {
   color: #fff;
 }
 
+/* A credential shown once: selectable in full, never wrapped mid-word. */
+.secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.secret code {
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
 .check {
   display: flex;
   align-items: center;

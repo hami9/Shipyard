@@ -8,15 +8,18 @@ import { Logs } from "./Logs.tsx";
 import { Link, useRoute } from "./nav.tsx";
 import { OperationView } from "./OperationView.tsx";
 import { expiresIn, type Session } from "./session.ts";
+import { TokensPage } from "./TokensPage.tsx";
 
 interface Props {
   session: Session;
   client: Client;
-  onSignOut: () => void;
+  onSignOut: (why?: string) => void;
+  /** The page now uses another token (a rotation). */
+  onSession: (s: Session) => void;
 }
 
 // The signed-in frame and its pages.
-export function Shell({ session, client, onSignOut }: Props) {
+export function Shell({ session, client, onSignOut, onSession }: Props) {
   const { whoami } = session;
   const route = useRoute();
   return (
@@ -28,7 +31,8 @@ export function Shell({ session, client, onSignOut }: Props) {
         <span className="who" title={`token ${whoami.token}`}>
           {whoami.name} · {whoami.scopes.join(", ")} · {expiresIn(whoami.expires_at)}
         </span>
-        <button type="button" onClick={onSignOut}>
+        <Link to={{ page: "tokens" }}>Tokens</Link>
+        <button type="button" onClick={() => onSignOut()}>
           Sign out
         </button>
       </header>
@@ -47,6 +51,7 @@ export function Shell({ session, client, onSignOut }: Props) {
           <DomainsPage key={route.slug} client={client} slug={route.slug} scopes={whoami.scopes} />
         )}
         {route.page === "operation" && <OperationView key={route.id} client={client} id={route.id} />}
+        {route.page === "tokens" && <TokensPage client={client} session={session} onSession={onSession} onSignOut={onSignOut} />}
         {route.page === "missing" && (
           <p>
             There is no page at <code>{route.path}</code>. <Link to={{ page: "apps" }}>Back to the apps</Link>.
