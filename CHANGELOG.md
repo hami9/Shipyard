@@ -9,6 +9,10 @@ All notable changes to Shipyard are recorded here.
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-10-07
+
+A release candidate for 1.0.0: every phase through 6 is in, but the acceptance demo on a fresh VPS (docs/ACCEPTANCE.md) has not run yet.
+
 ### Added
 
 - **OpenAPI description of the API** ([api/openapi.json](api/openapi.json), OpenAPI 3.1, ADR-0015): every `/v1` route with its scope, request and response schemas, and the event streams' data. The API's tests check every response they produce against it.
