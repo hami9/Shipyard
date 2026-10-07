@@ -29,6 +29,9 @@ go.work.sum
 /web/node_modules/
 /web/dist/
 /web/.dev-web/
+/web/test-results/
+/web/playwright-report/
+/web/e2e/.external.json
 
 # Editors / OS
 .idea/

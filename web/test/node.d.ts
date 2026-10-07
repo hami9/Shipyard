@@ -1,5 +1,7 @@
-// The few Node test APIs the tests use, so tsc checks them without
-// @types/node (ADR-0015: typescript is the only npm dependency).
+// The few Node APIs the tests use, so tsc checks them without @types/node.
+
+// The Playwright tests read what e2e/setup.mjs started from the environment.
+declare const process: { env: Record<string, string | undefined> };
 declare module "node:test" {
   export function test(name: string, fn: () => void | Promise<void>): Promise<void>;
 }

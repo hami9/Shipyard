@@ -1,0 +1,11 @@
+{
+  // The Playwright tests (e2e/). Playwright's own declarations need Node's
+  // types and an esnext lib; skipLibCheck leaves those files unchecked
+  // instead of adding @types/node. Our code is checked as strictly as src/.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "skipLibCheck": true
+  },
+  "include": ["e2e/**/*.ts", "playwright.config.ts", "test/**/*.d.ts"]
+}

@@ -49,3 +49,16 @@ make web-check
 ```
 
 It runs `npm ci`, `tsc` (the components, and the `@ts-expect-error` lines in the tests), `node --test` (Node runs the tests' TypeScript directly), and a production build into `dist/`. That the generated `schema.ts` is current is a Go test, run by `make test`.
+
+## End-to-end tests
+
+```bash
+make test-ui
+```
+
+Playwright (Chromium) against the real API and PostgreSQL (`make dev-up` first). `e2e/setup.mjs`:
+- seeds a throwaway database (`test/uiseed`: two apps, 25 releases, admin, deploy and read tokens);
+- builds and starts `shipyard-api`, and a stand-in worker log socket (`e2e/worker-logs.mjs`);
+- serves the production build as Caddy does, CSP included (`e2e/server.mjs`).
+
+Every test signs in through the login form. `e2e/helpers.ts` has `accessible(page)`, axe's WCAG 2.2 AA rules, and `cspViolations(page)`. Windows with Docker in WSL: see `make test-ui` in [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md).

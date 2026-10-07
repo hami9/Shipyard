@@ -7,6 +7,9 @@
   --accent: #1f5fbf;
   --error: #b42318;
   --panel: #ffffff;
+  /* Text on --accent and --error fills: white on the dark light-scheme
+     fills, near-black on the light dark-scheme ones (WCAG AA, 4.5:1). */
+  --on-fill: #ffffff;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
   line-height: 1.5;
@@ -21,6 +24,7 @@
     --accent: #7aa7ec;
     --error: #f97066;
     --panel: #1f1f1d;
+    --on-fill: #10141a;
   }
 }
 
@@ -52,7 +56,7 @@ button {
 button[type="submit"] {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-fill);
 }
 
 button:disabled {
@@ -344,7 +348,7 @@ details summary {
 button.destructive {
   background: var(--error);
   border-color: var(--error);
-  color: #fff;
+  color: var(--on-fill);
 }
 
 /* A credential shown once: selectable in full, never wrapped mid-word. */

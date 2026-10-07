@@ -30,7 +30,7 @@ SHIPYARD_KEK_ACTIVE        ?= dev
 # The worker's log socket, read by the API (ADR-0008).
 SHIPYARD_WORKER_SOCKET     ?= $(CURDIR)/.dev/logs.sock
 
-.PHONY: help build test lint vuln fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot web-types web-check web-build web-dev clean
+.PHONY: help build test lint vuln fmt test-integration test-docker test-e2e dev-up dev-down dev-reset dev-kek migrate run-api run-worker release-check release-snapshot web-types web-check web-build web-dev test-ui clean
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -63,6 +63,10 @@ web-check: ## The web UI: npm ci, tsc, its tests, and a production build into we
 
 web-build: ## Build the web UI into web/dist for the server archive (Node.js 24+; GoReleaser runs it)
 	cd web && npm ci --no-audit --no-fund && npm run build
+
+test-ui: ## The web UI's Playwright tests against a real API and PostgreSQL (make dev-up; Node.js 24, Chromium)
+	cd web && npm ci --no-audit --no-fund && npx playwright install chromium && \
+	  SHIPYARD_TEST_DATABASE_URL='$(SHIPYARD_TEST_DATABASE_URL)' npx playwright test
 
 web-dev: ## The web UI on http://127.0.0.1:5173, proxying /v1 to SHIPYARD_API_URL (default the run-api address)
 	cd web && npm run dev
