@@ -69,7 +69,7 @@ export function Logs({ client, slug }: { client: Client; slug: string }) {
           {stream.error === "Not found." ? `${slug} has no running release, or no such app.` : stream.error}
         </p>
       )}
-      {stream.state !== "failed" && <EventLog lines={lines} live={live} />}
+      {stream.state !== "failed" && <EventLog lines={lines} live={live} label={`${slug} output`} quiet />}
       <p className="hint" role="status">
         {stream.state === "connecting" && on && "Connecting…"}
         {live && stream.state === "open" && (follow ? "Following: new lines appear as the app writes them." : "")}

@@ -39,6 +39,10 @@ export function Login({ resume, notice, onSignedIn, onRejected }: Props) {
     }
   }, [resume]);
 
+  useEffect(() => {
+    document.title = "Sign in · Shipyard";
+  }, []);
+
   function submit(e: FormEvent) {
     e.preventDefault();
     void attempt(token, false);
@@ -59,12 +63,16 @@ export function Login({ resume, notice, onSignedIn, onRejected }: Props) {
           onChange={(e) => setToken(e.target.value)}
           disabled={busy}
           required
+          // The page's one field: start there.
+          autoFocus
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ?? notice ? "token-error" : undefined}
         />
         <button type="submit" disabled={busy || token.trim() === ""}>
           {busy ? "Checking…" : "Sign in"}
         </button>
         {(error ?? notice) && (
-          <p className="error" role="alert">
+          <p id="token-error" className="error" role="alert">
             {error ?? notice}
           </p>
         )}

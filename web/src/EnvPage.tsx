@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { ConfirmButton, focusHeading } from "./a11y.tsx";
 import type { Client } from "./api/client.ts";
 import type { Scope } from "./api/schema.ts";
-import { canChange, explain, keyProblem, valueProblem, type Explained } from "./forms.ts";
+import { canChange, explain, focusFirstInvalid, keyProblem, valueProblem, type Explained } from "./forms.ts";
 import { Link } from "./nav.tsx";
 import { useApi } from "./useApi.ts";
 
@@ -21,7 +22,6 @@ export function EnvPage({ client, slug, scopes }: Props) {
   const env = useApi(() => client.call("listEnv", { path: { app: slug } }), [client, slug]);
   const admin = canChange(scopes);
   const [notice, setNotice] = useState<string | undefined>();
-  const [removing, setRemoving] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
 
   async function unset(key: string) {
@@ -33,7 +33,7 @@ export function EnvPage({ client, slug, scopes }: Props) {
     } catch (err) {
       setError(explain(err).message || "The key could not be removed.");
     } finally {
-      setRemoving(undefined);
+      focusHeading();
     }
   }
 
@@ -70,21 +70,7 @@ export function EnvPage({ client, slug, scopes }: Props) {
                 </td>
                 <td>{v.secret ? "secret" : "plain"}</td>
                 <td>
-                  {admin &&
-                    (removing === v.key ? (
-                      <span className="actions">
-                        <button type="button" onClick={() => void unset(v.key)}>
-                          Remove {v.key}
-                        </button>
-                        <button type="button" onClick={() => setRemoving(undefined)}>
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => setRemoving(v.key)}>
-                        Remove
-                      </button>
-                    ))}
+                  {admin && <ConfirmButton label="Remove" confirmLabel={`Remove ${v.key}`} destructive onConfirm={() => void unset(v.key)} />}
                 </td>
               </tr>
             ))}
@@ -111,6 +97,7 @@ function SetForm({ client, slug, onSet }: { client: Client; slug: string; onSet:
   const [secret, setSecret] = useState(true);
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<Explained>({ message: "", fields: {} });
+  const form = useRef<HTMLFormElement>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -125,6 +112,7 @@ function SetForm({ client, slug, onSet }: { client: Client; slug: string; onSet:
     }
     setProblems({ message: "", fields });
     if (kp || vp) {
+      focusFirstInvalid(form.current);
       return;
     }
     setBusy(true);
@@ -135,13 +123,14 @@ function SetForm({ client, slug, onSet }: { client: Client; slug: string; onSet:
       onSet(key, res.revision);
     } catch (err) {
       setProblems(explain(err));
+      focusFirstInvalid(form.current);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form className="panel" onSubmit={submit}>
+    <form className="panel" onSubmit={submit} ref={form} noValidate>
       <h2>Set a variable</h2>
       <label htmlFor="env-key">Key</label>
       <input

@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from "react";
 import type { Client } from "./api/client.ts";
+import { title } from "./routes.ts";
 import { AppDetail } from "./AppDetail.tsx";
 import { AppSettingsPage, NewApp } from "./AppEditor.tsx";
 import { AppList } from "./AppList.tsx";
@@ -22,8 +24,32 @@ interface Props {
 export function Shell({ session, client, onSignOut, onSession }: Props) {
   const { whoami } = session;
   const route = useRoute();
+  const main = useRef<HTMLElement>(null);
+  const first = useRef(true);
+  const [announced, setAnnounced] = useState("");
+
+  // A page change without a reload: retitle the document, move focus to the
+  // new content (the old link is gone), and say where we are, as a full
+  // page load would (WCAG 2.4.2, 2.4.3).
+  const pageTitle = title(route);
+  useEffect(() => {
+    document.title = pageTitle;
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    main.current?.focus();
+    setAnnounced(pageTitle);
+  }, [pageTitle]);
+
   return (
     <div className="shell">
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {announced}
+      </p>
       <header>
         <Link to={{ page: "apps" }} className="brand">
           Shipyard
@@ -36,7 +62,7 @@ export function Shell({ session, client, onSignOut, onSession }: Props) {
           Sign out
         </button>
       </header>
-      <main>
+      <main id="main" ref={main} tabIndex={-1}>
         {route.page === "apps" && <AppList client={client} scopes={whoami.scopes} />}
         {route.page === "new" && <NewApp client={client} scopes={whoami.scopes} />}
         {route.page === "settings" && (

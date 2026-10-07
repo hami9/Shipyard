@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { ConfirmButton, focusHeading } from "./a11y.tsx";
 import type { Client } from "./api/client.ts";
 import type { Scope } from "./api/schema.ts";
 import { ago } from "./format.ts";
-import { canChange, explain, type Explained } from "./forms.ts";
+import { canChange, explain, focusFirstInvalid, type Explained } from "./forms.ts";
 import { Link } from "./nav.tsx";
 import { useApi } from "./useApi.ts";
 
@@ -21,7 +22,6 @@ export function DomainsPage({ client, slug, scopes }: Props) {
   const domains = useApi(() => client.call("listDomains", { path: { app: slug } }), [client, slug]);
   const admin = canChange(scopes);
   const [notice, setNotice] = useState<string | undefined>();
-  const [removing, setRemoving] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
 
   async function remove(hostname: string) {
@@ -33,7 +33,7 @@ export function DomainsPage({ client, slug, scopes }: Props) {
     } catch (err) {
       setError(explain(err).message);
     } finally {
-      setRemoving(undefined);
+      focusHeading();
     }
   }
 
@@ -72,21 +72,9 @@ export function DomainsPage({ client, slug, scopes }: Props) {
                 <td>{d.deployment_id ? <code title={d.deployment_id}>{d.deployment_id.slice(0, 8)}</code> : "no release yet"}</td>
                 <td>{d.dns_checked_at ? ago(d.dns_checked_at) : "not checked"}</td>
                 <td>
-                  {admin &&
-                    (removing === d.hostname ? (
-                      <span className="actions">
-                        <button type="button" onClick={() => void remove(d.hostname)}>
-                          Remove {d.hostname}
-                        </button>
-                        <button type="button" onClick={() => setRemoving(undefined)}>
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => setRemoving(d.hostname)}>
-                        Remove
-                      </button>
-                    ))}
+                  {admin && (
+                    <ConfirmButton label="Remove" confirmLabel={`Remove ${d.hostname}`} destructive onConfirm={() => void remove(d.hostname)} />
+                  )}
                 </td>
               </tr>
             ))}
@@ -111,6 +99,7 @@ function AddForm({ client, slug, onAdded }: { client: Client; slug: string; onAd
   const [hostname, setHostname] = useState("");
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<Explained>({ message: "", fields: {} });
+  const form = useRef<HTMLFormElement>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -122,6 +111,7 @@ function AddForm({ client, slug, onAdded }: { client: Client; slug: string; onAd
       onAdded(d.hostname);
     } catch (err) {
       setProblems(explain(err));
+      focusFirstInvalid(form.current);
     } finally {
       setBusy(false);
     }
@@ -129,7 +119,7 @@ function AddForm({ client, slug, onAdded }: { client: Client; slug: string; onAd
 
   const fieldError = problems.fields["hostname"];
   return (
-    <form className="panel" onSubmit={submit}>
+    <form className="panel" onSubmit={submit} ref={form} noValidate>
       <h2>Add a domain</h2>
       <label htmlFor="hostname">Hostname</label>
       <input

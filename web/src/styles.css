@@ -410,8 +410,13 @@ select {
 }
 
 /* Events and logs: timed lines in a box of their own that scrolls. */
-.log {
+.log ol {
   list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log {
   margin: 0;
   padding: 0.5rem 0;
   max-height: 65vh;
@@ -457,6 +462,35 @@ select {
   .log .warn span {
     color: #d29922;
   }
+}
+
+/* Keyboard focus is always visible, in both schemes (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Focus moved here by the page (a page change, a removed row): no ring,
+   since the reader did not tab here. */
+main:focus,
+h1:focus {
+  outline: none;
+}
+
+/* The first tab stop; shown only when it has focus (WCAG 2.4.1). */
+.skip {
+  position: absolute;
+  left: 16px;
+  top: -3rem;
+  padding: 0.4rem 0.8rem;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  z-index: 10;
+}
+
+.skip:focus {
+  top: 0.5rem;
 }
 
 .sr-only {

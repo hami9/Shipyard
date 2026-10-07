@@ -16,6 +16,12 @@ All notable changes to Shipyard are recorded here.
   - **Pages:** the app list, and each app's settings and releases (newest first, with failure reasons and rollbacks, older ones on demand). Links are real paths (`/apps/web`), so a reload or a bookmark returns to the same page.
   - **Live operations and logs:** each operation has a page (`/operations/<id>`) whose events appear as the worker logs them, until the final status. A dropped connection or an API restart resumes without losing or repeating an event. Each app has a logs page (`/apps/<app>/logs`): the last 100, 500 or 1000 lines, then new ones while following, with stderr marked.
   - **Tested end to end:** `make test-ui` runs Playwright (Chromium) against the real API and a seeded database, with the UI served under Caddy's CSP; axe checks every page against WCAG 2.2 AA in light and dark. It found and fixed white text on the light fills of dark mode's buttons.
+  - **Keyboard and screen readers:**
+    - each page has its own title, and a page change moves focus to the new content and announces it;
+    - a skip link; a visible focus ring;
+    - after a failed submit, focus lands on the first bad field, with its error as the field's description;
+    - confirmations take focus on Cancel and close with Escape, returning focus;
+    - logs are focusable, and an operation's events are announced (app output is not).
   - **Tokens** (`/tokens`): rotate the signed-in token, with a grace period for the old one; the page switches to the new token and shows it once, for the CLI. With an admin token, list every token and revoke any; revoking the page's own token signs it out.
   - **Apps and deploys:** create an app, change its settings (only what changed is sent), and delete it after typing its name (admin). Deploy the branch head or a given commit (deploy scope); the page then follows the operation live.
   - **Environment and domains:** each app's variables by key (values are write-only: never shown, and cleared from the page once sent) and its hostnames, both changeable with an admin token. The API's per-field errors, such as the DNS check's, show under the field.

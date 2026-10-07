@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { ConfirmButton, focusHeading } from "./a11y.tsx";
 import type { Client } from "./api/client.ts";
 import type { Token } from "./api/schema.ts";
 import { ago } from "./format.ts";
@@ -122,10 +123,8 @@ function Rotate({ client, session, onSession }: { client: Client; session: Sessi
 
 function TokenList({ client, self, onSignOut }: { client: Client; self: string; onSignOut: (why: string) => void }) {
   const list = useApi(() => client.call("listTokens"), [client]);
-  const [confirm, setConfirm] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
-  useEffect(() => setConfirm(undefined), [list.data]);
 
   async function revoke(prefix: string) {
     setError(undefined);
@@ -140,6 +139,7 @@ function TokenList({ client, self, onSignOut }: { client: Client; self: string; 
     } catch (err) {
       setError(explain(err).message);
     }
+    focusHeading(); // the row's button is gone
   }
 
   return (
@@ -186,21 +186,14 @@ function TokenList({ client, self, onSignOut }: { client: Client; self: string; 
                 <td>{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : "never"}</td>
                 <td>{t.last_used_at ? ago(t.last_used_at) : "never"}</td>
                 <td>
-                  {t.status === "active" &&
-                    (confirm === t.prefix ? (
-                      <span className="actions">
-                        <button type="button" className="destructive" onClick={() => void revoke(t.prefix)}>
-                          {t.prefix === self ? "Revoke and sign out" : "Revoke"}
-                        </button>
-                        <button type="button" onClick={() => setConfirm(undefined)}>
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => setConfirm(t.prefix)}>
-                        Revoke
-                      </button>
-                    ))}
+                  {t.status === "active" && (
+                    <ConfirmButton
+                      label="Revoke"
+                      confirmLabel={t.prefix === self ? "Revoke and sign out" : "Revoke"}
+                      destructive
+                      onConfirm={() => void revoke(t.prefix)}
+                    />
+                  )}
                 </td>
               </tr>
             ))}

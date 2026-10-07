@@ -1,8 +1,8 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Client } from "./api/client.ts";
 import type { App, Scope } from "./api/schema.ts";
 import { createBody, updateBody, valuesOf, type AppValues } from "./appForm.ts";
-import { canChange, explain } from "./forms.ts";
+import { canChange, explain, focusFirstInvalid } from "./forms.ts";
 import { Link, navigate } from "./nav.tsx";
 import { useApi } from "./useApi.ts";
 
@@ -14,6 +14,7 @@ export function NewApp({ client, scopes }: { client: Client; scopes: Scope[] }) 
   const [fields, setFields] = useState<Fields>({});
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -21,6 +22,7 @@ export function NewApp({ client, scopes }: { client: Client; scopes: Scope[] }) 
     setFields(f);
     setError(undefined);
     if (!body) {
+      focusFirstInvalid(form.current);
       return;
     }
     setBusy(true);
@@ -31,6 +33,7 @@ export function NewApp({ client, scopes }: { client: Client; scopes: Scope[] }) 
       const x = explain(err);
       setFields(x.fields);
       setError(x.message || undefined);
+      focusFirstInvalid(form.current);
     } finally {
       setBusy(false);
     }
@@ -44,13 +47,13 @@ export function NewApp({ client, scopes }: { client: Client; scopes: Scope[] }) 
       <p className="crumbs">
         <Link to={{ page: "apps" }}>Apps</Link> / new
       </p>
-      <form className="panel wide" onSubmit={submit}>
+      <form className="panel wide" onSubmit={submit} ref={form} noValidate>
         <h1>New app</h1>
         <Field id="slug" label="Name" hint="a-z, 0-9 and -, starting with a letter; it names the app in URLs and the CLI" error={fields["slug"]}>
-          <input id="slug" value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} autoComplete="off" spellCheck={false} placeholder="web" />
+          <input id="slug" value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} autoComplete="off" spellCheck={false} placeholder="web" {...fieldProps("slug", fields["slug"], true)} />
         </Field>
         <Field id="repo" label="GitHub repository" hint="owner/name" error={fields["repo"]}>
-          <input id="repo" value={v.repo} onChange={(e) => setV({ ...v, repo: e.target.value })} autoComplete="off" spellCheck={false} placeholder="acme/web" />
+          <input id="repo" value={v.repo} onChange={(e) => setV({ ...v, repo: e.target.value })} autoComplete="off" spellCheck={false} placeholder="acme/web" {...fieldProps("repo", fields["repo"], true)} />
         </Field>
         <SettingsFields v={v} setV={setV} fields={fields} />
         <div className="actions">
@@ -90,6 +93,7 @@ function EditForm({ client, app, onSaved }: { client: Client; app: App; onSaved:
   const [fields, setFields] = useState<Fields>({});
   const [message, setMessage] = useState<{ ok: boolean; text: string } | undefined>();
   const [busy, setBusy] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -97,6 +101,7 @@ function EditForm({ client, app, onSaved }: { client: Client; app: App; onSaved:
     setFields(f);
     setMessage(undefined);
     if (!body) {
+      focusFirstInvalid(form.current);
       return;
     }
     if (Object.keys(body).length === 0) {
@@ -112,13 +117,14 @@ function EditForm({ client, app, onSaved }: { client: Client; app: App; onSaved:
       const x = explain(err);
       setFields(x.fields);
       setMessage(x.message ? { ok: false, text: x.message } : undefined);
+      focusFirstInvalid(form.current);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form className="panel wide" onSubmit={submit}>
+    <form className="panel wide" onSubmit={submit} ref={form} noValidate>
       <h1>{app.slug} settings</h1>
       <p className="hint">
         Repository <code>{app.repo}</code>; to use another, create a new app.
@@ -179,8 +185,18 @@ function DangerZone({ client, app }: { client: Client; app: App }) {
 }
 
 function SettingsFields({ v, setV, fields }: { v: AppValues; setV: (v: AppValues) => void; fields: Fields }) {
+  const hinted = new Set(["branch", "port", "health_path", "github_installation_id"]);
   const text = (k: Exclude<keyof AppValues, "auto_deploy">, extra: { placeholder?: string; inputMode?: "numeric" | "decimal" } = {}) => (
-    <input id={k} value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })} autoComplete="off" spellCheck={false} {...extra} />
+    <input
+      id={k}
+      value={v[k]}
+      onChange={(e) => setV({ ...v, [k]: e.target.value })}
+      autoComplete="off"
+      spellCheck={false}
+      {...extra}
+      // The API names memory in bytes; the form, in MiB.
+      {...fieldProps(k, fields[k === "memory_mib" ? "memory_limit" : k], hinted.has(k))}
+    />
   );
   // An error inside the folded section opens it, so it is never hidden.
   const advanced = ["dockerfile_path", "build_context", "cpu_limit", "memory_limit", "health_timeout", "stop_timeout", "github_installation_id"];
@@ -230,18 +246,32 @@ function SettingsFields({ v, setV, fields }: { v: AppValues; setV: (v: AppValues
   );
 }
 
+// Field labels an input and ties its hint or error to it: the input gets
+// aria-describedby `${id}-help` and aria-invalid from fieldProps.
 function Field({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string | undefined; children: ReactNode }) {
   return (
     <div className={error ? "field invalid" : "field"}>
       <label htmlFor={id}>{label}</label>
       {children}
       {error ? (
-        <p className="error" role="alert">
+        <p id={`${id}-help`} className="error">
           {error}
         </p>
       ) : (
-        hint && <p className="hint">{hint}</p>
+        hint && (
+          <p id={`${id}-help`} className="hint">
+            {hint}
+          </p>
+        )
       )}
     </div>
   );
+}
+
+/** fieldProps are an input's accessibility attributes, matching Field's. */
+function fieldProps(id: string, error: string | undefined, hasHint: boolean) {
+  return {
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": error || hasHint ? `${id}-help` : undefined,
+  };
 }

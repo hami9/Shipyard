@@ -33,6 +33,15 @@ export function valueProblem(value: string): string | undefined {
   return undefined;
 }
 
+/**
+ * focusFirstInvalid moves focus, once the form has rendered its errors, to
+ * the first field marked invalid: a screen reader then reads its label and,
+ * through aria-describedby, the error (WCAG 3.3.1).
+ */
+export function focusFirstInvalid(form: HTMLFormElement | null): void {
+  requestAnimationFrame(() => form?.querySelector<HTMLElement>("[aria-invalid=true]")?.focus());
+}
+
 export interface Explained {
   /** For the form as a whole; "" when the fields say it all. */
   message: string;

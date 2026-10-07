@@ -17,6 +17,7 @@ React, built by esbuild, served on the API's own hostname, with the API token in
 | `src/useStream.ts` | Following one event stream while a page shows it: batched renders, at most 2000 kept, stopped when the page leaves |
 | `src/Rollback.tsx`, `src/rollbackRules.ts` | Confirming a rollback (one `Idempotency-Key` per confirmation), and the configuration choice after a 409 |
 | `src/routes.ts`, `src/nav.tsx` | Paths to pages and back; navigation over the History API (`navigate`, `useRoute`, `Link`) |
+| `src/a11y.tsx` | Keyboard and focus behavior: `ConfirmButton` (asks again in place, Cancel focused, Escape), `useDialogFocus` (panels take focus, Escape closes, focus returns), `focusHeading` |
 | `src/useApi.ts`, `src/format.ts` | Loading data into a page; how times, sizes, commits and statuses read |
 | `src/session.ts` | The token in `sessionStorage`, `signIn` (checks it with `whoami`), and the client for a session |
 | `src/api/schema.ts` | **Generated** from [api/openapi.json](../api/openapi.json) by `internal/openapits`. Do not edit: run `make web-types` ([ADR-0015](../docs/adr/0015-openapi-and-typescript-client.md)) |

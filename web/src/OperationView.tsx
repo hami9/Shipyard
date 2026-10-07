@@ -51,7 +51,7 @@ export function OperationView({ client, id }: { client: Client; id: string }) {
         </div>
       )}
       {current?.last_error && <p className="error">{current.last_error}</p>}
-      <EventLog lines={lines.map((e) => ({ key: String(e.seq), ts: e.ts, tone: e.level, text: e.message }))} live={!final} />
+      <EventLog lines={lines.map((e) => ({ key: String(e.seq), ts: e.ts, tone: e.level, text: e.message }))} live={!final} label="Events" />
       <p className="hint" role="status">
         {stream.state === "connecting" && "Connecting…"}
         {stream.state === "open" && !final && "Live: new events appear as the worker logs them."}
@@ -71,9 +71,14 @@ export interface Line {
   text: string;
 }
 
-/** EventLog is a list of timed lines that follows the bottom while live, unless the reader scrolled up. */
-export function EventLog({ lines, live }: { lines: Line[]; live: boolean }) {
-  const box = useRef<HTMLOListElement>(null);
+/**
+ * EventLog is a list of timed lines that follows the bottom while live,
+ * unless the reader scrolled up. It is a scrolling region, so it takes
+ * keyboard focus (WCAG 2.1.1), and a log: new lines are announced politely,
+ * unless quiet (an app's output would drown a screen reader).
+ */
+export function EventLog({ lines, live, label, quiet = false }: { lines: Line[]; live: boolean; label: string; quiet?: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   useEffect(() => {
     const el = box.current;
@@ -85,20 +90,26 @@ export function EventLog({ lines, live }: { lines: Line[]; live: boolean }) {
     return <p className="hint">No events yet.</p>;
   }
   return (
-    <ol
+    <div
       className="log"
+      role="log"
+      aria-label={label}
+      aria-live={quiet ? "off" : "polite"}
+      tabIndex={0}
       ref={box}
       onScroll={(e) => {
         const el = e.currentTarget;
         pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       }}
     >
-      {lines.map((l) => (
-        <li key={l.key} className={l.tone}>
-          <time dateTime={l.ts}>{clock(l.ts)}</time>
-          <span>{l.text}</span>
-        </li>
-      ))}
-    </ol>
+      <ol>
+        {lines.map((l) => (
+          <li key={l.key} className={l.tone}>
+            <time dateTime={l.ts}>{clock(l.ts)}</time>
+            <span>{l.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

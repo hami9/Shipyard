@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { ago, bytes, clock, opTone, shortSHA, statusLabel, tone } from "./format.ts";
 import { appendCapped } from "./useStream.ts";
 import { canChange, explain, keyProblem, valueProblem } from "./forms.ts";
-import { href, parseRoute } from "./routes.ts";
+import { href, parseRoute, title, type Route } from "./routes.ts";
 import { ApiError } from "./api/client.ts";
 import type { App, Release } from "./api/schema.ts";
 import { createBody, durationMs, updateBody, valuesOf } from "./appForm.ts";
@@ -149,6 +149,18 @@ test("a change: only what differs, durations compared by value", () => {
     port: 3000, auto_deploy: true, memory_limit: 1 << 30, github_installation_id: 42,
   });
   assert.deepEqual(updateBody({ ...v, port: "99999" }, app), { fields: { port: "a number from 1 to 65535" } });
+});
+
+test("every page has its own title (WCAG 2.4.2)", () => {
+  const routes: Route[] = [
+    { page: "apps" }, { page: "app", slug: "web" }, { page: "logs", slug: "web" }, { page: "env", slug: "web" },
+    { page: "domains", slug: "web" }, { page: "settings", slug: "web" }, { page: "new" }, { page: "tokens" },
+    { page: "operation", id: "5e21d7f1-0000-4000-8000-000000000001" }, { page: "missing", path: "/x" },
+  ];
+  const titles = routes.map(title);
+  assert.equal(new Set(titles).size, titles.length);
+  assert.ok(titles.every((t) => t.endsWith(" · Shipyard")));
+  assert.equal(title({ page: "env", slug: "web" }), "Environment · web · Shipyard");
 });
 
 test("tokens: the route, the session after a rotation, graces, tones", () => {

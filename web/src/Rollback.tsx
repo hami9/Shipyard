@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDialogFocus } from "./a11y.tsx";
 import type { Client } from "./api/client.ts";
 import type { Admitted, Release } from "./api/schema.ts";
 import { shortSHA } from "./format.ts";
@@ -23,6 +24,7 @@ export function Rollback({ client, slug, target, onDone, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [choose, setChoose] = useState(false);
+  const dialog = useDialogFocus<HTMLDivElement>(onCancel);
 
   async function submit(choice?: ConfigChoice) {
     setBusy(true);
@@ -47,7 +49,7 @@ export function Rollback({ client, slug, target, onDone, onCancel }: Props) {
   }
 
   return (
-    <div className="confirm" role="dialog" aria-labelledby="rollback-title">
+    <div className="confirm" role="dialog" aria-labelledby="rollback-title" {...dialog}>
       <h3 id="rollback-title">
         Roll back {slug} to release <code>{target.id.slice(0, 8)}</code>?
       </h3>

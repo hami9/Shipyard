@@ -63,6 +63,35 @@ export function parseRoute(path: string): Route {
   return missing;
 }
 
+/** title is a page's document title (WCAG 2.4.2), the most specific part first. */
+export function title(r: Route): string {
+  const t = (() => {
+    switch (r.page) {
+      case "apps":
+        return "Apps";
+      case "app":
+        return r.slug;
+      case "logs":
+        return `Logs · ${r.slug}`;
+      case "env":
+        return `Environment · ${r.slug}`;
+      case "domains":
+        return `Domains · ${r.slug}`;
+      case "settings":
+        return `Settings · ${r.slug}`;
+      case "new":
+        return "New app";
+      case "tokens":
+        return "Tokens";
+      case "operation":
+        return `Operation ${r.id.slice(0, 8)}`;
+      case "missing":
+        return "Not found";
+    }
+  })();
+  return `${t} · Shipyard`;
+}
+
 export function href(r: Route): string {
   switch (r.page) {
     case "apps":
