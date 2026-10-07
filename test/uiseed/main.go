@@ -36,9 +36,9 @@ import (
 const KEKID = "uitest"
 
 type output struct {
-	Database    string            `json:"database"`
-	DatabaseURL string            `json:"database_url"`
-	KEKID       string            `json:"kek_id"`
+	Database    string `json:"database"`
+	DatabaseURL string `json:"database_url"`
+	KEKID       string `json:"kek_id"`
 	// Tokens by name: admin, deploy and read for every test; rotate, spare
 	// and doomed only for the token tests, which end them.
 	Tokens map[string]string `json:"tokens"`
