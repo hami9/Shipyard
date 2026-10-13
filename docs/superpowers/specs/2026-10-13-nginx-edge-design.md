@@ -183,16 +183,24 @@ accepted ADRs before code.
 ### 4.4 UI under a path (ADR-0016 note)
 
 - `SHIPYARD_WEB_BASE=/admin-shipyard/`, default `/`.
-- **Build:** `web/scripts/build.mjs` emits asset URLs relative to `<base href>`.
-- **Serving:** the worker writes the served `index.html` with
-  `<base href="${SHIPYARD_WEB_BASE}">`. The installed web directory is never
-  edited in place (ADR-0016's update-in-place still holds for the assets).
-- **Paths:** `nav.tsx` and `routes.ts` strip and add the base. `Client` uses
-  `baseUrl = base + "api"`, so the API is reached at `/admin-shipyard/api/v1/...`.
+- **Build:** `web/scripts/build.mjs` emits `<base href="/">` and asset URLs
+  relative to it.
+- **Serving:** nginx rewrites that one tag to `<base href="/admin-shipyard/">`
+  with `sub_filter` (Ubuntu's nginx 1.24 has the module). The installed web
+  directory is never edited (ADR-0016's update-in-place still holds).
+- **Paths:**
+  - `nav.tsx` strips and adds the base;
+  - `Client` uses the base without its trailing slash as `baseUrl`, so the API is
+    reached at `/admin-shipyard/v1/...`;
+  - at `/` nothing changes.
 - **nginx edge:** the edge renders, inside `mounts/hami9.ir.conf`:
-  - `location /admin-shipyard/api/` → API unix socket, prefix stripped;
-  - `location /admin-shipyard/hooks/github` → API (`/hooks/github`);
+  - `location /admin-shipyard/v1/` → the API on loopback TCP, prefix stripped;
+  - `location = /admin-shipyard/hooks/github` → the API's `/hooks/github`;
   - `location /admin-shipyard/` → the web directory, `try_files … index.html`.
+
+  The API listens on `127.0.0.1:8095`, so nginx's `www-data` user needs no
+  membership in the `shipyard` group (that group can read the worker's log
+  socket).
 - **Tests:** the existing Playwright suite runs once at `/` and once under
   `/admin-shipyard/`.
 
